@@ -158,7 +158,12 @@ function CreateTokenModal({ serverCount, onClose, onCreated }: { serverCount: nu
   async function submit(event: React.FormEvent) {
     event.preventDefault();
     setError("");
-    if (!label.trim()) {
+    const form = new FormData(event.currentTarget as HTMLFormElement);
+    const labelValue = form.get("label");
+    const expiresAtValue = form.get("expiresAt");
+    const submittedLabel = typeof labelValue === "string" ? labelValue.trim() : "";
+    const submittedExpiresAt = typeof expiresAtValue === "string" ? expiresAtValue : "";
+    if (!submittedLabel) {
       setError("Zadej označení tokenu.");
       return;
     }
@@ -166,7 +171,7 @@ function CreateTokenModal({ serverCount, onClose, onCreated }: { serverCount: nu
       const secret = await api<SecretResult>("/api/kaja", {
         method: "POST",
         headers: { "x-csrf-token": csrf() },
-        body: JSON.stringify({ label: label.trim(), expiresAt: expiresAt ? new Date(expiresAt).toISOString() : null })
+        body: JSON.stringify({ label: submittedLabel, expiresAt: submittedExpiresAt ? new Date(submittedExpiresAt).toISOString() : null })
       });
       onCreated(secret);
     } catch (err) {
@@ -176,8 +181,8 @@ function CreateTokenModal({ serverCount, onClose, onCreated }: { serverCount: nu
   return (
     <Modal title="Vytvořit nový Kaja token" onClose={onClose}>
       <form className="modal-form" onSubmit={(event) => { void submit(event); }}>
-        <label>Označení tokenu<input autoFocus value={label} onChange={(event) => setLabel(event.target.value)} maxLength={120} placeholder="např. CI/CD pipeline produkce" /></label>
-        <label>Expirace pověření<input value={expiresAt} onChange={(event) => setExpiresAt(event.target.value)} type="datetime-local" /></label>
+        <label>Označení tokenu<input name="label" autoFocus value={label} onChange={(event) => setLabel(event.target.value)} maxLength={120} placeholder="např. CI/CD pipeline produkce" /></label>
+        <label>Expirace pověření<input name="expiresAt" value={expiresAt} onChange={(event) => setExpiresAt(event.target.value)} type="datetime-local" /></label>
         <div className="permission-preview">
           <strong>Přehled oprávnění</strong>
           <span>Po vytvoření tokenu otevři stránku Správa oprávnění a přiřaď MCP servery.</span>
