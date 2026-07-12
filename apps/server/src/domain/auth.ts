@@ -26,7 +26,13 @@ export type KajaPermissionSummary = {
   hostname: string;
   displayName: string;
   granted: boolean;
+  accessLevel: "READ" | "EXECUTE" | "MANAGE" | null;
   grantedAt: string | null;
+};
+
+export type KajaPermissionInput = {
+  serverId: string;
+  accessLevel: "READ" | "EXECUTE" | "MANAGE";
 };
 
 export async function createKajaCredential(
@@ -162,6 +168,7 @@ export async function listKajaPermissions(db: Db, credentialId: string): Promise
       ms.code,
       ms.hostname,
       ms.display_name,
+      kp.access_level,
       kp.granted_at,
       (kp.id is not null and kp.revoked_at is null) as granted
     from mcp_server ms
@@ -174,25 +181,29 @@ export async function listKajaPermissions(db: Db, credentialId: string): Promise
     hostname: String(row.hostname),
     displayName: String(row.display_name),
     granted: Boolean(row.granted),
+    accessLevel: row.access_level ? row.access_level as KajaPermissionSummary["accessLevel"] : null,
     grantedAt: row.granted_at ? String(row.granted_at) : null
   }));
 }
 
-export async function replaceKajaPermissions(db: Db, actorId: string, correlationId: string, credentialId: string, serverIds: string[]): Promise<void> {
+export async function replaceKajaPermissions(db: Db, actorId: string, correlationId: string, credentialId: string, permissions: KajaPermissionInput[]): Promise<void> {
   const credential = await db.query("select id, public_id from kaja_credential where id=$1 and deleted_at is null and revoked_at is null and active is true", [credentialId]);
   if (!credential.rowCount) throw Object.assign(new Error("not_found"), { statusCode: 404 });
-  const normalized = Array.from(new Set(serverIds));
-  if (normalized.length) {
-    const validServers = await db.query("select id from mcp_server where id = any($1::uuid[])", [normalized]);
-    if (validServers.rowCount !== normalized.length) throw Object.assign(new Error("invalid_server"), { statusCode: 400 });
+  const byServer = new Map<string, KajaPermissionInput>();
+  for (const permission of permissions) byServer.set(permission.serverId, permission);
+  const normalized = Array.from(byServer.values());
+  const serverIds = normalized.map((permission) => permission.serverId);
+  if (serverIds.length) {
+    const validServers = await db.query("select id from mcp_server where id = any($1::uuid[])", [serverIds]);
+    if (validServers.rowCount !== serverIds.length) throw Object.assign(new Error("invalid_server"), { statusCode: 400 });
   }
   await db.query("update kaja_permission set revoked_at=coalesce(revoked_at, now()) where credential_id=$1", [credentialId]);
-  for (const serverId of normalized) {
+  for (const permission of normalized) {
     await db.query(
-      `insert into kaja_permission(credential_id, server_id, revoked_at)
-       values ($1,$2,null)
-       on conflict (credential_id, server_id) do update set revoked_at=null, granted_at=now()`,
-      [credentialId, serverId]
+      `insert into kaja_permission(credential_id, server_id, access_level, revoked_at)
+       values ($1,$2,$3,null)
+       on conflict (credential_id, server_id) do update set revoked_at=null, granted_at=now(), access_level=excluded.access_level`,
+      [credentialId, permission.serverId, permission.accessLevel]
     );
   }
   await appendAudit(db, {
@@ -201,7 +212,7 @@ export async function replaceKajaPermissions(db: Db, actorId: string, correlatio
     actorId,
     objectType: "kaja_credential",
     objectId: credentialId,
-    after: { publicId: credential.rows[0].public_id, serverIds: normalized },
+    after: { publicId: credential.rows[0].public_id, permissions: normalized },
     correlationId
   });
 }
@@ -230,7 +241,7 @@ export async function issueAccessToken(db: Db, params: {
     throw Object.assign(new Error("resource_unavailable"), { statusCode: 503 });
   }
   const permission = await db.query(
-    "select 1 from kaja_permission where credential_id=$1 and server_id=$2 and revoked_at is null",
+    "select 1 from kaja_permission where credential_id=$1 and server_id=$2 and revoked_at is null and access_level in ('EXECUTE','MANAGE')",
     [credential.id, server.id]
   );
   if (!permission.rowCount) throw Object.assign(new Error("insufficient_scope"), { statusCode: 403 });

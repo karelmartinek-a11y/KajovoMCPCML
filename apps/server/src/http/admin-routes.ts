@@ -159,12 +159,21 @@ export function registerAdminRoutes(app: FastifyInstance, db: Db, config: AppCon
     if (!accountId) return sendError(reply, 401, "unauthorized", undefined, correlationId);
     if (!requireCsrf(request)) return sendError(reply, 403, "csrf_failed", undefined, correlationId);
     const { id } = request.params as { id: string };
-    const body = request.body as { serverIds?: unknown };
-    if (!Array.isArray(body.serverIds) || body.serverIds.some((serverId) => typeof serverId !== "string")) {
-      return sendError(reply, 400, "invalid_permissions", "serverIds must be an array of server ids", correlationId);
+    const body = request.body as { serverIds?: unknown; permissions?: unknown };
+    const permissions = Array.isArray(body.permissions)
+      ? body.permissions
+      : Array.isArray(body.serverIds)
+        ? body.serverIds.map((serverId) => ({ serverId, accessLevel: "EXECUTE" }))
+        : null;
+    if (!permissions || permissions.some((permission) => {
+      if (typeof permission !== "object" || permission === null) return true;
+      const item = permission as { serverId?: unknown; accessLevel?: unknown };
+      return typeof item.serverId !== "string" || !["READ", "EXECUTE", "MANAGE"].includes(String(item.accessLevel));
+    })) {
+      return sendError(reply, 400, "invalid_permissions", "permissions must include serverId and accessLevel", correlationId);
     }
     try {
-      await replaceKajaPermissions(db, accountId, correlationId, id, body.serverIds);
+      await replaceKajaPermissions(db, accountId, correlationId, id, permissions as Array<{ serverId: string; accessLevel: "READ" | "EXECUTE" | "MANAGE" }>);
       return { ok: true };
     } catch (error) {
       return sendError(reply, Number((error as { statusCode?: number }).statusCode ?? 500), error instanceof Error ? error.message : "operation_failed", undefined, correlationId);
