@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { loadConfig } from "../config.js";
 import { createDb } from "../db.js";
 
@@ -8,7 +9,8 @@ const db = createDb(config);
 
 try {
   await db.query("create table if not exists schema_migration(version text primary key, applied_at timestamptz not null default now())");
-  const dir = path.resolve(process.cwd(), "apps/server/src/migrations");
+  const currentDir = path.dirname(fileURLToPath(import.meta.url));
+  const dir = path.resolve(currentDir, "../migrations");
   const files = (await fs.readdir(dir)).filter((file) => file.endsWith(".sql")).sort();
   for (const file of files) {
     const exists = await db.query("select 1 from schema_migration where version=$1", [file]);

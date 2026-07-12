@@ -44,14 +44,16 @@ jobs:
           set -a
           . /etc/kcml/kcml.env
           set +a
+          test -n "${PASS:-}"
+          chmod +x deploy/scripts/*.sh
           deploy/scripts/preflight.sh
           deploy/scripts/backup.sh
           corepack enable
-          pnpm install --frozen-lockfile
+          CI=true pnpm install --frozen-lockfile --prod=false
           pnpm --filter @kcml/admin-ui build
           pnpm --filter @kcml/server build
           pnpm db:migrate
           PASS="$PASS" pnpm admin:sync-password
           rsync -a --delete --exclude '.git' --exclude 'node_modules' "$GITHUB_WORKSPACE"/ /opt/kcml/current/
           systemctl restart kcml
-          curl -fsS http://127.0.0.1:3000/health >/dev/null
+          curl -fsS -H 'Host: admin.hcasc.cz' "http://127.0.0.1:${PORT}/health" >/dev/null
