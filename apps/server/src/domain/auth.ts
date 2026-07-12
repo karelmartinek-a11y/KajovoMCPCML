@@ -12,20 +12,37 @@ export type KajaCredentialSummary = {
   revokedAt: string | null;
   deletedAt: string | null;
   createdAt: string;
+  updatedAt: string;
+  expiresAt: string | null;
   permissionCount: number;
   activeAccessTokenCount: number;
   lastTokenIssuedAt: string | null;
   lastTokenExpiresAt: string | null;
 };
 
-export async function createKajaCredential(db: Db, actorId: string, correlationId: string, label: string): Promise<{ publicId: string; label: string; clientSecret: string; fingerprint: string }> {
+export type KajaPermissionSummary = {
+  serverId: string;
+  code: string;
+  hostname: string;
+  displayName: string;
+  granted: boolean;
+  grantedAt: string | null;
+};
+
+export async function createKajaCredential(
+  db: Db,
+  actorId: string,
+  correlationId: string,
+  label: string,
+  expiresAt: string | null
+): Promise<{ publicId: string; label: string; clientSecret: string; fingerprint: string; expiresAt: string | null }> {
   const secret = issueOpaqueSecret();
   const hash = await hashPasswordLikeSecret(secret.value);
   const result = await db.query("select nextval('kaja_number_seq') as number");
   const publicId = `Kaja${String(Number(result.rows[0].number)).padStart(4, "0")}`;
   const inserted = await db.query(
-    "insert into kaja_credential(public_id, label, secret_hash, secret_fingerprint) values ($1,$2,$3,$4) returning id",
-    [publicId, label, hash, secret.fingerprint]
+    "insert into kaja_credential(public_id, label, secret_hash, secret_fingerprint, expires_at) values ($1,$2,$3,$4,$5) returning id, expires_at",
+    [publicId, label, hash, secret.fingerprint, expiresAt]
   );
   await appendAudit(db, {
     eventType: "kaja.created",
@@ -33,10 +50,16 @@ export async function createKajaCredential(db: Db, actorId: string, correlationI
     actorId,
     objectType: "kaja_credential",
     objectId: inserted.rows[0].id,
-    after: { publicId, label, fingerprint: secret.fingerprint },
+    after: { publicId, label, fingerprint: secret.fingerprint, expiresAt },
     correlationId
   });
-  return { publicId, label, clientSecret: secret.value, fingerprint: secret.fingerprint };
+  return {
+    publicId,
+    label,
+    clientSecret: secret.value,
+    fingerprint: secret.fingerprint,
+    expiresAt: inserted.rows[0].expires_at ? String(inserted.rows[0].expires_at) : null
+  };
 }
 
 export async function listKajaCredentials(db: Db): Promise<KajaCredentialSummary[]> {
@@ -50,6 +73,8 @@ export async function listKajaCredentials(db: Db): Promise<KajaCredentialSummary
       kc.revoked_at,
       kc.deleted_at,
       kc.created_at,
+      kc.updated_at,
+      kc.expires_at,
       count(distinct kp.id) filter (where kp.revoked_at is null) as permission_count,
       count(distinct at.lookup_digest) filter (where at.revoked_at is null and at.expires_at > now()) as active_access_token_count,
       max(at.issued_at) as last_token_issued_at,
@@ -70,11 +95,115 @@ export async function listKajaCredentials(db: Db): Promise<KajaCredentialSummary
     revokedAt: row.revoked_at ? String(row.revoked_at) : null,
     deletedAt: row.deleted_at ? String(row.deleted_at) : null,
     createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at),
+    expiresAt: row.expires_at ? String(row.expires_at) : null,
     permissionCount: Number(row.permission_count),
     activeAccessTokenCount: Number(row.active_access_token_count),
     lastTokenIssuedAt: row.last_token_issued_at ? String(row.last_token_issued_at) : null,
     lastTokenExpiresAt: row.last_token_expires_at ? String(row.last_token_expires_at) : null
   }));
+}
+
+export async function revokeKajaCredential(db: Db, actorId: string, correlationId: string, credentialId: string): Promise<void> {
+  const result = await db.query(
+    `update kaja_credential
+        set active=false,
+            revoked_at=coalesce(revoked_at, now()),
+            revocation_epoch=gen_random_uuid()
+      where id=$1 and deleted_at is null
+      returning id, public_id, label`,
+    [credentialId]
+  );
+  if (!result.rowCount) throw Object.assign(new Error("not_found"), { statusCode: 404 });
+  await db.query("update kaja_permission set revoked_at=coalesce(revoked_at, now()) where credential_id=$1", [credentialId]);
+  await db.query("update access_token set revoked_at=coalesce(revoked_at, now()) where credential_id=$1", [credentialId]);
+  await appendAudit(db, {
+    eventType: "kaja.revoked",
+    actorType: "admin",
+    actorId,
+    objectType: "kaja_credential",
+    objectId: credentialId,
+    after: { publicId: result.rows[0].public_id, label: result.rows[0].label },
+    correlationId
+  });
+}
+
+export async function deleteKajaCredential(db: Db, actorId: string, correlationId: string, credentialId: string): Promise<void> {
+  const result = await db.query(
+    `update kaja_credential
+        set active=false,
+            revoked_at=coalesce(revoked_at, now()),
+            deleted_at=coalesce(deleted_at, now()),
+            revocation_epoch=gen_random_uuid()
+      where id=$1 and deleted_at is null
+      returning id, public_id, label`,
+    [credentialId]
+  );
+  if (!result.rowCount) throw Object.assign(new Error("not_found"), { statusCode: 404 });
+  await db.query("update kaja_permission set revoked_at=coalesce(revoked_at, now()) where credential_id=$1", [credentialId]);
+  await db.query("update access_token set revoked_at=coalesce(revoked_at, now()) where credential_id=$1", [credentialId]);
+  await appendAudit(db, {
+    eventType: "kaja.deleted",
+    actorType: "admin",
+    actorId,
+    objectType: "kaja_credential",
+    objectId: credentialId,
+    after: { publicId: result.rows[0].public_id, label: result.rows[0].label },
+    correlationId
+  });
+}
+
+export async function listKajaPermissions(db: Db, credentialId: string): Promise<KajaPermissionSummary[]> {
+  const credential = await db.query("select 1 from kaja_credential where id=$1 and deleted_at is null", [credentialId]);
+  if (!credential.rowCount) throw Object.assign(new Error("not_found"), { statusCode: 404 });
+  const result = await db.query(`
+    select
+      ms.id as server_id,
+      ms.code,
+      ms.hostname,
+      ms.display_name,
+      kp.granted_at,
+      (kp.id is not null and kp.revoked_at is null) as granted
+    from mcp_server ms
+    left join kaja_permission kp on kp.server_id = ms.id and kp.credential_id = $1
+    order by ms.kcml_number asc
+  `, [credentialId]);
+  return result.rows.map((row) => ({
+    serverId: String(row.server_id),
+    code: String(row.code),
+    hostname: String(row.hostname),
+    displayName: String(row.display_name),
+    granted: Boolean(row.granted),
+    grantedAt: row.granted_at ? String(row.granted_at) : null
+  }));
+}
+
+export async function replaceKajaPermissions(db: Db, actorId: string, correlationId: string, credentialId: string, serverIds: string[]): Promise<void> {
+  const credential = await db.query("select id, public_id from kaja_credential where id=$1 and deleted_at is null and revoked_at is null and active is true", [credentialId]);
+  if (!credential.rowCount) throw Object.assign(new Error("not_found"), { statusCode: 404 });
+  const normalized = Array.from(new Set(serverIds));
+  if (normalized.length) {
+    const validServers = await db.query("select id from mcp_server where id = any($1::uuid[])", [normalized]);
+    if (validServers.rowCount !== normalized.length) throw Object.assign(new Error("invalid_server"), { statusCode: 400 });
+  }
+  await db.query("update kaja_permission set revoked_at=coalesce(revoked_at, now()) where credential_id=$1", [credentialId]);
+  for (const serverId of normalized) {
+    await db.query(
+      `insert into kaja_permission(credential_id, server_id, revoked_at)
+       values ($1,$2,null)
+       on conflict (credential_id, server_id) do update set revoked_at=null, granted_at=now()`,
+      [credentialId, serverId]
+    );
+  }
+  await appendAudit(db, {
+    eventType: "kaja.permissions.updated",
+    actorType: "admin",
+    actorId,
+    objectType: "kaja_credential",
+    objectId: credentialId,
+    after: { publicId: credential.rows[0].public_id, serverIds: normalized },
+    correlationId
+  });
 }
 
 export async function issueAccessToken(db: Db, params: {
@@ -88,7 +217,9 @@ export async function issueAccessToken(db: Db, params: {
   const credentialResult = await db.query("select * from kaja_credential where public_id=$1 and deleted_at is null", [params.clientId]);
   if (!credentialResult.rowCount) throw Object.assign(new Error("invalid_client"), { statusCode: 401 });
   const credential = credentialResult.rows[0];
-  if (!credential.active || credential.revoked_at) throw Object.assign(new Error("invalid_client"), { statusCode: 401 });
+  if (!credential.active || credential.revoked_at || (credential.expires_at && new Date(String(credential.expires_at)).getTime() <= Date.now())) {
+    throw Object.assign(new Error("invalid_client"), { statusCode: 401 });
+  }
   const verified = await verifyPasswordLikeSecret(String(credential.secret_hash), params.clientSecret);
   if (!verified) throw Object.assign(new Error("invalid_client"), { statusCode: 401 });
 
@@ -139,6 +270,8 @@ export async function validateBearer(db: Db, token: string, hostname: string, hm
         and at.revoked_at is null
         and kc.active is true
         and kc.revoked_at is null
+        and kc.deleted_at is null
+        and (kc.expires_at is null or kc.expires_at > now())
         and at.credential_revocation_epoch = kc.revocation_epoch
         and at.server_revocation_epoch = ms.revocation_epoch
         and ms.enabled is true

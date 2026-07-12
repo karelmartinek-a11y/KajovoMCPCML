@@ -21,6 +21,10 @@ button {
   cursor: pointer;
 }
 button:hover { background: #243447; }
+button:disabled {
+  background: #b8c2cc;
+  cursor: not-allowed;
+}
 .login-shell {
   min-height: 100vh;
   display: grid;
@@ -92,12 +96,30 @@ th { color: #526170; font-size: 12px; text-transform: uppercase; }
 code { font-family: "SFMono-Regular", Consolas, monospace; font-size: 12px; }
 .inline-form {
   display: grid;
-  grid-template-columns: minmax(240px, 1fr) auto;
+  grid-template-columns: minmax(240px, 1.2fr) minmax(220px, 0.8fr) auto;
   gap: 12px;
   align-items: end;
   margin: 0 0 16px;
 }
 .inline-form label { margin: 0; }
+.row-actions { display: flex; gap: 8px; }
+.row-actions button { min-height: 32px; padding: 0 10px; }
+.link-button {
+  color: #0f766e;
+  background: transparent;
+  min-height: auto;
+  padding: 0;
+  font-weight: 700;
+}
+.link-button:hover { background: transparent; color: #134e4a; text-decoration: underline; }
+.selected-row { background: #f0fdfa; }
+input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  min-height: 18px;
+  padding: 0;
+  accent-color: #0f766e;
+}
 .overview-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
 .overview-grid article {
   border: 1px solid #e1e7ee;

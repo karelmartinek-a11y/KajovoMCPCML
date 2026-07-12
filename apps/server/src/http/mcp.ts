@@ -11,6 +11,15 @@ import { hostOf, sendError } from "./errors.js";
 
 const ajv = new Ajv2020({ strict: true, allErrors: true });
 
+async function recordUnauthorized(db: Db, serverId: string): Promise<void> {
+  await db.query(
+    `insert into function_statistics(server_id, unauthorized_count, last_unauthorized_at)
+     values ($1,1,now())
+     on conflict (server_id) do update set unauthorized_count=function_statistics.unauthorized_count+1, last_unauthorized_at=now()`,
+    [serverId]
+  );
+}
+
 export function registerMcpRoutes(app: FastifyInstance, db: Db, config: AppConfig): void {
   app.get("/.well-known/oauth-protected-resource", async (request, reply) => {
     const hostname = hostOf(request.headers.host);
@@ -52,6 +61,7 @@ export function registerMcpRoutes(app: FastifyInstance, db: Db, config: AppConfi
     }
     const auth = request.headers.authorization;
     if (!auth?.startsWith("Bearer ")) {
+      await recordUnauthorized(db, server.id);
       await appendAudit(db, { eventType: "mcp.unauthorized", actorType: "anonymous", objectType: "mcp_server", objectId: server.id, after: { reason: "missing_bearer" }, correlationId });
       return sendError(reply, 401, "invalid_token", "Bearer token is required", correlationId);
     }
@@ -59,6 +69,7 @@ export function registerMcpRoutes(app: FastifyInstance, db: Db, config: AppConfi
     try {
       principal = await validateBearer(db, auth.slice("Bearer ".length), hostname, config.ACCESS_TOKEN_HMAC_KEY_BASE64);
     } catch {
+      await recordUnauthorized(db, server.id);
       await appendAudit(db, { eventType: "mcp.unauthorized", actorType: "anonymous", objectType: "mcp_server", objectId: server.id, after: { reason: "invalid_bearer" }, correlationId });
       return sendError(reply, 401, "invalid_token", "Invalid token", correlationId);
     }

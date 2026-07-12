@@ -5,7 +5,14 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { AppConfig } from "../config.js";
 import type { Db } from "../db.js";
 import { appendAudit } from "../domain/audit.js";
-import { createKajaCredential, listKajaCredentials } from "../domain/auth.js";
+import {
+  createKajaCredential,
+  deleteKajaCredential,
+  listKajaCredentials,
+  listKajaPermissions,
+  replaceKajaPermissions,
+  revokeKajaCredential
+} from "../domain/auth.js";
 import { listServers } from "../domain/catalog.js";
 import { hostOf, sendError } from "./errors.js";
 
@@ -82,13 +89,18 @@ export function registerAdminRoutes(app: FastifyInstance, db: Db, config: AppCon
 
   app.post("/api/kaja", async (request, reply) => {
     const correlationId = randomUUID();
+    if (hostOf(request.headers.host) !== config.ADMIN_HOST) return sendError(reply, 404, "not_found", undefined, correlationId);
     const accountId = await sessionAccountId(db, request);
     if (!accountId) return sendError(reply, 401, "unauthorized", undefined, correlationId);
     if (!requireCsrf(request)) return sendError(reply, 403, "csrf_failed", undefined, correlationId);
-    const body = request.body as { label?: string };
+    const body = request.body as { label?: string; expiresAt?: string | null };
     const label = (body.label ?? "").trim();
     if (label.length < 1 || label.length > 120) return sendError(reply, 400, "invalid_label", "Label is required and must be at most 120 characters", correlationId);
-    return await createKajaCredential(db, accountId, correlationId, label);
+    const expiresAt = body.expiresAt ? new Date(body.expiresAt) : null;
+    if (expiresAt && (!Number.isFinite(expiresAt.getTime()) || expiresAt.getTime() <= Date.now())) {
+      return sendError(reply, 400, "invalid_expiration", "Expiration must be in the future", correlationId);
+    }
+    return await createKajaCredential(db, accountId, correlationId, label, expiresAt ? expiresAt.toISOString() : null);
   });
 
   app.get("/api/kaja", async (request, reply) => {
@@ -96,6 +108,67 @@ export function registerAdminRoutes(app: FastifyInstance, db: Db, config: AppCon
     const accountId = await sessionAccountId(db, request);
     if (!accountId) return sendError(reply, 401, "unauthorized");
     return { credentials: await listKajaCredentials(db) };
+  });
+
+  app.post("/api/kaja/:id/revoke", async (request, reply) => {
+    const correlationId = randomUUID();
+    if (hostOf(request.headers.host) !== config.ADMIN_HOST) return sendError(reply, 404, "not_found", undefined, correlationId);
+    const accountId = await sessionAccountId(db, request);
+    if (!accountId) return sendError(reply, 401, "unauthorized", undefined, correlationId);
+    if (!requireCsrf(request)) return sendError(reply, 403, "csrf_failed", undefined, correlationId);
+    const { id } = request.params as { id: string };
+    try {
+      await revokeKajaCredential(db, accountId, correlationId, id);
+      return { ok: true };
+    } catch (error) {
+      return sendError(reply, Number((error as { statusCode?: number }).statusCode ?? 500), error instanceof Error ? error.message : "operation_failed", undefined, correlationId);
+    }
+  });
+
+  app.post("/api/kaja/:id/delete", async (request, reply) => {
+    const correlationId = randomUUID();
+    if (hostOf(request.headers.host) !== config.ADMIN_HOST) return sendError(reply, 404, "not_found", undefined, correlationId);
+    const accountId = await sessionAccountId(db, request);
+    if (!accountId) return sendError(reply, 401, "unauthorized", undefined, correlationId);
+    if (!requireCsrf(request)) return sendError(reply, 403, "csrf_failed", undefined, correlationId);
+    const { id } = request.params as { id: string };
+    try {
+      await deleteKajaCredential(db, accountId, correlationId, id);
+      return { ok: true };
+    } catch (error) {
+      return sendError(reply, Number((error as { statusCode?: number }).statusCode ?? 500), error instanceof Error ? error.message : "operation_failed", undefined, correlationId);
+    }
+  });
+
+  app.get("/api/kaja/:id/permissions", async (request, reply) => {
+    if (hostOf(request.headers.host) !== config.ADMIN_HOST) return sendError(reply, 404, "not_found");
+    const accountId = await sessionAccountId(db, request);
+    if (!accountId) return sendError(reply, 401, "unauthorized");
+    const { id } = request.params as { id: string };
+    try {
+      return { permissions: await listKajaPermissions(db, id) };
+    } catch (error) {
+      return sendError(reply, Number((error as { statusCode?: number }).statusCode ?? 500), error instanceof Error ? error.message : "operation_failed");
+    }
+  });
+
+  app.put("/api/kaja/:id/permissions", async (request, reply) => {
+    const correlationId = randomUUID();
+    if (hostOf(request.headers.host) !== config.ADMIN_HOST) return sendError(reply, 404, "not_found", undefined, correlationId);
+    const accountId = await sessionAccountId(db, request);
+    if (!accountId) return sendError(reply, 401, "unauthorized", undefined, correlationId);
+    if (!requireCsrf(request)) return sendError(reply, 403, "csrf_failed", undefined, correlationId);
+    const { id } = request.params as { id: string };
+    const body = request.body as { serverIds?: unknown };
+    if (!Array.isArray(body.serverIds) || body.serverIds.some((serverId) => typeof serverId !== "string")) {
+      return sendError(reply, 400, "invalid_permissions", "serverIds must be an array of server ids", correlationId);
+    }
+    try {
+      await replaceKajaPermissions(db, accountId, correlationId, id, body.serverIds);
+      return { ok: true };
+    } catch (error) {
+      return sendError(reply, Number((error as { statusCode?: number }).statusCode ?? 500), error instanceof Error ? error.message : "operation_failed", undefined, correlationId);
+    }
   });
 
   app.get("/api/audit", async (request, reply) => {

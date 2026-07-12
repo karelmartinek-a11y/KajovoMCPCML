@@ -39,6 +39,14 @@ export type McpServer = {
   artifactDigest: string;
   manifestDigest: string;
   revocationEpoch: string;
+  successCount: number;
+  unauthorizedCount: number;
+  failureCount: number;
+  lastSuccessAt: string | null;
+  lastFailureAt: string | null;
+  lastUnauthorizedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
 };
 
 export type KajaCredential = {

@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { Activity, Database, KeyRound, LogOut, RefreshCw, Server as ServerIcon, ShieldCheck, Terminal, TriangleAlert } from "lucide-react";
+import { Activity, Ban, Database, KeyRound, LogOut, RefreshCw, Save, Server as ServerIcon, ShieldCheck, Terminal, Trash2, TriangleAlert } from "lucide-react";
 import "./styles.css";
 
 type Session = { authenticated: boolean; account: string | null };
@@ -19,6 +19,14 @@ type Server = {
   contractVersion: string;
   artifactDigest: string;
   manifestDigest: string;
+  successCount: number;
+  unauthorizedCount: number;
+  failureCount: number;
+  lastSuccessAt: string | null;
+  lastFailureAt: string | null;
+  lastUnauthorizedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
 };
 type KajaCredential = {
   id: string;
@@ -29,10 +37,20 @@ type KajaCredential = {
   revokedAt: string | null;
   deletedAt: string | null;
   createdAt: string;
+  updatedAt: string;
+  expiresAt: string | null;
   permissionCount: number;
   activeAccessTokenCount: number;
   lastTokenIssuedAt: string | null;
   lastTokenExpiresAt: string | null;
+};
+type KajaPermission = {
+  serverId: string;
+  code: string;
+  hostname: string;
+  displayName: string;
+  granted: boolean;
+  grantedAt: string | null;
 };
 type AuditEvent = { id: number; event_type: string; actor_type: string; object_type: string; object_id: string; correlation_id: string; created_at: string };
 
@@ -85,8 +103,12 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
   const [servers, setServers] = useState<Server[]>([]);
   const [credentials, setCredentials] = useState<KajaCredential[]>([]);
   const [events, setEvents] = useState<AuditEvent[]>([]);
-  const [secret, setSecret] = useState<{ publicId: string; label: string; clientSecret: string; fingerprint: string } | null>(null);
+  const [secret, setSecret] = useState<{ publicId: string; label: string; clientSecret: string; fingerprint: string; expiresAt: string | null } | null>(null);
   const [newCredentialLabel, setNewCredentialLabel] = useState("");
+  const [newCredentialExpiresAt, setNewCredentialExpiresAt] = useState("");
+  const [selectedCredentialId, setSelectedCredentialId] = useState<string | null>(null);
+  const [permissions, setPermissions] = useState<KajaPermission[]>([]);
+  const [savingPermissions, setSavingPermissions] = useState(false);
   const [error, setError] = useState("");
   async function load() {
     setError("");
@@ -99,6 +121,7 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
       setServers(serverRes.servers);
       setCredentials(credentialRes.credentials);
       setEvents(auditRes.events);
+      setSelectedCredentialId((current) => current ?? credentialRes.credentials[0]?.id ?? null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Načtení selhalo");
     }
@@ -111,9 +134,46 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
       setError("Zadej označení tokenu.");
       return;
     }
-    setSecret(await api("/api/kaja", { method: "POST", headers: { "x-csrf-token": csrf() }, body: JSON.stringify({ label }) }));
+    setSecret(await api("/api/kaja", {
+      method: "POST",
+      headers: { "x-csrf-token": csrf() },
+      body: JSON.stringify({ label, expiresAt: newCredentialExpiresAt ? new Date(newCredentialExpiresAt).toISOString() : null })
+    }));
     setNewCredentialLabel("");
+    setNewCredentialExpiresAt("");
     await load();
+  }
+  useEffect(() => {
+    if (!selectedCredentialId) {
+      setPermissions([]);
+      return;
+    }
+    void api<{ permissions: KajaPermission[] }>(`/api/kaja/${selectedCredentialId}/permissions`)
+      .then((result) => setPermissions(result.permissions))
+      .catch((err) => setError(err instanceof Error ? err.message : "Načtení oprávnění selhalo"));
+  }, [selectedCredentialId]);
+  async function revokeCredential(id: string) {
+    await api(`/api/kaja/${id}/revoke`, { method: "POST", headers: { "x-csrf-token": csrf() }, body: "{}" });
+    await load();
+  }
+  async function deleteCredential(id: string) {
+    await api(`/api/kaja/${id}/delete`, { method: "POST", headers: { "x-csrf-token": csrf() }, body: "{}" });
+    if (selectedCredentialId === id) setSelectedCredentialId(null);
+    await load();
+  }
+  async function savePermissions() {
+    if (!selectedCredentialId) return;
+    setSavingPermissions(true);
+    try {
+      await api(`/api/kaja/${selectedCredentialId}/permissions`, {
+        method: "PUT",
+        headers: { "x-csrf-token": csrf() },
+        body: JSON.stringify({ serverIds: permissions.filter((permission) => permission.granted).map((permission) => permission.serverId) })
+      });
+      await load();
+    } finally {
+      setSavingPermissions(false);
+    }
   }
   async function logout() {
     await api("/api/logout", { method: "POST", body: "{}" });
@@ -149,20 +209,28 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
         <section className="panel">
           <div className="panel-head"><h2>MCP servery</h2><span className="panel-count">{servers.length} záznamů</span></div>
           {servers.length === 0 ? <div className="empty">Katalog je prázdný. Žádná demo data nebyla vytvořena.</div> : (
-            <table><thead><tr><th>Kód</th><th>Název</th><th>Hostname</th><th>Tool</th><th>Registrace</th><th>Provoz</th><th>Zapnuto</th><th>Handler</th><th>Kontrakt</th></tr></thead>
-              <tbody>{servers.map((server) => <tr key={server.id}><td>{server.code}</td><td>{server.displayName}</td><td>{server.hostname}</td><td>{server.toolName}</td><td>{server.registrationState}</td><td>{server.operationalState}</td><td>{server.enabled ? "Ano" : "Ne"}</td><td>{server.handlerKey}@{server.handlerVersion}</td><td>{server.contractVersion}</td></tr>)}</tbody></table>
+            <table><thead><tr><th>Kód</th><th>Název</th><th>Hostname</th><th>Tool</th><th>Registrace</th><th>Provoz</th><th>Zapnuto</th><th>Volání</th><th>Auth chyby</th><th>Handler</th><th>Kontrakt</th><th>Aktualizace</th></tr></thead>
+              <tbody>{servers.map((server) => <tr key={server.id}><td>{server.code}</td><td>{server.displayName}</td><td>{server.hostname}</td><td>{server.toolName}</td><td>{server.registrationState}</td><td>{server.operationalState}</td><td>{server.enabled ? "Ano" : "Ne"}</td><td>{server.successCount}/{server.failureCount}</td><td>{server.unauthorizedCount}</td><td>{server.handlerKey}@{server.handlerVersion}</td><td>{server.contractVersion}</td><td>{new Date(server.updatedAt).toLocaleString()}</td></tr>)}</tbody></table>
           )}
         </section>
         <section className="panel">
           <div className="panel-head"><h2>Tokeny a Kaja pověření</h2><span className="panel-count">{credentials.length} záznamů</span></div>
           <form className="inline-form" onSubmit={(event) => { void createKaja(event); }}>
             <label>Označení tokenu<input value={newCredentialLabel} onChange={(event) => setNewCredentialLabel(event.target.value)} maxLength={120} placeholder="např. Produkční klient Fakturace" /></label>
+            <label>Expirace pověření<input value={newCredentialExpiresAt} onChange={(event) => setNewCredentialExpiresAt(event.target.value)} type="datetime-local" /></label>
             <button type="submit"><KeyRound size={16} /> Vygenerovat token</button>
           </form>
-          {secret && <div className="secret-once"><strong>{secret.label} · {secret.publicId}</strong><code>{secret.clientSecret}</code><span>Fingerprint {secret.fingerprint}. Plná hodnota se zobrazuje přesně jednou.</span></div>}
+          {secret && <div className="secret-once"><strong>{secret.label} · {secret.publicId}</strong><code>{secret.clientSecret}</code><span>Fingerprint {secret.fingerprint}. Expirace {secret.expiresAt ? new Date(secret.expiresAt).toLocaleString() : "bez omezení"}. Plná hodnota se zobrazuje přesně jednou.</span></div>}
           {credentials.length === 0 ? <div className="empty">Zatím není vytvořené žádné Kaja pověření. Nový token musí mít označení.</div> : (
-            <table><thead><tr><th>Označení</th><th>Kaja ID</th><th>Fingerprint</th><th>Stav</th><th>Oprávnění</th><th>Aktivní access tokeny</th><th>Vytvořeno</th><th>Poslední token</th></tr></thead>
-              <tbody>{credentials.map((credential) => <tr key={credential.id}><td>{credential.label}</td><td>{credential.publicId}</td><td><code>{credential.fingerprint}</code></td><td>{credential.active && !credential.revokedAt ? "Aktivní" : "Revokováno"}</td><td>{credential.permissionCount}</td><td>{credential.activeAccessTokenCount}</td><td>{new Date(credential.createdAt).toLocaleString()}</td><td>{credential.lastTokenIssuedAt ? new Date(credential.lastTokenIssuedAt).toLocaleString() : "-"}</td></tr>)}</tbody></table>
+            <table><thead><tr><th>Označení</th><th>Kaja ID</th><th>Fingerprint</th><th>Stav</th><th>Expirace</th><th>Oprávnění</th><th>Aktivní access tokeny</th><th>Vytvořeno</th><th>Aktualizováno</th><th>Poslední token</th><th>Akce</th></tr></thead>
+              <tbody>{credentials.map((credential) => <tr key={credential.id} className={selectedCredentialId === credential.id ? "selected-row" : undefined}><td><button className="link-button" onClick={() => setSelectedCredentialId(credential.id)}>{credential.label}</button></td><td>{credential.publicId}</td><td><code>{credential.fingerprint}</code></td><td>{credential.active && !credential.revokedAt ? "Aktivní" : "Revokováno"}</td><td>{credential.expiresAt ? new Date(credential.expiresAt).toLocaleString() : "Bez omezení"}</td><td>{credential.permissionCount}</td><td>{credential.activeAccessTokenCount}</td><td>{new Date(credential.createdAt).toLocaleString()}</td><td>{new Date(credential.updatedAt).toLocaleString()}</td><td>{credential.lastTokenIssuedAt ? new Date(credential.lastTokenIssuedAt).toLocaleString() : "-"}</td><td><div className="row-actions"><button disabled={!credential.active || Boolean(credential.revokedAt)} onClick={() => { void revokeCredential(credential.id); }}><Ban size={15} /> Revokovat</button><button onClick={() => { void deleteCredential(credential.id); }}><Trash2 size={15} /> Smazat</button></div></td></tr>)}</tbody></table>
+          )}
+        </section>
+        <section className="panel">
+          <div className="panel-head"><h2>Oprávnění k MCP serverům</h2><button disabled={!selectedCredentialId || savingPermissions || servers.length === 0} onClick={() => { void savePermissions(); }}><Save size={16} /> Uložit oprávnění</button></div>
+          {!selectedCredentialId ? <div className="empty">Vyber token v přehledu pověření.</div> : servers.length === 0 ? <div className="empty">Nejsou registrované žádné MCP servery. Přehled oprávnění je proto prázdný, ale backend endpoint je dostupný a vrací prázdnou matici.</div> : (
+            <table><thead><tr><th>Povoleno</th><th>Kód</th><th>Název</th><th>Hostname</th><th>Uděleno</th></tr></thead>
+              <tbody>{permissions.map((permission) => <tr key={permission.serverId}><td><input aria-label={`Oprávnění ${permission.code}`} type="checkbox" checked={permission.granted} onChange={(event) => setPermissions((items) => items.map((item) => item.serverId === permission.serverId ? { ...item, granted: event.target.checked } : item))} /></td><td>{permission.code}</td><td>{permission.displayName}</td><td>{permission.hostname}</td><td>{permission.grantedAt ? new Date(permission.grantedAt).toLocaleString() : "-"}</td></tr>)}</tbody></table>
           )}
         </section>
         <section className="panel">
