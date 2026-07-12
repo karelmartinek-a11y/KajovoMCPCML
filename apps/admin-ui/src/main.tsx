@@ -1,15 +1,20 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   Activity,
   AlertTriangle,
   Ban,
+  CalendarDays,
   CheckCircle2,
+  ChevronDown,
+  CircleHelp,
   ClipboardCopy,
-  Database,
+  Clock3,
   KeyRound,
   LockKeyhole,
   LogOut,
+  MoreHorizontal,
+  Plus,
   RefreshCw,
   Save,
   Search,
@@ -75,6 +80,13 @@ type KajaPermission = {
 };
 type AuditEvent = { id: number; event_type: string; actor_type: string; object_type: string; object_id: string; correlation_id: string; created_at: string };
 type SecretResult = { publicId: string; label: string; clientSecret: string; fingerprint: string; expiresAt: string | null };
+
+const pageNames: Record<Page, string> = {
+  monitoring: "Monitoring MCP",
+  tokens: "Tokeny",
+  permissions: "Správa oprávnění",
+  audit: "Audit"
+};
 
 const accessLabels: Record<AccessLevel, string> = {
   READ: "Čtení",
@@ -179,14 +191,15 @@ function CreateTokenModal({ serverCount, onClose, onCreated }: { serverCount: nu
     }
   }
   return (
-    <Modal title="Vytvořit nový Kaja token" onClose={onClose}>
+    <Modal title="Založit Kaja token" onClose={onClose}>
       <form className="modal-form" onSubmit={(event) => { void submit(event); }}>
-        <label>Označení tokenu<input name="label" autoFocus value={label} onChange={(event) => setLabel(event.target.value)} maxLength={120} placeholder="např. CI/CD pipeline produkce" /></label>
-        <label>Expirace pověření<input name="expiresAt" value={expiresAt} onChange={(event) => setExpiresAt(event.target.value)} type="datetime-local" /></label>
+        <div className="form-intro"><span className="modal-icon"><KeyRound size={20} /></span><p>Vytvoř nové pověření pro aplikaci nebo integrační službu. Přístup k serverům nastavíš hned poté ve správě oprávnění.</p></div>
+        <label>Označení tokenu<span className="field-hint">Srozumitelný název podle účelu nebo aplikace</span><input name="label" autoFocus value={label} onChange={(event) => setLabel(event.target.value)} maxLength={120} placeholder="Např. CI/CD pipeline" /></label>
+        <label>Expirace pověření<span className="field-hint">Nepovinné, bez data zůstane pověření bez časového omezení</span><div className="input-with-icon"><CalendarDays size={16} /><input name="expiresAt" value={expiresAt} onChange={(event) => setExpiresAt(event.target.value)} type="datetime-local" /></div></label>
         <div className="permission-preview">
-          <strong>Přehled oprávnění</strong>
-          <span>Po vytvoření tokenu otevři stránku Správa oprávnění a přiřaď MCP servery.</span>
-          <dl><dt>Dostupné MCP servery</dt><dd>{serverCount}</dd><dt>Nový token</dt><dd>bez oprávnění</dd></dl>
+          <div className="preview-title"><LockKeyhole size={16} /><strong>Přehled oprávnění</strong></div>
+          <span>Nový token vznikne bezpečně bez přístupu. Oprávnění mu přiřadíš na samostatné stránce.</span>
+          <dl><dt>Dostupné MCP servery</dt><dd>{serverCount}</dd><dt>Výchozí přístup</dt><dd>Bez oprávnění</dd></dl>
         </div>
         {error && <p className="error">{error}</p>}
         <footer className="modal-actions">
@@ -253,50 +266,97 @@ function PageHeader({ title, description, children }: { title: string; descripti
   );
 }
 
-function MonitoringPage({ servers }: { servers: Server[] }) {
+function IconButton({ label, children, onClick }: { label: string; children: React.ReactNode; onClick?: () => void }) {
+  return <button className="icon-button" type="button" title={label} aria-label={label} onClick={onClick}>{children}</button>;
+}
+
+function MetricCard({ tone, icon, value, label }: { tone: "neutral" | "success" | "warning" | "danger"; icon: React.ReactNode; value: number; label: string }) {
+  return <article className={`metric-card ${tone}`}><span className="metric-icon">{icon}</span><strong>{value}</strong><span>{label}</span></article>;
+}
+
+function ServerDetailModal({ server, onClose }: { server: Server; onClose: () => void }) {
+  return (
+    <Modal title={server.displayName} onClose={onClose}>
+      <div className="server-detail">
+        <div className="server-detail-status"><span className={`status-dot ${server.enabled ? "ok" : "danger"}`} /><strong>{server.operationalState}</strong><span>{server.registrationState}</span></div>
+        <dl>
+          <dt>Kód serveru</dt><dd>{server.code}</dd>
+          <dt>Hostname</dt><dd>{server.hostname}</dd>
+          <dt>Nástroj</dt><dd>{server.toolName}</dd>
+          <dt>Handler</dt><dd>{server.handlerKey} · {server.handlerVersion}</dd>
+          <dt>Contract</dt><dd>{server.contractVersion}</dd>
+          <dt>Úspěšná volání</dt><dd>{server.successCount}</dd>
+          <dt>Chyby autorizace</dt><dd>{server.unauthorizedCount}</dd>
+          <dt>Provozní chyby</dt><dd>{server.failureCount}</dd>
+          <dt>Poslední úspěch</dt><dd>{formatDate(server.lastSuccessAt)}</dd>
+          <dt>Poslední chyba</dt><dd>{formatDate(server.lastFailureAt)}</dd>
+        </dl>
+        {server.description ? <p>{server.description}</p> : null}
+        <footer className="modal-actions"><button type="button" onClick={onClose}>Zavřít detail</button></footer>
+      </div>
+    </Modal>
+  );
+}
+
+function MonitoringPage({ servers, onRefresh }: { servers: Server[]; onRefresh: () => void }) {
+  const [query, setQuery] = useState("");
+  const [timeRange, setTimeRange] = useState("24h");
+  const [detailServer, setDetailServer] = useState<Server | null>(null);
   const online = servers.filter((server) => server.enabled && ["ACTIVE", "TRIAL"].includes(server.registrationState)).length;
   const degraded = servers.filter((server) => server.operationalState === "DEGRADED").length;
   const offline = servers.filter((server) => !server.enabled || ["SUSPENDED", "QUARANTINED", "RETIRED"].includes(server.registrationState)).length;
+  const filtered = servers.filter((server) => `${server.displayName} ${server.hostname} ${server.code}`.toLowerCase().includes(query.toLowerCase()));
   return (
     <>
-      <PageHeader title="Monitoring MCP" description="Samostatný dohled nad dostupností a bezpečnostním stavem MCP serverů." />
+      <PageHeader title="Monitoring MCP" description="Přehled stavu a dostupnosti MCP serverů">
+        <IconButton label="Obnovit monitoring" onClick={onRefresh}><RefreshCw size={17} /></IconButton>
+        <label className="range-select"><Clock3 size={16} /><select value={timeRange} onChange={(event) => setTimeRange(event.target.value)} aria-label="Časový rozsah monitoringu"><option value="24h">Posledních 24 hodin</option><option value="7d">Posledních 7 dní</option><option value="30d">Posledních 30 dní</option></select><ChevronDown size={15} /></label>
+      </PageHeader>
       <section className="metric-row">
-        <article><ServerIcon size={20} /><span>Celkem serverů</span><strong>{servers.length}</strong></article>
-        <article><CheckCircle2 size={20} /><span>Online</span><strong>{online}</strong></article>
-        <article><AlertTriangle size={20} /><span>Degradováno</span><strong>{degraded}</strong></article>
-        <article><Ban size={20} /><span>Offline / vypnuto</span><strong>{offline}</strong></article>
+        <MetricCard tone="neutral" icon={<ServerIcon size={22} />} value={servers.length} label="Celkem serverů" />
+        <MetricCard tone="success" icon={<CheckCircle2 size={22} />} value={online} label="Online" />
+        <MetricCard tone="warning" icon={<AlertTriangle size={22} />} value={degraded} label="Degradováno" />
+        <MetricCard tone="danger" icon={<Ban size={22} />} value={offline} label="Offline" />
       </section>
       <section className="panel monitor-panel">
-        <div className="panel-head"><h2>Stav v čase</h2><span className="panel-count">posledních 24 hodin</span></div>
-        <div className="timeline-empty"><ServerIcon size={36} /><strong>Žádná data k zobrazení</strong><span>Nejsou evidované žádné MCP servery.</span></div>
+        <div className="panel-head"><div className="heading-with-help"><h2>Stav v čase</h2><CircleHelp size={15} /></div></div>
+        <div className="timeline-chart" aria-label="Dostupnost MCP serverů za posledních 24 hodin">
+          <div className="chart-y-axis"><span>100%</span><span>75%</span><span>50%</span><span>25%</span><span>0%</span></div>
+          <div className="chart-grid">
+            <div className="timeline-empty"><ServerIcon size={34} /><strong>Žádná data k zobrazení</strong><span>Nejsou evidované žádné MCP servery.</span></div>
+            <div className="chart-x-axis"><span>18:00</span><span>22:00</span><span>02:00</span><span>06:00</span><span>10:00</span><span>14:00</span></div>
+          </div>
+        </div>
       </section>
       <section className="panel">
-        <div className="panel-head"><h2>Přehled serverů</h2><div className="table-tools"><Search size={16} /><span>Hledat podle názvu serveru</span></div></div>
+        <div className="panel-head server-panel-head"><h2>Přehled serverů</h2><label className="search-box compact-search"><Search size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Hledat podle názvu serveru" aria-label="Hledat podle názvu serveru" /></label></div>
         {servers.length === 0 ? (
-          <div className="empty-state">
+          <div className="empty-state server-empty">
             <ServerIcon size={34} /><strong>Katalog MCP serverů je prázdný</strong>
             <p>Tokeny lze připravit, ale oprávnění půjde přiřadit až po registraci serveru.</p>
           </div>
         ) : (
           <table><thead><tr><th>Server</th><th>Hostname</th><th>Registrace</th><th>Provoz</th><th>Volání</th><th>Auth chyby</th><th>Poslední kontrola</th><th>Akce</th></tr></thead>
-            <tbody>{servers.map((server) => <tr key={server.id}><td>{server.displayName}</td><td>{server.hostname}</td><td><span className="badge neutral">{server.registrationState}</span></td><td><span className="badge ok">{server.operationalState}</span></td><td>{server.successCount}/{server.failureCount}</td><td>{server.unauthorizedCount}</td><td>{formatDate(server.updatedAt)}</td><td><button className="small-button">Detail</button></td></tr>)}</tbody></table>
+            <tbody>{filtered.map((server) => <tr key={server.id}><td><strong>{server.displayName}</strong><span className="cell-subtitle">{server.code}</span></td><td>{server.hostname}</td><td><span className="badge neutral">{server.registrationState}</span></td><td><span className="badge ok">{server.operationalState}</span></td><td>{server.successCount}/{server.failureCount}</td><td>{server.unauthorizedCount}</td><td>{formatDate(server.updatedAt)}</td><td><IconButton label={`Detail serveru ${server.displayName}`} onClick={() => setDetailServer(server)}><MoreHorizontal size={17} /></IconButton></td></tr>)}</tbody></table>
         )}
       </section>
+      {detailServer ? <ServerDetailModal server={detailServer} onClose={() => setDetailServer(null)} /> : null}
     </>
   );
 }
 
-function TokensPage({ credentials, onOpenCreate, onEditPermissions, onConfirm }: { credentials: KajaCredential[]; onOpenCreate: () => void; onEditPermissions: (id: string) => void; onConfirm: (credential: KajaCredential, action: "revoke" | "delete") => void }) {
+function TokensPage({ credentials, onOpenCreate, onEditPermissions, onConfirm, onRefresh }: { credentials: KajaCredential[]; onOpenCreate: () => void; onEditPermissions: (id: string) => void; onConfirm: (credential: KajaCredential, action: "revoke" | "delete") => void; onRefresh: () => void }) {
   const [query, setQuery] = useState("");
   const filtered = credentials.filter((credential) => `${credential.label} ${credential.publicId}`.toLowerCase().includes(query.toLowerCase()));
   return (
     <>
       <PageHeader title="Tokeny" description="Správa Kaja tokenů pro přístup k MCP serverům.">
-        <div className="search-box"><Search size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Hledat tokeny" /></div>
-        <button onClick={onOpenCreate}><KeyRound size={16} /> Vytvořit token</button>
+        <label className="search-box"><Search size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Hledat tokeny..." aria-label="Hledat tokeny" /></label>
+        <button onClick={onOpenCreate}><Plus size={17} /> Založit token</button>
+        <IconButton label="Obnovit tokeny" onClick={onRefresh}><RefreshCw size={17} /></IconButton>
       </PageHeader>
-      <section className="panel">
-        <div className="panel-head"><h2>Přehled tokenů</h2><span className="panel-count">{filtered.length} záznamů</span></div>
+      <section className="panel table-panel">
+        <div className="panel-head"><div className="heading-with-help"><h2>Přehled tokenů</h2><CircleHelp size={15} /></div><span className="panel-count">{filtered.length} záznamů</span></div>
         {filtered.length === 0 ? <div className="empty-state"><KeyRound size={34} /><strong>Žádné tokeny k zobrazení</strong><p>Vytvoř první token přes primární akci nahoře.</p></div> : (
           <table><thead><tr><th>Označení</th><th>Kaja ID</th><th>Fingerprint</th><th>Stav</th><th>Oprávnění</th><th>Expirace</th><th>Poslední použití</th><th>Akce</th></tr></thead>
             <tbody>{filtered.map((credential) => <tr key={credential.id}><td><strong>{credential.label}</strong></td><td>{credential.publicId}</td><td><code>{credential.fingerprint}</code></td><td><span className={`badge ${statusClass(credential)}`}>{credential.active && !credential.revokedAt ? "Aktivní" : "Revokováno"}</span></td><td>{credential.permissionCount}</td><td>{credential.expiresAt ? formatDate(credential.expiresAt) : "Bez omezení"}</td><td>{formatDate(credential.lastTokenIssuedAt)}</td><td><div className="row-actions"><button className="small-button" onClick={() => onEditPermissions(credential.id)}>Oprávnění</button><button className="small-button" disabled={!credential.active || Boolean(credential.revokedAt)} onClick={() => onConfirm(credential, "revoke")}>Revokovat</button><button className="small-button danger-link" onClick={() => onConfirm(credential, "delete")}>Smazat</button></div></td></tr>)}</tbody></table>
@@ -307,24 +367,30 @@ function TokensPage({ credentials, onOpenCreate, onEditPermissions, onConfirm }:
 }
 
 function PermissionsPage({ credentials, servers, selectedId, permissions, saving, onSelect, onChange, onSave }: { credentials: KajaCredential[]; servers: Server[]; selectedId: string | null; permissions: KajaPermission[]; saving: boolean; onSelect: (id: string) => void; onChange: (items: KajaPermission[]) => void; onSave: () => void }) {
+  const [query, setQuery] = useState("");
   const selected = credentials.find((credential) => credential.id === selectedId) ?? null;
   const grantedCount = permissions.filter((permission) => permission.granted).length;
+  const filteredCredentials = credentials.filter((credential) => `${credential.label} ${credential.publicId}`.toLowerCase().includes(query.toLowerCase()));
   return (
     <>
-      <PageHeader title="Správa oprávnění" description="Samostatná stránka pro přiřazování práv Kaja tokenů k MCP serverům.">
+      <PageHeader title="Správa oprávnění" description="Nastavení přístupu tokenů k MCP serverům">
         <button disabled={!selectedId || saving || servers.length === 0} onClick={onSave}><Save size={16} /> Uložit změny</button>
       </PageHeader>
       <section className="permissions-layout">
         <aside className="token-list-panel">
-          <div className="table-tools full"><Search size={16} /><span>Hledat tokeny</span></div>
-          {credentials.map((credential) => <button key={credential.id} className={`token-list-item ${credential.id === selectedId ? "active" : ""}`} onClick={() => onSelect(credential.id)}><strong>{credential.label}</strong><span>{credential.publicId} · {credential.active && !credential.revokedAt ? "Aktivní" : "Revokováno"}</span></button>)}
+          <div className="token-list-heading"><strong>Vyberte token</strong><span>{credentials.length}</span></div>
+          <label className="search-box full"><Search size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Hledat tokeny..." aria-label="Hledat tokeny" /></label>
+          <div className="token-list-scroll">
+            {filteredCredentials.length === 0 ? <p className="list-empty">Žádný token neodpovídá hledání.</p> : filteredCredentials.map((credential) => <button key={credential.id} className={`token-list-item ${credential.id === selectedId ? "active" : ""}`} onClick={() => onSelect(credential.id)}><span className={`status-dot ${statusClass(credential)}`} /><span className="token-list-copy"><strong>{credential.label}</strong><small>{credential.publicId} · {credential.active && !credential.revokedAt ? "Aktivní" : "Revokováno"}</small></span><ChevronDown className="item-chevron" size={15} /></button>)}
+          </div>
         </aside>
         <section className="panel permissions-panel">
-          <div className="panel-head"><div><h2>{selected ? selected.label : "Vyber token"}</h2><p>{selected ? `Má přístup k ${grantedCount} z ${servers.length} MCP serverů.` : "Vyber token v levém panelu."}</p></div><span className="badge neutral">{selected?.publicId ?? "bez výběru"}</span></div>
+          <div className="panel-head"><div><div className="heading-with-help"><h2>Oprávnění k MCP serverům</h2><CircleHelp size={15} /></div><p>{selected ? `${selected.label} má přístup k ${grantedCount} z ${servers.length} serverů.` : "Vyber token v levém panelu."}</p></div>{selected ? <span className="credential-reference">{selected.publicId}</span> : null}</div>
           {!selected ? <div className="empty-state"><LockKeyhole size={34} /><strong>Vyber token pro úpravu práv</strong></div> : servers.length === 0 ? <div className="empty-state"><ServerIcon size={34} /><strong>Nejsou dostupné MCP servery pro přiřazení oprávnění</strong><p>Matice oprávnění je připravená a začne fungovat po registraci prvního serveru.</p></div> : (
-            <table><thead><tr><th>Povoleno</th><th>MCP server</th><th>Hostname</th><th>Úroveň oprávnění</th><th>Uděleno</th></tr></thead>
+            <table><thead><tr><th>Přístup</th><th>MCP server</th><th>Hostname</th><th>Úroveň oprávnění</th><th>Uděleno</th></tr></thead>
               <tbody>{permissions.map((permission) => <tr key={permission.serverId}><td><input type="checkbox" checked={permission.granted} onChange={(event) => onChange(permissions.map((item) => item.serverId === permission.serverId ? { ...item, granted: event.target.checked, accessLevel: event.target.checked ? item.accessLevel ?? "EXECUTE" : null } : item))} /></td><td>{permission.displayName}</td><td>{permission.hostname}</td><td><select disabled={!permission.granted} value={permission.accessLevel ?? "EXECUTE"} onChange={(event) => onChange(permissions.map((item) => item.serverId === permission.serverId ? { ...item, accessLevel: event.target.value as AccessLevel } : item))}>{Object.entries(accessLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></td><td>{formatDate(permission.grantedAt)}</td></tr>)}</tbody></table>
           )}
+          <footer className="permissions-foot"><CircleHelp size={15} /><span>Změny oprávnění se projeví okamžitě po uložení.</span></footer>
         </section>
       </section>
     </>
@@ -332,14 +398,22 @@ function PermissionsPage({ credentials, servers, selectedId, permissions, saving
 }
 
 function AuditPage({ events }: { events: AuditEvent[] }) {
+  const [query, setQuery] = useState("");
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [eventType, setEventType] = useState("all");
+  const eventTypes = [...new Set(events.map((event) => event.event_type))];
+  const filtered = events.filter((event) => (eventType === "all" || event.event_type === eventType) && `${event.event_type} ${event.actor_type} ${event.object_type} ${event.correlation_id}`.toLowerCase().includes(query.toLowerCase()));
   return (
     <>
       <PageHeader title="Audit" description="Záznam systémových, tokenových a bezpečnostních událostí.">
-        <button className="secondary"><SlidersHorizontal size={16} /> Filtry</button>
+        <label className="search-box"><Search size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Hledat v auditu..." aria-label="Hledat v auditu" /></label>
+        <button className="secondary" aria-expanded={filtersOpen} onClick={() => setFiltersOpen((current) => !current)}><SlidersHorizontal size={16} /> Filtry</button>
       </PageHeader>
-      <section className="panel">
+      {filtersOpen ? <section className="filter-bar"><label>Typ události<select value={eventType} onChange={(event) => setEventType(event.target.value)}><option value="all">Všechny události</option>{eventTypes.map((type) => <option key={type} value={type}>{type}</option>)}</select></label><button className="secondary" onClick={() => { setQuery(""); setEventType("all"); }}>Vymazat filtry</button></section> : null}
+      <section className="panel table-panel">
         <table><thead><tr><th>Čas</th><th>Uživatel</th><th>Akce</th><th>Objekt</th><th>Correlation ID</th></tr></thead>
-          <tbody>{events.map((event) => <tr key={event.id}><td>{new Date(event.created_at).toISOString()}</td><td>{event.actor_type}</td><td><span className="badge neutral">{event.event_type}</span></td><td>{event.object_type ?? ""}</td><td><code>{event.correlation_id}</code></td></tr>)}</tbody></table>
+          <tbody>{filtered.map((event) => <tr key={event.id}><td>{formatDate(event.created_at)}</td><td>{event.actor_type}</td><td><span className="badge neutral">{event.event_type}</span></td><td>{event.object_type ?? ""}</td><td><code>{event.correlation_id}</code></td></tr>)}</tbody></table>
+        {filtered.length === 0 ? <div className="empty-state"><Terminal size={34} /><strong>Žádné auditní události k zobrazení</strong></div> : null}
       </section>
     </>
   );
@@ -357,12 +431,6 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
   const [secret, setSecret] = useState<SecretResult | null>(null);
   const [confirm, setConfirm] = useState<{ credential: KajaCredential; action: "revoke" | "delete" } | null>(null);
   const [error, setError] = useState("");
-  const totals = useMemo(() => ({
-    activeTokens: credentials.filter((credential) => credential.active && !credential.revokedAt).length,
-    unauthorized: servers.reduce((sum, server) => sum + server.unauthorizedCount, 0),
-    accessTokens: credentials.reduce((sum, item) => sum + item.activeAccessTokenCount, 0)
-  }), [credentials, servers]);
-
   async function load() {
     setError("");
     try {
@@ -426,29 +494,20 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
   return (
     <main className="app-shell">
       <aside className="sidebar">
-        <div className="brand-row"><ShieldCheck size={24} /><div><strong>KCML</strong><span>Správce MCP serverů</span></div></div>
+        <div className="brand-row"><span className="brand-mark"><ShieldCheck size={22} /></span><div><strong>KCML</strong><span>Správce MCP serverů</span></div></div>
         <nav>
-          <button className={page === "monitoring" ? "active" : ""} onClick={() => setPage("monitoring")}><Activity size={18} /> Monitoring MCP</button>
-          <button className={page === "tokens" ? "active" : ""} onClick={() => setPage("tokens")}><KeyRound size={18} /> Tokeny</button>
-          <button className={page === "permissions" ? "active" : ""} onClick={() => setPage("permissions")}><LockKeyhole size={18} /> Správa oprávnění</button>
-          <button className={page === "audit" ? "active" : ""} onClick={() => setPage("audit")}><Terminal size={18} /> Audit</button>
+          <button aria-pressed={page === "monitoring"} className={page === "monitoring" ? "active" : ""} onClick={() => setPage("monitoring")}><Activity size={18} /> Monitoring MCP</button>
+          <button aria-pressed={page === "tokens"} className={page === "tokens" ? "active" : ""} onClick={() => setPage("tokens")}><KeyRound size={18} /> Tokeny</button>
+          <button aria-pressed={page === "permissions"} className={page === "permissions" ? "active" : ""} onClick={() => setPage("permissions")}><LockKeyhole size={18} /> Správa oprávnění</button>
+          <button aria-pressed={page === "audit"} className={page === "audit" ? "active" : ""} onClick={() => setPage("audit")}><Terminal size={18} /> Audit</button>
         </nav>
-        <div className="sidebar-footer"><span>Production</span><strong>admin</strong><button onClick={() => { void logout(); }}><LogOut size={16} /> Odhlásit se</button></div>
+        <div className="sidebar-footer"><div className="environment"><span className="status-dot ok" /><span>Production</span></div><div className="account"><span className="avatar">AD</span><span><strong>admin</strong><small>Administrátor</small></span></div><button onClick={() => { void logout(); }}><LogOut size={16} /> Odhlásit se</button></div>
       </aside>
       <section className="workspace">
-        <div className="topbar">
-          <div className="global-search"><Search size={16} /><span>Globální vyhledávání</span></div>
-          <div className="actions"><button className="secondary" onClick={() => { void load(); }}><RefreshCw size={16} /> Obnovit</button><button onClick={() => setCreateOpen(true)}><KeyRound size={16} /> Vytvořit token</button></div>
-        </div>
+        <div className="mobile-topbar"><div className="brand-row"><span className="brand-mark"><ShieldCheck size={20} /></span><strong>KCML</strong></div><span>{pageNames[page]}</span></div>
         {error && <div className="notice error"><AlertTriangle size={18} /> {error}</div>}
-        <section className="metric-row compact">
-          <article><Database size={18} /><span>Servery</span><strong>{servers.length}</strong></article>
-          <article><KeyRound size={18} /><span>Aktivní tokeny</span><strong>{totals.activeTokens}</strong></article>
-          <article><ShieldCheck size={18} /><span>Access tokeny</span><strong>{totals.accessTokens}</strong></article>
-          <article><AlertTriangle size={18} /><span>Auth chyby</span><strong>{totals.unauthorized}</strong></article>
-        </section>
-        {page === "monitoring" && <MonitoringPage servers={servers} />}
-        {page === "tokens" && <TokensPage credentials={credentials} onOpenCreate={() => setCreateOpen(true)} onEditPermissions={openPermissions} onConfirm={(credential, action) => setConfirm({ credential, action })} />}
+        {page === "monitoring" && <MonitoringPage servers={servers} onRefresh={() => { void load(); }} />}
+        {page === "tokens" && <TokensPage credentials={credentials} onOpenCreate={() => setCreateOpen(true)} onEditPermissions={openPermissions} onConfirm={(credential, action) => setConfirm({ credential, action })} onRefresh={() => { void load(); }} />}
         {page === "permissions" && <PermissionsPage credentials={credentials} servers={servers} selectedId={selectedCredentialId} permissions={permissions} saving={savingPermissions} onSelect={setSelectedCredentialId} onChange={setPermissions} onSave={() => { void savePermissions(); }} />}
         {page === "audit" && <AuditPage events={events} />}
       </section>
