@@ -3,14 +3,29 @@ import { hmacToken, issueOpaqueSecret, hashPasswordLikeSecret, verifyPasswordLik
 import { appendAudit } from "./audit.js";
 import { resourceFor } from "./catalog.js";
 
-export async function createKajaCredential(db: Db, actorId: string, correlationId: string): Promise<{ publicId: string; clientSecret: string; fingerprint: string }> {
+export type KajaCredentialSummary = {
+  id: string;
+  publicId: string;
+  label: string;
+  fingerprint: string;
+  active: boolean;
+  revokedAt: string | null;
+  deletedAt: string | null;
+  createdAt: string;
+  permissionCount: number;
+  activeAccessTokenCount: number;
+  lastTokenIssuedAt: string | null;
+  lastTokenExpiresAt: string | null;
+};
+
+export async function createKajaCredential(db: Db, actorId: string, correlationId: string, label: string): Promise<{ publicId: string; label: string; clientSecret: string; fingerprint: string }> {
   const secret = issueOpaqueSecret();
   const hash = await hashPasswordLikeSecret(secret.value);
   const result = await db.query("select nextval('kaja_number_seq') as number");
   const publicId = `Kaja${String(Number(result.rows[0].number)).padStart(4, "0")}`;
   const inserted = await db.query(
-    "insert into kaja_credential(public_id, secret_hash, secret_fingerprint) values ($1,$2,$3) returning id",
-    [publicId, hash, secret.fingerprint]
+    "insert into kaja_credential(public_id, label, secret_hash, secret_fingerprint) values ($1,$2,$3,$4) returning id",
+    [publicId, label, hash, secret.fingerprint]
   );
   await appendAudit(db, {
     eventType: "kaja.created",
@@ -18,10 +33,48 @@ export async function createKajaCredential(db: Db, actorId: string, correlationI
     actorId,
     objectType: "kaja_credential",
     objectId: inserted.rows[0].id,
-    after: { publicId, fingerprint: secret.fingerprint },
+    after: { publicId, label, fingerprint: secret.fingerprint },
     correlationId
   });
-  return { publicId, clientSecret: secret.value, fingerprint: secret.fingerprint };
+  return { publicId, label, clientSecret: secret.value, fingerprint: secret.fingerprint };
+}
+
+export async function listKajaCredentials(db: Db): Promise<KajaCredentialSummary[]> {
+  const result = await db.query(`
+    select
+      kc.id,
+      kc.public_id,
+      kc.label,
+      kc.secret_fingerprint,
+      kc.active,
+      kc.revoked_at,
+      kc.deleted_at,
+      kc.created_at,
+      count(distinct kp.id) filter (where kp.revoked_at is null) as permission_count,
+      count(distinct at.lookup_digest) filter (where at.revoked_at is null and at.expires_at > now()) as active_access_token_count,
+      max(at.issued_at) as last_token_issued_at,
+      max(at.expires_at) as last_token_expires_at
+    from kaja_credential kc
+    left join kaja_permission kp on kp.credential_id = kc.id
+    left join access_token at on at.credential_id = kc.id
+    where kc.deleted_at is null
+    group by kc.id
+    order by kc.created_at desc
+  `);
+  return result.rows.map((row) => ({
+    id: String(row.id),
+    publicId: String(row.public_id),
+    label: String(row.label),
+    fingerprint: String(row.secret_fingerprint),
+    active: Boolean(row.active),
+    revokedAt: row.revoked_at ? String(row.revoked_at) : null,
+    deletedAt: row.deleted_at ? String(row.deleted_at) : null,
+    createdAt: String(row.created_at),
+    permissionCount: Number(row.permission_count),
+    activeAccessTokenCount: Number(row.active_access_token_count),
+    lastTokenIssuedAt: row.last_token_issued_at ? String(row.last_token_issued_at) : null,
+    lastTokenExpiresAt: row.last_token_expires_at ? String(row.last_token_expires_at) : null
+  }));
 }
 
 export async function issueAccessToken(db: Db, params: {

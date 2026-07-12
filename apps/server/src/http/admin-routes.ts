@@ -5,7 +5,7 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { AppConfig } from "../config.js";
 import type { Db } from "../db.js";
 import { appendAudit } from "../domain/audit.js";
-import { createKajaCredential } from "../domain/auth.js";
+import { createKajaCredential, listKajaCredentials } from "../domain/auth.js";
 import { listServers } from "../domain/catalog.js";
 import { hostOf, sendError } from "./errors.js";
 
@@ -85,7 +85,17 @@ export function registerAdminRoutes(app: FastifyInstance, db: Db, config: AppCon
     const accountId = await sessionAccountId(db, request);
     if (!accountId) return sendError(reply, 401, "unauthorized", undefined, correlationId);
     if (!requireCsrf(request)) return sendError(reply, 403, "csrf_failed", undefined, correlationId);
-    return await createKajaCredential(db, accountId, correlationId);
+    const body = request.body as { label?: string };
+    const label = (body.label ?? "").trim();
+    if (label.length < 1 || label.length > 120) return sendError(reply, 400, "invalid_label", "Label is required and must be at most 120 characters", correlationId);
+    return await createKajaCredential(db, accountId, correlationId, label);
+  });
+
+  app.get("/api/kaja", async (request, reply) => {
+    if (hostOf(request.headers.host) !== config.ADMIN_HOST) return sendError(reply, 404, "not_found");
+    const accountId = await sessionAccountId(db, request);
+    if (!accountId) return sendError(reply, 401, "unauthorized");
+    return { credentials: await listKajaCredentials(db) };
   });
 
   app.get("/api/audit", async (request, reply) => {

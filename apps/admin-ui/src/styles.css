@@ -66,7 +66,7 @@ nav a.active { background: #1e2b37; color: white; }
 header { display: flex; justify-content: space-between; align-items: center; gap: 20px; }
 header p { color: #5b6875; margin: 0; }
 .actions { display: flex; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
-.metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+.metrics { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 14px; }
 .metrics article, .panel {
   background: white;
   border: 1px solid #d9e0e7;
@@ -77,6 +77,7 @@ header p { color: #5b6875; margin: 0; }
 .metrics strong { font-size: 28px; letter-spacing: 0; }
 .panel { padding: 20px; overflow-x: auto; }
 .panel-head { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
+.panel-count { color: #667585; font-size: 13px; font-weight: 700; }
 h2 { margin: 0 0 16px; font-size: 18px; letter-spacing: 0; }
 .empty {
   border: 1px dashed #b9c4cf;
@@ -89,6 +90,24 @@ table { width: 100%; border-collapse: collapse; font-size: 14px; }
 th, td { padding: 11px 10px; border-bottom: 1px solid #e1e7ee; text-align: left; white-space: nowrap; }
 th { color: #526170; font-size: 12px; text-transform: uppercase; }
 code { font-family: "SFMono-Regular", Consolas, monospace; font-size: 12px; }
+.inline-form {
+  display: grid;
+  grid-template-columns: minmax(240px, 1fr) auto;
+  gap: 12px;
+  align-items: end;
+  margin: 0 0 16px;
+}
+.inline-form label { margin: 0; }
+.overview-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.overview-grid article {
+  border: 1px solid #e1e7ee;
+  border-radius: 8px;
+  padding: 14px;
+  display: grid;
+  gap: 8px;
+}
+.overview-grid span { color: #667585; font-size: 13px; font-weight: 700; }
+.overview-grid strong { font-size: 24px; }
 .secret-once {
   display: grid;
   gap: 8px;
@@ -105,6 +124,8 @@ code { font-family: "SFMono-Regular", Consolas, monospace; font-size: 12px; }
   .app-shell { grid-template-columns: 1fr; }
   aside { position: static; }
   .metrics { grid-template-columns: 1fr; }
+  .inline-form { grid-template-columns: 1fr; }
+  .overview-grid { grid-template-columns: 1fr; }
   header { align-items: flex-start; flex-direction: column; }
   .workspace { padding: 18px; }
 }
