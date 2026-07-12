@@ -238,7 +238,7 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
           <div className="overview-grid">
             <article><span>Registrované aktivní servery</span><strong>{servers.filter((server) => server.registrationState === "ACTIVE").length}</strong></article>
             <article><span>Vypnuté / prázdné zdroje</span><strong>{servers.filter((server) => !server.enabled).length}</strong></article>
-            <article><span>Neautorizované pokusy</span><strong>audit</strong></article>
+            <article><span>Neautorizované pokusy</span><strong>{servers.reduce((sum, server) => sum + server.unauthorizedCount, 0)}</strong></article>
           </div>
         </section>
         <section className="panel">
