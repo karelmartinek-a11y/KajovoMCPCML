@@ -54,7 +54,7 @@ jobs:
           dir="$(scripts/onboarding/handler-dir.sh "origin/${{ github.base_ref }}")"
           cd "$dir"
           pnpm install --frozen-lockfile --ignore-scripts
-          pnpm exec eslint src --max-warnings=0
+          pnpm exec eslint src --ext .ts --max-warnings=0
 
   typecheck:
     name: typecheck

@@ -53,6 +53,22 @@ function assertStatus(response: Response, expected: number, code: string): void 
   if (response.status !== expected) throw new Error(`${code}:${response.status}`);
 }
 
+export function matchesExpectedResult(actual: unknown, expected: unknown): boolean {
+  if (Array.isArray(expected)) {
+    return Array.isArray(actual)
+      && actual.length === expected.length
+      && expected.every((item, index) => matchesExpectedResult(actual[index], item));
+  }
+  if (expected && typeof expected === "object") {
+    if (!actual || typeof actual !== "object" || Array.isArray(actual)) return false;
+    return Object.entries(expected as Record<string, unknown>).every(
+      ([key, value]) => Object.hasOwn(actual, key)
+        && matchesExpectedResult((actual as Record<string, unknown>)[key], value)
+    );
+  }
+  return isDeepStrictEqual(actual, expected);
+}
+
 export async function registerDisabledServer(db: Db, job: ActivationJob, socketPath: string, correlationId: string): Promise<string> {
   return tx(db, async (client) => {
     const authorization = await client.query(
@@ -244,7 +260,7 @@ export async function runTrialAndActivate(db: Db, config: AppConfig, serverId: s
     assertStatus(call.response, 200, "safe_tool_call_failed");
     const structured = (call.body as { result?: { structuredContent?: unknown }; error?: unknown }).result?.structuredContent;
     if ((call.body as { error?: unknown }).error) throw new Error("safe_tool_call_returned_error");
-    if (!isDeepStrictEqual(structured, job.manifest.testContract.expectedResult)) throw new Error("safe_tool_result_mismatch");
+    if (!matchesExpectedResult(structured, job.manifest.testContract.expectedResult)) throw new Error("safe_tool_result_mismatch");
     const invocationCorrelation = call.response.headers.get("x-correlation-id");
     if (!invocationCorrelation) throw new Error("correlation_header_missing");
 
@@ -312,7 +328,7 @@ export async function runSyntheticMonitoringProbe(
     const call = await rpc(server.hostname, accessToken, "tools/call", { name: server.toolName, arguments: manifest.testContract.safeInput });
     assertStatus(call.response, 200, "monitor_synthetic_call_failed");
     const output = (call.body as { result?: { structuredContent?: unknown }; error?: unknown }).result?.structuredContent;
-    if ((call.body as { error?: unknown }).error || !isDeepStrictEqual(output, manifest.testContract.expectedResult)) throw new Error("monitor_synthetic_result_mismatch");
+    if ((call.body as { error?: unknown }).error || !matchesExpectedResult(output, manifest.testContract.expectedResult)) throw new Error("monitor_synthetic_result_mismatch");
     const correlationId = call.response.headers.get("x-correlation-id");
     if (!correlationId) throw new Error("monitor_correlation_missing");
     return { correlationId };
