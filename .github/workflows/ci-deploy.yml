@@ -78,10 +78,14 @@ jobs:
           deploy/scripts/preflight.sh
           install -m 0644 deploy/nginx/kcml.conf /etc/nginx/sites-available/kcml.conf
           ln -sfn /etc/nginx/sites-available/kcml.conf /etc/nginx/sites-enabled/kcml.conf
+          kcml_uid="$(id -u kcml)"
           install -m 0644 deploy/systemd/kcml.service /etc/systemd/system/kcml.service
           install -m 0644 deploy/systemd/kcml-onboarding-worker.service /etc/systemd/system/kcml-onboarding-worker.service
           install -m 0644 deploy/systemd/kcml-egress-proxy.service /etc/systemd/system/kcml-egress-proxy.service
-          kcml_uid="$(id -u kcml)"
+          install -d -m 0755 /etc/systemd/system/kcml-onboarding-worker.service.d
+          sed "s/@KCML_UID@/${kcml_uid}/g" deploy/systemd/kcml-onboarding-worker-runtime.conf.in \
+            > /etc/systemd/system/kcml-onboarding-worker.service.d/runtime-user.conf
+          chmod 0644 /etc/systemd/system/kcml-onboarding-worker.service.d/runtime-user.conf
           loginctl enable-linger kcml
           systemctl start "user@${kcml_uid}.service"
           test -S "/run/user/${kcml_uid}/bus"
