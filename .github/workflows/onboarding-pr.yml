@@ -153,7 +153,9 @@ jobs:
           pnpm --ignore-workspace licenses list --prod --json > /tmp/licenses.json
           node --input-type=module <<'NODE'
           import fs from "node:fs";
-          const data = JSON.parse(fs.readFileSync("/tmp/licenses.json", "utf8"));
+          const raw = fs.readFileSync("/tmp/licenses.json", "utf8").trim();
+          if (!raw || raw === "No licenses in packages found") process.exit(0);
+          const data = JSON.parse(raw);
           const allowed = /^(MIT|ISC|Apache-2.0|BSD-2-Clause|BSD-3-Clause)$/;
           for (const [license, packages] of Object.entries(data)) if (!allowed.test(license) && packages.length) throw new Error(`license not allowed: ${license}`);
           NODE
