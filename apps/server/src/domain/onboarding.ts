@@ -169,7 +169,7 @@ export async function createIntegrationToken(
         `select oj.id, oj.state, ms.enabled
            from onboarding_job oj
            left join mcp_server ms on ms.id=oj.server_id
-          where oj.id=$1 for update`,
+          where oj.id=$1 for update of oj`,
         [resumeJobId]
       );
       if (!job.rowCount) throw Object.assign(new Error("job_not_found"), { statusCode: 404 });
