@@ -109,6 +109,7 @@ describe("rootless Podman user-manager execution", () => {
     });
     expect(invocation.binary).toBe("/usr/bin/systemd-run");
     expect(invocation.args).toContain("--unit=kcml-podman-test-id");
+    expect(invocation.args).toContain("KillMode=process");
     expect(invocation.args).toContain("XDG_RUNTIME_DIR=/run/user/993");
     expect(invocation.args).toContain("DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/993/bus");
     expect(invocation.args).toContain("REGISTRY_AUTH_FILE=/var/lib/kcml/podman/auth.json");

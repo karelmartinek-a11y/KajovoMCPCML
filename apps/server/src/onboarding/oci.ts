@@ -44,6 +44,10 @@ export function rootlessPodmanServiceInvocation(input: {
       `--unit=kcml-podman-${unitId}`,
       "--property", `WorkingDirectory=${home}`,
       "--property", "UMask=0077",
+      // Detached Podman containers keep conmon alive after the CLI exits.
+      // Only the CLI is the transient service's main process; leaving conmon
+      // alone lets systemd-run return the verified CLI exit status promptly.
+      "--property", "KillMode=process",
       ...serviceEnvironment.flatMap(([name, value]) => ["--setenv", `${name}=${value}`]),
       input.binary,
       ...input.args
