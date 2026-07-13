@@ -65,6 +65,33 @@ export type SourceEvidence = {
   validation: Record<string, unknown>;
 };
 
+export type ProgrammerActionKind = "UPLOAD_SOURCE" | "WAIT" | "UPLOAD_REVISION" | "COMPLETE" | "STOP";
+
+export function programmerActionForState(state: OnboardingJobState, blockingErrorCode?: string | null) {
+  if (state === "CREATED") {
+    return { kind: "UPLOAD_SOURCE" as const, canUploadRevision: false, message: "Upload the initial manifest and source ZIP." };
+  }
+  if (state === "AWAITING_REVISION" || state === "FAILED") {
+    return {
+      kind: "UPLOAD_REVISION" as const,
+      canUploadRevision: true,
+      message: blockingErrorCode
+        ? `Fix ${blockingErrorCode}, fetch the current ETag and upload a new source revision.`
+        : "Inspect failed gates, fetch the current ETag and upload a new source revision."
+    };
+  }
+  if (state === "ACTIVE") {
+    return { kind: "COMPLETE" as const, canUploadRevision: false, message: "Onboarding is complete and the MCP server is active." };
+  }
+  if (state === "QUARANTINED") {
+    return { kind: "STOP" as const, canUploadRevision: false, message: "A non-bypassable security gate quarantined the server." };
+  }
+  if (state === "CANCELLED") {
+    return { kind: "STOP" as const, canUploadRevision: false, message: "Onboarding was cancelled." };
+  }
+  return { kind: "WAIT" as const, canUploadRevision: false, message: "Poll this job until it becomes ACTIVE or requests a new revision." };
+}
+
 export function issueIntegrationSecret(): { value: string; fingerprint: string } {
   const value = `kci_${randomBytes(64).toString("base64url")}`;
   return { value, fingerprint: fingerprintSecret(value) };
@@ -333,7 +360,7 @@ export async function replaceOnboardingSource(
           set state='SOURCE_UPLOADED', manifest=$3, manifest_digest=$4, source_digest=$5,
               source_archive_path=$6, source_revision=$7, github_branch=null, github_pr_number=null,
               github_pr_url=null, source_commit=null, blocking_error_code=null, blocking_error_detail=null,
-              next_run_at=now(), lock_version=lock_version+1
+              completed_at=null, next_run_at=now(), lock_version=lock_version+1
         where id=$1 and lock_version=$2 returning *`,
       [jobId, expectedLockVersion, manifest, evidence.manifestDigest, evidence.sourceDigest, evidence.archivePath, revision]
     );
@@ -676,9 +703,11 @@ export async function getOnboardingJob(db: Db, jobId: string) {
 
 export function mapJob(row: Record<string, unknown>) {
   const hostname = optionalText(row.hostname);
+  const state = String(row.state) as OnboardingJobState;
+  const blockingErrorCode = optionalText(row.blocking_error_code);
   return {
     id: String(row.id),
-    state: String(row.state) as OnboardingJobState,
+    state,
     correlationId: String(row.correlation_id),
     lockVersion: Number(row.lock_version),
     sourceRevision: Number(row.source_revision),
@@ -698,8 +727,9 @@ export function mapJob(row: Record<string, unknown>) {
     imageDigest: optionalText(row.image_digest),
     sbomDigest: optionalText(row.sbom_digest),
     provenanceDigest: optionalText(row.provenance_digest),
-    blockingErrorCode: optionalText(row.blocking_error_code),
+    blockingErrorCode,
     blockingErrorDetail: optionalText(row.blocking_error_detail),
+    programmerAction: programmerActionForState(state, blockingErrorCode),
     createdAt: asIso(row.created_at),
     updatedAt: asIso(row.updated_at),
     completedAt: asIso(row.completed_at)

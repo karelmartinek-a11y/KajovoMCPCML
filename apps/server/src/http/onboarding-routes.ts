@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
+import path from "node:path";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { ZodError } from "zod";
 import type { AppConfig } from "../config.js";
@@ -23,6 +24,7 @@ import { requireCsrf, sessionAccountId } from "./admin-routes.js";
 import { hostOf, sendError } from "./errors.js";
 
 const IDEMPOTENCY_KEY = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/;
+const ONBOARDING_CATALOG_FILE = "Connect_in_Catalog_KajovoMCPCML_v1.4.docx";
 
 function bearer(request: FastifyRequest): string | null {
   const authorization = request.headers.authorization;
@@ -129,15 +131,44 @@ export function registerOnboardingRoutes(app: FastifyInstance, db: Db, config: A
     const correlationId = randomUUID();
     const accountId = await adminIdentity(db, config, request, reply, correlationId, true);
     if (!accountId) return;
-    const body = request.body as { label?: unknown; resumeJobId?: unknown };
-    const label = typeof body.label === "string" ? body.label.trim() : "";
+    if (!config.ONBOARDING_WORKER_ENABLED) {
+      return sendError(reply, 503, "onboarding_unavailable", "Automatická integrace není na serveru připravená.", correlationId);
+    }
+    const body = request.body as { note?: unknown; label?: unknown; resumeJobId?: unknown };
+    const note = typeof body.note === "string" ? body.note.trim() : "";
+    const legacyLabel = typeof body.label === "string" ? body.label.trim() : "";
+    const label = note || legacyLabel;
     const resumeJobId = typeof body.resumeJobId === "string" && body.resumeJobId ? body.resumeJobId : undefined;
     if (!label || label.length > 120) return sendError(reply, 400, "invalid_label", "Label is required and must be at most 120 characters", correlationId);
     try {
+      await fs.access(path.resolve(process.cwd(), ONBOARDING_CATALOG_FILE));
+    } catch {
+      return sendError(reply, 503, "onboarding_catalog_unavailable", "Onboarding katalog v1.4 není na serveru dostupný.", correlationId);
+    }
+    try {
       reply.header("cache-control", "no-store");
-      return await createIntegrationToken(db, config, accountId, correlationId, label, resumeJobId);
+      return {
+        ...await createIntegrationToken(db, config, accountId, correlationId, label, resumeJobId),
+        onboardingCatalogUrl: "/api/onboarding-catalog",
+        onboardingCatalogFileName: ONBOARDING_CATALOG_FILE,
+        programmerApiUrl: `https://${config.REGISTER_HOST}/v1/onboardings`
+      };
     } catch (error) {
       return sendError(reply, statusCode(error), errorCode(error), undefined, correlationId);
+    }
+  });
+
+  app.get("/api/onboarding-catalog", async (request, reply) => {
+    if (!await adminIdentity(db, config, request, reply)) return;
+    try {
+      const catalog = await fs.readFile(path.resolve(process.cwd(), ONBOARDING_CATALOG_FILE));
+      return reply
+        .header("cache-control", "private, no-store")
+        .header("content-disposition", `attachment; filename="${ONBOARDING_CATALOG_FILE}"`)
+        .type("application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+        .send(catalog);
+    } catch {
+      return sendError(reply, 503, "onboarding_catalog_unavailable");
     }
   });
 

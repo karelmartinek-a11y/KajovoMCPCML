@@ -3,6 +3,7 @@ import {
   assertTransition,
   issueIntegrationSecret,
   nextHeartbeatExpiry,
+  programmerActionForState,
   requestDigest,
   tokenDeadlines
 } from "./onboarding.js";
@@ -36,5 +37,16 @@ describe("automated onboarding token policy", () => {
     expect(() => assertTransition("TRIAL_TESTING", "CANCELLED")).not.toThrow();
     expect(() => assertTransition("SOURCE_UPLOADED", "ACTIVE")).toThrow("invalid_state_transition");
     expect(requestDigest(`sha256:${"a".repeat(64)}`, `sha256:${"b".repeat(64)}`)).toMatch(/^sha256:[a-f0-9]{64}$/);
+  });
+
+  it("gives the programmer an explicit self-service next action", () => {
+    expect(programmerActionForState("CI_RUNNING").kind).toBe("WAIT");
+    expect(programmerActionForState("AWAITING_REVISION", "ci_failed")).toEqual({
+      kind: "UPLOAD_REVISION",
+      canUploadRevision: true,
+      message: "Fix ci_failed, fetch the current ETag and upload a new source revision."
+    });
+    expect(programmerActionForState("ACTIVE").kind).toBe("COMPLETE");
+    expect(programmerActionForState("QUARANTINED").kind).toBe("STOP");
   });
 });

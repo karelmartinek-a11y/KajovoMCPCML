@@ -10,6 +10,7 @@ import {
   CircleHelp,
   ClipboardCopy,
   Clock3,
+  Download,
   KeyRound,
   LockKeyhole,
   LogOut,
@@ -27,6 +28,7 @@ import {
   X
 } from "lucide-react";
 import "./styles.css";
+import { onboardingHandoffText } from "./onboarding-handoff.js";
 
 type Page = "monitoring" | "registration" | "integration" | "tokens" | "permissions" | "audit";
 type ServerAction = "test" | "trial" | "mcp-test" | "bind-manifest" | "disable" | "resume" | "activate";
@@ -118,7 +120,12 @@ type IntegrationToken = {
   code: string | null;
   hostname: string | null;
 };
-type IntegrationSecret = IntegrationToken & { token: string };
+type IntegrationSecret = IntegrationToken & {
+  token: string;
+  onboardingCatalogUrl: string;
+  onboardingCatalogFileName: string;
+  programmerApiUrl: string;
+};
 type OnboardingGate = { gate_name: string; stage: string; status: string; evidence: Record<string, unknown>; correlation_id: string; started_at: string | null; completed_at: string | null };
 type OnboardingEvent = { id: number; from_state: string | null; to_state: string; event_type: string; detail: Record<string, unknown>; correlation_id: string; created_at: string };
 type OnboardingJob = {
@@ -302,48 +309,63 @@ function SecretModal({ secret, onClose }: { secret: SecretResult; onClose: () =>
 }
 
 function CreateIntegrationTokenModal({ resumeJobId, onClose, onCreated }: { resumeJobId?: string; onClose: () => void; onCreated: (secret: IntegrationSecret) => void }) {
-  const [label, setLabel] = useState(resumeJobId ? `Pokračování jobu ${resumeJobId.slice(0, 8)}` : "");
+  const [note, setNote] = useState(resumeJobId ? `Pokračování integrace ${resumeJobId.slice(0, 8)}` : "");
   const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
   async function submit(event: React.FormEvent) {
     event.preventDefault();
-    if (!label.trim()) { setError("Zadej označení implementačního tokenu."); return; }
+    if (!note.trim()) { setError("Napište krátkou poznámku, podle které nový server později poznáte."); return; }
+    setBusy(true);
+    setError("");
     try {
       const result = await api<IntegrationSecret>("/api/integration-tokens", {
         method: "POST",
         headers: { "x-csrf-token": csrf() },
-        body: JSON.stringify({ label: label.trim(), resumeJobId })
+        body: JSON.stringify({ note: note.trim(), resumeJobId })
       });
       onCreated(result);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Token se nepodařilo vytvořit");
+    } finally {
+      setBusy(false);
     }
   }
   return (
     <Modal title={resumeJobId ? "Navazující implementační token" : "Automaticky integrovat MCP server"} onClose={onClose}>
       <form className="modal-form" onSubmit={(event) => { void submit(event); }}>
-        <div className="form-intro"><span className="modal-icon"><Workflow size={20} /></span><p>Token má 512 bitů entropie, platí nejprve 2 hodiny a smí založit právě jeden onboardingový job a jeden MCP server. Serverový job jej může prodlužovat nejvýše 24 hodin.</p></div>
-        <label>Označení tokenu<span className="field-hint">Jméno programátora, týmu nebo integrace</span><input autoFocus value={label} onChange={(event) => setLabel(event.target.value)} maxLength={120} placeholder="Např. Fakturační MCP – dodavatel" /></label>
+        <div className="form-intro"><span className="modal-icon"><Workflow size={20} /></span><p>Po vygenerování předáte programátorovi Connect in Catalog v1.4 a jednorázově zobrazený token. Na první upload má 2 hodiny; potom sám sleduje stav, opravuje případné vratné chyby a systém automaticky dokončí registraci, HTTPS, testy, autorizaci, logging, monitoring a aktivaci.</p></div>
+        <label>Poznámka k novému serveru<span className="field-hint">Pouze vaše interní označení, například účel serveru nebo dodavatel. Do konfigurace serveru se nepřenáší.</span><textarea autoFocus value={note} onChange={(event) => setNote(event.target.value)} maxLength={120} rows={3} placeholder="Např. Fakturační MCP – dodavatel ABC" /></label>
         {resumeJobId ? <div className="permission-preview"><strong>Pokračování existujícího jobu</strong><code>{resumeJobId}</code><span>Předchozí token bude revokován. KCML identita zůstane zachována.</span></div> : null}
         {error && <p className="error">{error}</p>}
-        <footer className="modal-actions"><button type="button" className="secondary" onClick={onClose}>Zrušit</button><button type="submit"><Rocket size={16} /> Vygenerovat token</button></footer>
+        <footer className="modal-actions"><button type="button" className="secondary" onClick={onClose} disabled={busy}>Zrušit</button><button type="submit" disabled={busy}><Rocket size={16} /> {busy ? "Generuji…" : "Vygenerovat token"}</button></footer>
       </form>
     </Modal>
   );
 }
 
 function IntegrationSecretModal({ secret, onClose }: { secret: IntegrationSecret; onClose: () => void }) {
-  const [copied, setCopied] = useState(false);
-  async function copy() {
+  const [copied, setCopied] = useState<"token" | "instructions" | null>(null);
+  async function copyToken() {
     await navigator.clipboard.writeText(secret.token);
-    setCopied(true);
+    setCopied("token");
+  }
+  async function copyInstructions() {
+    await navigator.clipboard.writeText(onboardingHandoffText({
+      note: secret.label,
+      token: secret.token,
+      initialExpiresAt: secret.initialExpiresAt,
+      programmerApiUrl: secret.programmerApiUrl
+    }));
+    setCopied("instructions");
   }
   return (
-    <Modal title="Implementační token byl vytvořen" onClose={onClose}>
+    <Modal title="Podklady pro programátora jsou připravené" onClose={onClose}>
       <div className="secret-dialog">
-        <p>Token se zobrazuje pouze nyní. KajovoMCPCML ukládá jen HMAC digest a fingerprint.</p>
-        <div className="secret-once"><strong>{secret.label}</strong><code>{secret.token}</code><span>Fingerprint {secret.fingerprint}</span><span>Počáteční expirace {formatDate(secret.initialExpiresAt)} · nejzazší expirace {formatDate(secret.maxExpiresAt)}</span></div>
-        <div className="permission-preview"><strong>Programátorské API</strong><code>POST https://register.hcasc.cz/v1/onboardings</code><span>Bearer token + multipart pole <code>manifest</code> a <code>source</code> + hlavička <code>Idempotency-Key</code>.</span></div>
-        <footer className="modal-actions"><button className="secondary" onClick={onClose}>Zavřít</button><button onClick={() => { void copy(); }}><ClipboardCopy size={16} /> {copied ? "Zkopírováno" : "Zkopírovat token"}</button></footer>
+        <div className="notice success"><CheckCircle2 size={18} /><span><strong>Vaše práce tímto končí.</strong><br />Programátorovi předejte onboarding katalog a token. Stav, opravitelné chyby i nahrání nové revize obslouží sám přes programátorské API až do zeleného výsledku.</span></div>
+        <div className="handoff-step"><span>1</span><div><strong>Onboarding katalog</strong><p>Závazný realizovatelný dokument Connect in Catalog v1.4 včetně samoobslužného opravného cyklu.</p><a className="button-link secondary" href={secret.onboardingCatalogUrl} download={secret.onboardingCatalogFileName}><Download size={16} /> Stáhnout onboarding katalog</a></div></div>
+        <div className="handoff-step"><span>2</span><div><strong>Jednorázový integrační token</strong><p>Zobrazuje se pouze nyní. První upload musí programátor provést do {formatDate(secret.initialExpiresAt)}.</p><div className="secret-once"><code>{secret.token}</code><small>Fingerprint {secret.fingerprint}</small></div><button type="button" className="secondary" onClick={() => { void copyToken(); }}><ClipboardCopy size={16} /> {copied === "token" ? "Token zkopírován" : "Zkopírovat token"}</button></div></div>
+        <div className="permission-preview"><strong>Co proběhne po uploadu</strong><span>Systém přidělí KCML identitu a vlastní HTTPS adresu a provede PR/CI, podepsaný OCI build, izolované nasazení, katalog, autorizaci, logging, audit, monitoring, veřejné testy a aktivaci. Opravitelnou chybu API vrátí programátorovi jako <code>UPLOAD_REVISION</code>; po nové revizi pipeline sama pokračuje.</span></div>
+        <footer className="modal-actions"><button className="secondary" onClick={onClose}>Zavřít</button><button onClick={() => { void copyInstructions(); }}><ClipboardCopy size={16} /> {copied === "instructions" ? "Pokyny zkopírovány" : "Zkopírovat pokyny i token"}</button></footer>
       </div>
     </Modal>
   );
@@ -586,7 +608,7 @@ function IntegrationTokensPage({ tokens, jobs, onCreate, onOpenJob, onResume, on
   const filtered = tokens.filter((token) => `${token.label} ${token.fingerprint} ${token.code ?? ""}`.toLowerCase().includes(query.toLowerCase()));
   return (
     <>
-      <PageHeader title="Implementační tokeny" description="Jednorázové 512bitové tokeny pro plně automatický onboarding jednoho MCP serveru.">
+      <PageHeader title="Implementační tokeny" description="Poznámka, onboarding katalog a jednorázový token pro automatickou integraci jednoho MCP serveru.">
         <label className="search-box"><Search size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Hledat token, job nebo KCML…" aria-label="Hledat implementační token" /></label>
         <button onClick={onCreate}><Plus size={17} /> Vygenerovat token</button><IconButton label="Obnovit" onClick={onRefresh}><RefreshCw size={17} /></IconButton>
       </PageHeader>
