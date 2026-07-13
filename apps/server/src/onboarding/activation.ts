@@ -273,7 +273,7 @@ export async function runTrialAndActivate(db: Db, config: AppConfig, serverId: s
          not exists(select 1 from runtime_log_event where server_id=$2 and fields::text like '%'||$3||'%') as log_access_token_free,
          not exists(select 1 from audit_event where object_id=$2::text and (coalesce(before_json::text,'')||coalesce(after_json::text,'')) like '%'||$4||'%') as audit_kaja_secret_free,
          not exists(select 1 from runtime_log_event where server_id=$2 and fields::text like '%'||$4||'%') as log_kaja_secret_free,
-         not exists(select 1 from audit_event where object_id=$2 and (coalesce(before_json::text,'')||coalesce(after_json::text,'')) ~ 'kc[ie]_[A-Za-z0-9_-]{40,}') as audit_integration_egress_secret_free,
+         not exists(select 1 from audit_event where object_id=$2::text and (coalesce(before_json::text,'')||coalesce(after_json::text,'')) ~ 'kc[ie]_[A-Za-z0-9_-]{40,}') as audit_integration_egress_secret_free,
          not exists(select 1 from runtime_log_event where server_id=$2 and fields::text ~ 'kc[ie]_[A-Za-z0-9_-]{40,}') as log_integration_egress_secret_free`,
       [invocationCorrelation, serverId, accessToken, credential.secret]
     );
