@@ -75,6 +75,7 @@ jobs:
             exit 1
           fi
           chmod +x deploy/scripts/*.sh
+          deploy/scripts/preflight.sh
           install -m 0644 deploy/nginx/kcml.conf /etc/nginx/sites-available/kcml.conf
           ln -sfn /etc/nginx/sites-available/kcml.conf /etc/nginx/sites-enabled/kcml.conf
           install -m 0644 deploy/systemd/kcml.service /etc/systemd/system/kcml.service
@@ -82,7 +83,6 @@ jobs:
           install -m 0644 deploy/systemd/kcml-egress-proxy.service /etc/systemd/system/kcml-egress-proxy.service
           systemctl daemon-reload
           systemctl enable kcml kcml-onboarding-worker kcml-egress-proxy
-          deploy/scripts/preflight.sh
           deploy/scripts/backup.sh
           corepack enable
           CI=true pnpm install --frozen-lockfile --prod=false
