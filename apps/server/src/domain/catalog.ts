@@ -35,6 +35,8 @@ function mapServer(row: Record<string, unknown>): McpServer {
     lastSuccessAt: asTimestamp(row.last_success_at),
     lastFailureAt: asTimestamp(row.last_failure_at),
     lastUnauthorizedAt: asTimestamp(row.last_unauthorized_at),
+    handlerSmokePassed: Boolean((row.evidence as { handlerSmoke?: { status?: string } } | null)?.handlerSmoke?.status === "PASS"),
+    acceptancePassed: Boolean((row.evidence as { acceptancePassed?: boolean } | null)?.acceptancePassed),
     createdAt: asTimestamp(row.created_at) ?? "",
     updatedAt: asTimestamp(row.updated_at) ?? ""
   };
@@ -42,6 +44,11 @@ function mapServer(row: Record<string, unknown>): McpServer {
 
 export async function getServerByHostname(db: Db, hostname: string): Promise<McpServer | null> {
   const result = await db.query("select * from mcp_server where lower(hostname)=lower($1)", [hostname]);
+  return result.rowCount ? mapServer(result.rows[0]) : null;
+}
+
+export async function getServerById(db: Db, id: string): Promise<McpServer | null> {
+  const result = await db.query("select * from mcp_server where id=$1", [id]);
   return result.rowCount ? mapServer(result.rows[0]) : null;
 }
 
@@ -54,9 +61,17 @@ export async function listServers(db: Db): Promise<McpServer[]> {
       coalesce(fs.failure_count, 0) as failure_count,
       fs.last_success_at,
       fs.last_failure_at,
-      fs.last_unauthorized_at
+      fs.last_unauthorized_at,
+      revision.evidence
     from mcp_server ms
     left join function_statistics fs on fs.server_id = ms.id
+    left join lateral (
+      select rr.evidence
+      from registration_revision rr
+      where rr.server_id = ms.id
+      order by rr.created_at desc
+      limit 1
+    ) revision on true
     order by ms.kcml_number asc
   `);
   return result.rows.map(mapServer);

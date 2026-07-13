@@ -1,6 +1,7 @@
 import { loadConfig } from "./config.js";
 import { createDb } from "./db.js";
 import { buildApp } from "./app.js";
+import "./handlers/home-assistant-device-inventory.js";
 
 const config = loadConfig();
 const db = createDb(config);

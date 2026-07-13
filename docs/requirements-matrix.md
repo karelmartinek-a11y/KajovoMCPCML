@@ -16,3 +16,4 @@ evidence locations.
 | Monitoring | Admin UI + health | `function_statistics`, state fields | `/health`, dashboard | no healthy without DB readiness | `health.test.ts` | readiness returns 503 on DB failure |
 | Deployment | GitHub Actions + deploy scripts | migration table | systemd/compose | masked `PASS`, preflight, backup, rollback | CI workflow | CI blocks deploy on failed tests |
 | Nultá verze | Seed migration | empty `mcp_server` | dashboard | no demo KCML entries | `zero-state.test.ts` | clean DB catalog is empty |
+| Home Assistant inventory | `home_assistant_device_inventory@1.0.0` | catalog-assigned `mcp_server` + registration evidence | one-tool MCP resource and registration workflow | loopback-only upstream; HA token remains in agent; strict empty input and bounded output | `home-assistant-device-inventory.test.ts`, agent `test_device_inventory.py` | `docs/acceptance/home-assistant-device-inventory.md`, real MCP call and C-01…C-10/T-01…T-25 matrix |

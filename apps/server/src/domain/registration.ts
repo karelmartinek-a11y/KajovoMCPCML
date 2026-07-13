@@ -18,6 +18,7 @@ const manifestSchema = z.object({
     operations: z.string().min(1)
   }),
   tool: z.object({
+    name: z.string().regex(/^[a-z0-9_-]+$/),
     title: z.string().min(1),
     description: z.string().min(1),
     inputSchema: z.record(z.unknown()),
@@ -72,12 +73,24 @@ const manifestSchema = z.object({
 
 export type RegistrationManifest = z.infer<typeof manifestSchema>;
 
+function canonicalize(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalize);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, nested]) => [key, canonicalize(nested)])
+    );
+  }
+  return value;
+}
+
 export function validateManifest(input: unknown): { manifest: RegistrationManifest; digest: string } {
   const manifest = manifestSchema.parse(input);
   const ajv = new Ajv2020({ strict: true, allErrors: true });
   ajv.compile(manifest.tool.inputSchema);
   ajv.compile(manifest.tool.outputSchema);
-  const canonical = JSON.stringify(manifest, Object.keys(manifest).sort());
+  const canonical = JSON.stringify(canonicalize(manifest));
   return {
     manifest,
     digest: `sha256:${createHash("sha256").update(canonical).digest("hex")}`

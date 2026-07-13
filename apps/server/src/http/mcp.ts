@@ -79,7 +79,20 @@ export function registerMcpRoutes(app: FastifyInstance, db: Db, config: AppConfi
     }
     if (body.method === "notifications/initialized") return reply.code(202).send();
     if (body.method === "tools/list") {
-      return { jsonrpc: "2.0", id: body.id, result: { tools: [{ name: server.toolName, title: server.displayName, description: server.description, inputSchema: server.inputSchema }] } };
+      return {
+        jsonrpc: "2.0",
+        id: body.id,
+        result: {
+          tools: [{
+            name: server.toolName,
+            title: server.displayName,
+            description: server.description,
+            inputSchema: server.inputSchema,
+            outputSchema: server.outputSchema,
+            annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+          }]
+        }
+      };
     }
     if (body.method !== "tools/call") {
       return { jsonrpc: "2.0", id: body.id ?? null, error: { code: -32601, message: "Method not found" } };
@@ -107,7 +120,17 @@ export function registerMcpRoutes(app: FastifyInstance, db: Db, config: AppConfi
         [server.id]
       );
       await appendAudit(db, { eventType: "mcp.invocation.completed", actorType: "kaja", actorId: principal.credentialId, objectType: "mcp_server", objectId: server.id, after: { latencyMs: Date.now() - started }, correlationId });
-      return { jsonrpc: "2.0", id: body.id ?? null, result: { content: [{ type: "text", text: JSON.stringify(output) }], structuredContent: output } };
+      const table = output && typeof output === "object" && "markdown_table" in output
+        ? (output as { markdown_table?: unknown }).markdown_table
+        : undefined;
+      return {
+        jsonrpc: "2.0",
+        id: body.id ?? null,
+        result: {
+          content: [{ type: "text", text: typeof table === "string" ? table : JSON.stringify(output) }],
+          structuredContent: output
+        }
+      };
     } catch (error) {
       await db.query(
         `insert into function_statistics(server_id, failure_count, last_failure_at)

@@ -26,7 +26,7 @@ import {
 } from "lucide-react";
 import "./styles.css";
 
-type Page = "monitoring" | "tokens" | "permissions" | "audit";
+type Page = "monitoring" | "registration" | "tokens" | "permissions" | "audit";
 type Session = { authenticated: boolean; account: string | null };
 type Server = {
   id: string;
@@ -49,6 +49,8 @@ type Server = {
   lastSuccessAt: string | null;
   lastFailureAt: string | null;
   lastUnauthorizedAt: string | null;
+  handlerSmokePassed: boolean;
+  acceptancePassed: boolean;
   createdAt: string;
   updatedAt: string;
 };
@@ -83,6 +85,7 @@ type SecretResult = { publicId: string; label: string; clientSecret: string; fin
 
 const pageNames: Record<Page, string> = {
   monitoring: "Monitoring MCP",
+  registration: "Registrace serveru",
   tokens: "Tokeny",
   permissions: "Správa oprávnění",
   audit: "Audit"
@@ -274,7 +277,7 @@ function MetricCard({ tone, icon, value, label }: { tone: "neutral" | "success" 
   return <article className={`metric-card ${tone}`}><span className="metric-icon">{icon}</span><strong>{value}</strong><span>{label}</span></article>;
 }
 
-function ServerDetailModal({ server, onClose }: { server: Server; onClose: () => void }) {
+function ServerDetailModal({ server, busy, onClose, onAction }: { server: Server; busy: boolean; onClose: () => void; onAction: (action: "test" | "trial" | "activate") => void }) {
   return (
     <Modal title={server.displayName} onClose={onClose}>
       <div className="server-detail">
@@ -290,15 +293,22 @@ function ServerDetailModal({ server, onClose }: { server: Server; onClose: () =>
           <dt>Provozní chyby</dt><dd>{server.failureCount}</dd>
           <dt>Poslední úspěch</dt><dd>{formatDate(server.lastSuccessAt)}</dd>
           <dt>Poslední chyba</dt><dd>{formatDate(server.lastFailureAt)}</dd>
+          <dt>Smoke test</dt><dd>{server.handlerSmokePassed ? "PASS" : "NOT TESTED"}</dd>
+          <dt>Akceptační matice</dt><dd>{server.acceptancePassed ? "PASS" : "NOT TESTED"}</dd>
         </dl>
         {server.description ? <p>{server.description}</p> : null}
-        <footer className="modal-actions"><button type="button" onClick={onClose}>Zavřít detail</button></footer>
+        <footer className="modal-actions">
+          <button type="button" className="secondary" onClick={onClose}>Zavřít detail</button>
+          {server.registrationState === "REGISTERED_DISABLED" ? <button type="button" disabled={busy} onClick={() => onAction("test")}>Otestovat handler</button> : null}
+          {server.registrationState === "REGISTERED_DISABLED" && server.handlerSmokePassed ? <button type="button" disabled={busy} onClick={() => onAction("trial")}>Povolit TRIAL</button> : null}
+          {server.registrationState === "TRIAL" && server.acceptancePassed ? <button type="button" disabled={busy} onClick={() => onAction("activate")}>Aktivovat</button> : null}
+        </footer>
       </div>
     </Modal>
   );
 }
 
-function MonitoringPage({ servers, onRefresh }: { servers: Server[]; onRefresh: () => void }) {
+function MonitoringPage({ servers, actionBusy, onRefresh, onServerAction }: { servers: Server[]; actionBusy: boolean; onRefresh: () => void; onServerAction: (server: Server, action: "test" | "trial" | "activate") => Promise<void> }) {
   const [query, setQuery] = useState("");
   const [timeRange, setTimeRange] = useState("24h");
   const [detailServer, setDetailServer] = useState<Server | null>(null);
@@ -340,7 +350,31 @@ function MonitoringPage({ servers, onRefresh }: { servers: Server[]; onRefresh: 
             <tbody>{filtered.map((server) => <tr key={server.id}><td><strong>{server.displayName}</strong><span className="cell-subtitle">{server.code}</span></td><td>{server.hostname}</td><td><span className="badge neutral">{server.registrationState}</span></td><td><span className="badge ok">{server.operationalState}</span></td><td>{server.successCount}/{server.failureCount}</td><td>{server.unauthorizedCount}</td><td>{formatDate(server.updatedAt)}</td><td><IconButton label={`Detail serveru ${server.displayName}`} onClick={() => setDetailServer(server)}><MoreHorizontal size={17} /></IconButton></td></tr>)}</tbody></table>
         )}
       </section>
-      {detailServer ? <ServerDetailModal server={detailServer} onClose={() => setDetailServer(null)} /> : null}
+      {detailServer ? <ServerDetailModal server={servers.find((server) => server.id === detailServer.id) ?? detailServer} busy={actionBusy} onClose={() => setDetailServer(null)} onAction={(action) => { void onServerAction(detailServer, action); }} /> : null}
+    </>
+  );
+}
+
+function RegistrationPage({ servers, busy, onRegister }: { servers: Server[]; busy: boolean; onRegister: () => Promise<void> }) {
+  const existing = servers.find((server) => server.handlerKey === "home_assistant_device_inventory");
+  return (
+    <>
+      <PageHeader title="Registrace MCP serveru" description="Systémem řízené přidělení identity a registrace jednoúčelového KCML handleru" />
+      <section className="panel registration-panel">
+        <div className="panel-head"><div><h2>Seznam zařízení Home Assistant</h2><p>Read-only nástroj vracející tabulku zařízení, umístění, typů, ovladatelných hodnot, čitelných informací a aktuálních stavů.</p></div><span className={`badge ${existing ? "ok" : "neutral"}`}>{existing ? existing.registrationState : "PŘIPRAVENO"}</span></div>
+        <dl className="registration-contract">
+          <dt>Tool name</dt><dd><code>get_home_assistant_device_inventory</code></dd>
+          <dt>Handler</dt><dd><code>home_assistant_device_inventory@1.0.0</code></dd>
+          <dt>Vstup</dt><dd>Prázdný striktní objekt bez parametrů</dd>
+          <dt>Výstup</dt><dd>Strukturované řádky a Markdown tabulka, maximálně 2 MiB</dd>
+          <dt>Vedlejší účinky</dt><dd>Žádné; pouze čtení přes lokální Home Assistant agent</dd>
+          <dt>Identita</dt><dd>{existing ? `${existing.code} · https://${existing.hostname}/mcp` : "Přidělí katalog automaticky"}</dd>
+        </dl>
+        <div className="notice"><ShieldCheck size={18} /> Token Home Assistantu se do KCML katalogu ani handleru nepřenáší.</div>
+        <footer className="modal-actions">
+          <button disabled={Boolean(existing) || busy} onClick={() => { void onRegister(); }}><Plus size={17} /> {existing ? "Server je registrován" : "Registrovat server"}</button>
+        </footer>
+      </section>
     </>
   );
 }
@@ -430,6 +464,7 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
   const [createOpen, setCreateOpen] = useState(false);
   const [secret, setSecret] = useState<SecretResult | null>(null);
   const [confirm, setConfirm] = useState<{ credential: KajaCredential; action: "revoke" | "delete" } | null>(null);
+  const [serverActionBusy, setServerActionBusy] = useState(false);
   const [error, setError] = useState("");
   async function load() {
     setError("");
@@ -491,12 +526,40 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
     setPage("permissions");
   }
 
+  async function registerInventoryServer() {
+    setServerActionBusy(true);
+    setError("");
+    try {
+      await api("/api/mcp-servers/home-assistant-inventory", { method: "POST", headers: { "x-csrf-token": csrf() }, body: "{}" });
+      await load();
+      setPage("monitoring");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Registrace selhala");
+    } finally {
+      setServerActionBusy(false);
+    }
+  }
+
+  async function runServerAction(server: Server, action: "test" | "trial" | "activate") {
+    setServerActionBusy(true);
+    setError("");
+    try {
+      await api(`/api/mcp-servers/${server.id}/${action}`, { method: "POST", headers: { "x-csrf-token": csrf() }, body: "{}" });
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Operace serveru selhala");
+    } finally {
+      setServerActionBusy(false);
+    }
+  }
+
   return (
     <main className="app-shell">
       <aside className="sidebar">
         <div className="brand-row"><span className="brand-mark"><ShieldCheck size={22} /></span><div><strong>KCML</strong><span>Správce MCP serverů</span></div></div>
         <nav>
           <button aria-pressed={page === "monitoring"} className={page === "monitoring" ? "active" : ""} onClick={() => setPage("monitoring")}><Activity size={18} /> Monitoring MCP</button>
+          <button aria-pressed={page === "registration"} className={page === "registration" ? "active" : ""} onClick={() => setPage("registration")}><Plus size={18} /> Registrace serveru</button>
           <button aria-pressed={page === "tokens"} className={page === "tokens" ? "active" : ""} onClick={() => setPage("tokens")}><KeyRound size={18} /> Tokeny</button>
           <button aria-pressed={page === "permissions"} className={page === "permissions" ? "active" : ""} onClick={() => setPage("permissions")}><LockKeyhole size={18} /> Správa oprávnění</button>
           <button aria-pressed={page === "audit"} className={page === "audit" ? "active" : ""} onClick={() => setPage("audit")}><Terminal size={18} /> Audit</button>
@@ -506,7 +569,8 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
       <section className="workspace">
         <div className="mobile-topbar"><div className="brand-row"><span className="brand-mark"><ShieldCheck size={20} /></span><strong>KCML</strong></div><span>{pageNames[page]}</span></div>
         {error && <div className="notice error"><AlertTriangle size={18} /> {error}</div>}
-        {page === "monitoring" && <MonitoringPage servers={servers} onRefresh={() => { void load(); }} />}
+        {page === "monitoring" && <MonitoringPage servers={servers} actionBusy={serverActionBusy} onRefresh={() => { void load(); }} onServerAction={runServerAction} />}
+        {page === "registration" && <RegistrationPage servers={servers} busy={serverActionBusy} onRegister={registerInventoryServer} />}
         {page === "tokens" && <TokensPage credentials={credentials} onOpenCreate={() => setCreateOpen(true)} onEditPermissions={openPermissions} onConfirm={(credential, action) => setConfirm({ credential, action })} onRefresh={() => { void load(); }} />}
         {page === "permissions" && <PermissionsPage credentials={credentials} servers={servers} selectedId={selectedCredentialId} permissions={permissions} saving={savingPermissions} onSelect={setSelectedCredentialId} onChange={setPermissions} onSave={() => { void savePermissions(); }} />}
         {page === "audit" && <AuditPage events={events} />}

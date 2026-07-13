@@ -45,6 +45,8 @@ export type McpServer = {
   lastSuccessAt: string | null;
   lastFailureAt: string | null;
   lastUnauthorizedAt: string | null;
+  handlerSmokePassed: boolean;
+  acceptancePassed: boolean;
   createdAt: string;
   updatedAt: string;
 };

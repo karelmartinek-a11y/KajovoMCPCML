@@ -11,6 +11,7 @@ const validManifest = {
   businessPurpose: "A concrete production purpose.",
   owners: { service: "svc", technical: "tech", security: "sec", operations: "ops" },
   tool: {
+    name: "example",
     title: "example",
     description: "Example tool",
     inputSchema: { type: "object", additionalProperties: false, properties: {} },
@@ -53,5 +54,14 @@ describe("registration manifest", () => {
   it("rejects unknown fields and automatic retry", () => {
     expect(() => validateManifest({ ...validManifest, extra: true })).toThrow();
     expect(() => validateManifest({ ...validManifest, behavior: { ...validManifest.behavior, retryPolicy: { automaticRetry: true } } })).toThrow();
+  });
+
+  it("binds the digest to nested contract values", () => {
+    const original = validateManifest(validManifest).digest;
+    const changed = validateManifest({
+      ...validManifest,
+      behavior: { ...validManifest.behavior, timeoutMs: validManifest.behavior.timeoutMs + 1 }
+    }).digest;
+    expect(changed).not.toBe(original);
   });
 });
