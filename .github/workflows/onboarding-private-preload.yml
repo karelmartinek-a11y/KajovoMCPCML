@@ -72,7 +72,10 @@ jobs:
               sh -c 'cd /var/lib/kcml/podman && podman system migrate && podman pull "$1" >/dev/null' sh "$image"
           done <<< "$handlers"
 
-          systemctl restart kcml-onboarding-worker
+          # The worker polls pending artifact jobs on its own. Restarting it
+          # here can terminate an in-flight Podman verification and turn an
+          # otherwise valid onboarding into command_failed:podman:SIGTERM.
+          systemctl is-active --quiet kcml-onboarding-worker
           for _attempt in $(seq 1 120); do
             state="$(psql "$DATABASE_URL" -Atq \
               -c "select state from onboarding_job where source_commit='$SOURCE_COMMIT' order by created_at desc limit 1")"
