@@ -19,7 +19,7 @@ import { hostOf, sendError } from "./errors.js";
 const SESSION_COOKIE = "__Host-kcml_session";
 const CSRF_COOKIE = "__Host-kcml_csrf";
 
-async function sessionAccountId(db: Db, request: FastifyRequest): Promise<string | null> {
+export async function sessionAccountId(db: Db, request: FastifyRequest): Promise<string | null> {
   const value = request.cookies[SESSION_COOKIE];
   if (!value) return null;
   const hash = await argon2.hash(value, { type: argon2.argon2id, memoryCost: 16384, timeCost: 2, parallelism: 1 });
@@ -33,7 +33,7 @@ async function sessionAccountId(db: Db, request: FastifyRequest): Promise<string
   return null;
 }
 
-function requireCsrf(request: FastifyRequest): boolean {
+export function requireCsrf(request: FastifyRequest): boolean {
   const cookie = request.cookies[CSRF_COOKIE];
   const header = request.headers["x-csrf-token"];
   return Boolean(cookie && header && cookie === header);
@@ -185,6 +185,21 @@ export function registerAdminRoutes(app: FastifyInstance, db: Db, config: AppCon
     if (!accountId) return sendError(reply, 401, "unauthorized");
     const result = await db.query("select id,event_type,actor_type,object_type,object_id,correlation_id,created_at from audit_event order by id desc limit 100");
     return { events: result.rows };
+  });
+
+  app.get("/api/monitoring-probes", async (request, reply) => {
+    if (hostOf(request.headers.host) !== config.ADMIN_HOST) return sendError(reply, 404, "not_found");
+    const accountId = await sessionAccountId(db, request);
+    if (!accountId) return sendError(reply, 401, "unauthorized");
+    const result = await db.query(`
+      select mpr.id,mpr.server_id,ms.code,ms.hostname,mpr.probe_type,mpr.status,mpr.latency_ms,
+             mpr.evidence,mpr.correlation_id,mpr.checked_at
+        from monitoring_probe_result mpr
+        join mcp_server ms on ms.id=mpr.server_id
+       where mpr.checked_at>now()-interval '30 days'
+       order by mpr.checked_at desc limit 1000
+    `);
+    return { probes: result.rows };
   });
 
   app.get("/health", async (_request, reply) => {

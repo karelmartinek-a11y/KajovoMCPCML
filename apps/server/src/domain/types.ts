@@ -38,6 +38,17 @@ export type McpServer = {
   contractVersion: string;
   artifactDigest: string;
   manifestDigest: string;
+  imageReference: string | null;
+  imageDigest: string | null;
+  sbomDigest: string | null;
+  provenanceDigest: string | null;
+  runtimeSocket: string | null;
+  timeoutMs: number;
+  maxConcurrency: number;
+  requestMaxBytes: number;
+  responseMaxBytes: number;
+  rateWindowSeconds: number;
+  rateMaxRequests: number;
   revocationEpoch: string;
   successCount: number;
   unauthorizedCount: number;

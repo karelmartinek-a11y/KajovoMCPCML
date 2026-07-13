@@ -1,4 +1,4 @@
-# Extracted SSOT: KCML_Spravce_MCP_serveru_SSOT_v1.3_tokeny_min_512_bit.docx
+# Extracted SSOT: KCML_Spravce_MCP_serveru_SSOT_v1.4_automaticky_onboarding.docx
 
 KCML
 
@@ -6,7 +6,7 @@ Správce MCP serverů
 
 Jednotné závazné zadání systému (SSOT)
 
-Tento dokument je jediným zdrojem pravdy. Verze 1.3 zachovává původní požadavky, odstraňuje nejednoznačnosti a doplňuje závazný protokolový, architektonický, bezpečnostní, integrační a provozní profil. Všechna klientská tajemství a opaque Bearer access tokeny musí mít nejméně 512 bitů kryptografické entropie. Implementace nesmí zavést fallbacky, skryté výjimky, společný veřejný endpoint pro více MCP serverů ani jiné chování, které zde není výslovně povoleno.
+Tento dokument je jediným zdrojem pravdy. Verze 1.4 zachovává původní požadavky, odstraňuje nejednoznačnosti a doplňuje závazný protokolový, architektonický, bezpečnostní, integrační a provozní profil. Všechna klientská tajemství a opaque Bearer access tokeny musí mít nejméně 512 bitů kryptografické entropie. Verze 1.4 normativně doplňuje automatický onboarding integračním tokenem, PR/CI, podepsaný izolovaný OCI runtime a automatickou aktivaci po úplném PASS. Implementace nesmí zavést fallbacky, skryté výjimky, společný veřejný endpoint pro více MCP serverů ani jiné chování, které zde není výslovně povoleno.
 
 ## Obsah
 
@@ -80,7 +80,9 @@ Tento dokument je jediným zdrojem pravdy. Verze 1.3 zachovává původní poža
 
 35. Předávací balíček a dokumentace
 
-36. Konečná definice dokončení verze 1.2
+36. Konečná definice dokončení verze 1.4
+
+37. Automatický onboarding zdrojového handleru
 
 ## 1. Účel a výsledný produkt
 
@@ -486,11 +488,7 @@ První produkční verze je plně funkční Správce MCP serverů bez registrova
 
 ## 16. Povinné implementační testy
 
-Automatický test cross-host izolace všech registrovaných KCML serverů.
-
 Test, že tools/list nikdy nevrátí více než jeden nástroj.
-
-Test volání správného nástroje na správném hostu a nesprávného nástroje na správném i cizím hostu.
 
 Testy tokenů: platný, chybějící, náhodný, expirovaný, revokovaný, smazaný, bez oprávnění a s oprávněním.
 
@@ -1600,10 +1598,8 @@ Při skutečném rozporu, který nelze vyřešit tímto pořadím, se implementa
 | --- | --- |
 | ACC-PROTO-01 | initialize, initialized, tools/list a tools/call odpovídají MCP 2025-11-25; server nenabízí nepovolené capabilities. |
 | ACC-PROTO-02 | GET/DELETE /mcp vrací 405, legacy /sse neexistuje, POST s chybným Accept/Content-Type je odmítnut. |
-| ACC-HOST-01 | Každý známý host vrací pouze svůj tool; všechny kombinace cizí host/cizí tool selžou bez spuštění handleru. |
 | ACC-HOST-02 | Neznámý kcml hostname, admin /mcp a auth /mcp neodhalí katalog a nepřesměrují. |
 | ACC-AUTH-01 | Kaja client_secret funguje pouze na token endpointu a je odmítnut jako Bearer na /mcp. |
-| ACC-AUTH-02 | Access token je přijat pouze na přesném resource, v TTL a při aktivním Kaja, Permission i serveru. |
 | ACC-AUTH-03 | Revokace Kaja a odebrání Permission okamžitě zneplatní existující access tokeny. |
 | ACC-SECRET-01 | Client_secret nelze získat z DB dumpu, logu, auditu, telemetry, browser storage ani po refresh UI. |
 | ACC-DATA-01 | Současné vytváření 100 Kaja a 100 KCML nevytvoří duplicitu ani recyklaci; mezery v sequence jsou akceptovány. |
@@ -1672,3 +1668,56 @@ Při skutečném rozporu, který nelze vyřešit tímto pořadím, se implementa
 | Bezpečnost | Threat model, SBOM, výsledky skenů a penetračního testu, seznam výjimek a rotace secrets. |
 | Testy | Automatické testy, test data bez osobních údajů, reporty a postup lokálního/staging spuštění. |
 | DR | Backup/restore runbook, poslední protokol obnovy, RPO/RTO a kontaktní/escalation role. |
+
+
+## 37. Automatický onboarding zdrojového handleru
+
+Tato kapitola je normativní pro automatickou integraci jednoho nového MCP serveru integračním tokenem. Upřesňuje starší ruční registrační postup. Při rozporu má přednost bezpečnější požadavek této kapitoly; token autorizuje workflow, nikoli přímé zapnutí serveru.
+
+### 37.1 Token, TTL a stavový automat
+
+Jeden 512bitový `kci_` token smí nevratně založit nebo obnovit právě jeden onboarding job a právě jednu centrálně přidělenou KCML identitu. Bez platného tokenu vrací všechny `/v1/onboardings` operace jednotné `401 invalid_integration_token`.
+
+| Pravidlo | Normativní požadavek |
+| --- | --- |
+| Uložení | Jednorázové zobrazení; v DB pouze HMAC digest s odděleným klíčem, key ID, fingerprint a audit. Žádný plaintext sloupec. |
+| TTL | Počáteční 2h; pouze aktivní pronajatý serverový job prodlužuje v oknech na `now+2h`, nejvýše `issuedAt+24h`. Klientská aktivita neprodlužuje. |
+| Vazba | Token–job–server je transakční a idempotentní. Druhý server je konflikt. Po `ACTIVE` je povolen jen GET stavu do expirace. |
+| Resume | Po expiraci job zůstane blokovaný a server disabled. Nový token lze navázat na stejný job/identitu; starší tokeny se revokují. |
+| Stavy | `CREATED`, `SOURCE_UPLOADED`, `PR_CREATED`, `CI_RUNNING`, `AWAITING_REVISION`, `MERGED`, `ARTIFACT_BUILDING`, `DEPLOYING`, `REGISTERED_DISABLED`, `TRIAL_TESTING`, `ACTIVE`, `FAILED`, `QUARANTINED`, `CANCELLED`. |
+
+### 37.2 Programátorské a administrační API
+
+- Admin session+CSRF: `POST/GET /api/integration-tokens`, `GET /api/onboarding-jobs[/id]`, POST revoke, cancel a soft delete.
+- Programátor: `POST /v1/onboardings` s Bearer tokenem, multipart `manifest` + `source` a `Idempotency-Key`; `GET /v1/onboardings/:id`; `PUT /source` s novým klíčem a `If-Match`; `POST /cancel`.
+- API běží pouze na `register.hcasc.cz`; admin, auth, KCML a neznámý host nesmí registrační API obsloužit.
+- POST vrací 202 a rezervuje `KCMLNNNN`, `kcmlNNNN.hcasc.cz`, přesný `/mcp` resource a jednoznačný `toolName`. Identita je výstup systému, ne vstup manifestu.
+
+### 37.3 Intake, supply chain a runtime
+
+- Manifest 1.4 je strict a popisuje Node.js 22/TypeScript ESM handler, schémata, limity, safe test, monitoring, změnové vazby a egress allowlist.
+- ZIP má nejvýše 10 MiB/50 MiB/1000 položek a obsahuje jen schválené kořenové soubory a `.ts` pod `src/`. Traversal, symlink, binární addon, Dockerfile, `.env`, lifecycle script, tajemství, nepřesná/nepovolená závislost nebo rozšířený tsconfig jsou odmítnuty před spuštěním.
+- GitHub App zapisuje jen `handlers/KCMLNNNN/`, vytváří PR a sleduje required checks. PR runner nemá produkční tajemství ani uložené checkout credentials. Auto-merge nastane pouze po úplném PASS. Actions-read oprávnění slouží výhradně ke svázání úspěšného trusted main run ID s provenance.
+- Důvěryhodný main workflow s pevným Dockerfile sestaví OCI image, SBOM a provenance, image podepíše a publikuje do GHCR. Worker ověří commit, build ID, digest, podpis a attestace.
+- Handler běží samostatně v rootless Podman: non-root, read-only, cap-drop ALL, no-new-privileges, CPU/RAM/PID/timeout/concurrency limity, log-driver none, network none a privátní Unix socket. Pevný supervisor spouští každý call v odděleném podprocesu a po timeoutu jej násilně ukončí.
+- Strukturované logy se vracejí gateway a redigují. Povolený upstream je dostupný jen přes `context.egress.fetch` a centrální Unix-socket proxy s per-job capability, přesným HTTPS allowlistem a SSRF/DNS-rebinding ochranou.
+
+### 37.4 Registrace, veřejný trial a automatická aktivace
+
+1. Po ověření OCI workeru vytvořit `mcp_server` jako `REGISTERED_DISABLED/DISABLED/enabled=false`, registration revision, monitoring profile, statistiky, audit a všechny digestové vazby.
+2. Ověřit DNS, DNS-01 wildcard certifikát `*.hcasc.cz`, SAN konkrétního hostu, SNI/Host routing, protected-resource metadata, podpis image a readiness Unix socketu.
+3. Přejít do `TRIAL_TESTING` a vytvořit krátkodobé systémové Kaja pověření s `EXECUTE` pouze pro testovaný server.
+4. Přes veřejné HTTPS ověřit negativní tokeny, initialize, initialized, tools/list, safe tools/call, schémata, timeout/size/rate limit, correlation, audit, logy, statistiky a probes.
+5. Revokovat systémové pověření a access tokeny. Pouze úplný PASS přepne `ACTIVE/enabled=true`; `HEALTHY` vyžaduje readiness, DNS/TLS metadata, syntetický call a artifact integrity.
+
+Cross-host chyba, audience bypass, digest drift, neplatný podpis/provenance nebo únik integračního, Kaja, access či egress tokenu vždy nastaví `QUARANTINED`, revokuje tokeny/capabilities, vypne server a zastaví worker. Automatický návrat je zakázán.
+
+### 37.5 Produkční release gate
+
+| Závislost | Release podmínka |
+| --- | --- |
+| HTTPS | Wildcard DNS a platný DNS-01 certifikát `*.hcasc.cz`; nginx exact register host, regex KCML hosty, zachovaný Host a default deny. |
+| GitHub | Nainstalovaná GitHub App s minimálními contents/PR/check a Actions-read permissions; branch protection a required checks odpovídají workeru. |
+| Supply chain | GHCR namespace, důvěryhodný signing key, cosign verify, SBOM/provenance attestace a immutable digest. |
+| Runtime | Rootless Podman pro uživatele `kcml`, worker a egress-proxy systemd služby, karanténní/runtime adresáře a privátní socket permissions. |
+| Testy | Root CI včetně PostgreSQL migrací a integračních testů, onboarding PR gates, runtime/supply-chain staging E2E a desktop/mobile browser QA. |

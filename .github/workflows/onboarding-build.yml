@@ -1,0 +1,88 @@
+name: Build signed MCP handler images
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "handlers/**"
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+
+jobs:
+  discover:
+    runs-on: ubuntu-latest
+    outputs:
+      handlers: ${{ steps.changed.outputs.handlers }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 2, persist-credentials: false }
+      - id: changed
+        run: |
+          handlers="$(git diff --name-only "${{ github.event.before }}" "${{ github.sha }}" | awk -F/ '/^handlers\/KCML[0-9]{4,}\// {print $1"/"$2}' | sort -u | jq -R -s -c 'split("\n") | map(select(length > 0))')"
+          echo "handlers=$handlers" >> "$GITHUB_OUTPUT"
+
+  build-sign-publish:
+    needs: discover
+    if: needs.discover.outputs.handlers != '[]'
+    strategy:
+      fail-fast: false
+      matrix:
+        handler: ${{ fromJson(needs.discover.outputs.handlers) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { persist-credentials: false }
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: names
+        env:
+          HANDLER: ${{ matrix.handler }}
+        run: |
+          code="${HANDLER#handlers/}"
+          image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/kajovomcpcml-handlers/${code,,}:${GITHUB_SHA}"
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+      - id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/handler-runtime/Dockerfile
+          build-args: HANDLER_DIR=${{ matrix.handler }}
+          push: true
+          tags: ${{ steps.names.outputs.image }}
+          provenance: false
+          sbom: false
+      - uses: sigstore/cosign-installer@v3.8.2
+      - uses: anchore/sbom-action@v0
+        with:
+          image: ${{ steps.names.outputs.image }}@${{ steps.build.outputs.digest }}
+          format: spdx-json
+          output-file: /tmp/handler.spdx.json
+          upload-artifact: false
+      - name: Create trusted provenance predicate
+        env:
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          jq -n \
+            --arg commit "$GITHUB_SHA" \
+            --arg digest "$IMAGE_DIGEST" \
+            --arg workflow "$GITHUB_WORKFLOW" \
+            '{buildType:"https://hcasc.cz/kcml/handler-build/v1", invocation:{configSource:{digest:{sha1:$commit}}}, metadata:{buildInvocationId:env.GITHUB_RUN_ID,workflow:$workflow}, subject:[{name:"handler-image",digest:{sha256:($digest|sub("^sha256:";""))}}]}' \
+            > /tmp/provenance.json
+      - name: Sign image, SBOM and provenance
+        env:
+          COSIGN_PRIVATE_KEY: ${{ secrets.KCML_COSIGN_PRIVATE_KEY }}
+          COSIGN_PASSWORD: ${{ secrets.KCML_COSIGN_PASSWORD }}
+          IMAGE: ${{ steps.names.outputs.image }}@${{ steps.build.outputs.digest }}
+        run: |
+          test -n "$COSIGN_PRIVATE_KEY"
+          cosign sign --yes --key env://COSIGN_PRIVATE_KEY "$IMAGE"
+          cosign attest --yes --key env://COSIGN_PRIVATE_KEY --type spdxjson --predicate /tmp/handler.spdx.json "$IMAGE"
+          cosign attest --yes --key env://COSIGN_PRIVATE_KEY --type slsaprovenance --predicate /tmp/provenance.json "$IMAGE"

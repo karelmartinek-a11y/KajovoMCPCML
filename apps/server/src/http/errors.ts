@@ -1,7 +1,7 @@
 import type { FastifyReply } from "fastify";
 import { randomUUID } from "node:crypto";
 
-export function sendError(reply: FastifyReply, statusCode: number, error: string, message?: string, correlationId = randomUUID()): FastifyReply {
+export function sendError(reply: FastifyReply, statusCode: number, error: string, message?: string, correlationId: string = randomUUID()): FastifyReply {
   return reply.code(statusCode).send({
     error,
     message: message ?? error,

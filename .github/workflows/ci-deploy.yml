@@ -11,8 +11,32 @@ permissions:
 jobs:
   ci:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: kcml
+          POSTGRES_PASSWORD: kcml-test
+          POSTGRES_DB: kcml_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U kcml -d kcml_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      NODE_ENV: test
+      DATABASE_URL: postgres://kcml:kcml-test@127.0.0.1:5432/kcml_test
+      ACCESS_TOKEN_HMAC_KEY_BASE64: AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=
+      INTEGRATION_TOKEN_HMAC_KEY_BASE64: AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=
+      EGRESS_CAPABILITY_HMAC_KEY_BASE64: AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM=
+      SESSION_SECRET_BASE64: BAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQ=
+      CSRF_SECRET_BASE64: BQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQU=
+      MFA_ENCRYPTION_KEY_BASE64: BgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgY=
+      KCML_TEST_DATABASE: "1"
     steps:
       - uses: actions/checkout@v4
+        with: { persist-credentials: false }
       - uses: pnpm/action-setup@v4
         with:
           version: 9.15.4
@@ -21,6 +45,7 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - run: pnpm db:migrate
       - run: pnpm run ci
 
   deploy:
@@ -32,6 +57,7 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v4
+        with: { persist-credentials: false }
       - name: Mask UI password
         run: |
           echo "::add-mask::${{ secrets.PASS }}"
@@ -49,6 +75,13 @@ jobs:
             exit 1
           fi
           chmod +x deploy/scripts/*.sh
+          install -m 0644 deploy/nginx/kcml.conf /etc/nginx/sites-available/kcml.conf
+          ln -sfn /etc/nginx/sites-available/kcml.conf /etc/nginx/sites-enabled/kcml.conf
+          install -m 0644 deploy/systemd/kcml.service /etc/systemd/system/kcml.service
+          install -m 0644 deploy/systemd/kcml-onboarding-worker.service /etc/systemd/system/kcml-onboarding-worker.service
+          install -m 0644 deploy/systemd/kcml-egress-proxy.service /etc/systemd/system/kcml-egress-proxy.service
+          systemctl daemon-reload
+          systemctl enable kcml kcml-onboarding-worker kcml-egress-proxy
           deploy/scripts/preflight.sh
           deploy/scripts/backup.sh
           corepack enable
@@ -57,13 +90,40 @@ jobs:
           pnpm --filter @kcml/server build
           pnpm db:migrate
           PASS="$PASS" pnpm admin:sync-password
-          rsync -a --delete --exclude '.git' --exclude 'node_modules' "$GITHUB_WORKSPACE"/ /opt/kcml/current/
+          release_id="${GITHUB_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          release_dir="/opt/kcml/releases/${release_id}"
+          previous_release="$(readlink -f /opt/kcml/current 2>/dev/null || true)"
+          install -d -m 0755 /opt/kcml/releases
+          test ! -e "$release_dir"
+          install -d -m 0755 "$release_dir"
+          rsync -a --exclude '.git' --exclude 'node_modules' "$GITHUB_WORKSPACE"/ "$release_dir"/
+          cd "$release_dir"
+          CI=true pnpm install --frozen-lockfile --prod
+          chown -R root:kcml "$release_dir"
+          chmod -R g=rX,o= "$release_dir"
+          if [ -d /opt/kcml/current ] && [ ! -L /opt/kcml/current ]; then
+            legacy_release="/opt/kcml/releases/legacy-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+            test ! -e "$legacy_release"
+            mv /opt/kcml/current "$legacy_release"
+            previous_release="$legacy_release"
+          fi
+          ln -sfn "$release_dir" /opt/kcml/current
           systemctl restart kcml
+          systemctl restart kcml-egress-proxy
+          systemctl restart kcml-onboarding-worker
+          systemctl reload nginx
           for attempt in $(seq 1 30); do
-            if curl -fsS -H 'Host: admin.hcasc.cz' "http://127.0.0.1:${PORT}/health" >/dev/null; then
+            if curl -fsS -H 'Host: admin.hcasc.cz' "http://127.0.0.1:${PORT}/health" >/dev/null \
+              && systemctl is-active --quiet kcml-egress-proxy \
+              && systemctl is-active --quiet kcml-onboarding-worker \
+              && test -S "${EGRESS_PROXY_SOCKET_PATH:-/var/lib/kcml/egress/proxy.sock}"; then
               exit 0
             fi
             sleep 1
           done
           systemctl status kcml --no-pager -l
+          if [ -n "$previous_release" ] && [ -d "$previous_release" ]; then
+            ln -sfn "$previous_release" /opt/kcml/current
+            systemctl restart kcml kcml-egress-proxy kcml-onboarding-worker
+          fi
           exit 1

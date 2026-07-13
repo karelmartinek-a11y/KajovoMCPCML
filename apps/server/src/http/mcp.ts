@@ -7,6 +7,7 @@ import { appendAudit } from "../domain/audit.js";
 import { getServerByHostname, isKcmlHostname, resourceFor } from "../domain/catalog.js";
 import { validateBearer } from "../domain/auth.js";
 import { getHandler } from "../handlers/registry.js";
+import { redact } from "../security/secrets.js";
 import { hostOf, sendError } from "./errors.js";
 
 const ajv = new Ajv2020({ strict: true, allErrors: true });
@@ -47,6 +48,7 @@ export function registerMcpRoutes(app: FastifyInstance, db: Db, config: AppConfi
 
   app.all("/mcp", async (request, reply) => {
     const correlationId = randomUUID();
+    reply.header("x-correlation-id", correlationId);
     const hostname = hostOf(request.headers.host);
     if (request.method !== "POST") return sendError(reply, 405, "method_not_allowed", "Only POST is supported", correlationId);
     if (!isKcmlHostname(hostname, config.PUBLIC_BASE_DOMAIN)) return sendError(reply, 404, "not_found", "Unknown resource", correlationId);
@@ -88,16 +90,49 @@ export function registerMcpRoutes(app: FastifyInstance, db: Db, config: AppConfi
     if (params?.name !== server.toolName) {
       return { jsonrpc: "2.0", id: body.id ?? null, error: { code: -32602, message: "Invalid tool for resource" } };
     }
+    const serializedInput = Buffer.byteLength(JSON.stringify(params.arguments ?? {}));
+    if (serializedInput > server.requestMaxBytes) return sendError(reply, 413, "request_too_large", "Tool input exceeds the registered limit", correlationId);
     const validateInput = ajv.compile(server.inputSchema as AnySchema);
     if (!validateInput(params.arguments ?? {})) {
       return { jsonrpc: "2.0", id: body.id ?? null, error: { code: -32602, message: "Input schema validation failed" } };
     }
     const handler = getHandler(server);
     if (!handler) return sendError(reply, 503, "handler_unavailable", "Handler is not registered in this build", correlationId);
+    const rate = await db.query(
+      `insert into function_rate_bucket(server_id,window_started_at,request_count)
+       values ($1,now(),1)
+       on conflict (server_id) do update set
+         window_started_at=case when function_rate_bucket.window_started_at <= now()-($2 || ' seconds')::interval then now() else function_rate_bucket.window_started_at end,
+         request_count=case when function_rate_bucket.window_started_at <= now()-($2 || ' seconds')::interval then 1 else function_rate_bucket.request_count+1 end
+       returning request_count`,
+      [server.id, server.rateWindowSeconds]
+    );
+    if (Number(rate.rows[0].request_count) > server.rateMaxRequests) return sendError(reply, 429, "rate_limit_exceeded", "Registered tool rate limit exceeded", correlationId);
     await appendAudit(db, { eventType: "mcp.invocation.accepted", actorType: "kaja", actorId: principal.credentialId, objectType: "mcp_server", objectId: server.id, correlationId });
+    const runtimeLog = async (level: "info" | "error", eventName: string, fields: object): Promise<void> => {
+      const safeFields = redact({ ...fields, serverCode: server.code, handlerVersion: server.handlerVersion }) as object;
+      const safeEventName = String(redact(eventName)).slice(0, 160);
+      if (level === "error") request.log.error(safeFields, safeEventName);
+      else request.log.info(safeFields, safeEventName);
+      await db.query(
+        `insert into runtime_log_event(server_id,level,event_name,fields,correlation_id,image_digest)
+         values ($1,$2,$3,$4,$5,$6)`,
+        [server.id, level, safeEventName, JSON.stringify(safeFields), correlationId, server.imageDigest]
+      );
+    };
+    await runtimeLog("info", "mcp.invocation.accepted", { actorId: principal.credentialId, toolName: server.toolName });
     const started = Date.now();
     try {
-      const output = await handler.invoke(params.arguments ?? {}, { correlationId, server, logger: request.log });
+      const output = await handler.invoke(params.arguments ?? {}, {
+        correlationId,
+        server,
+        logger: {
+          info: (fields, message) => runtimeLog("info", message ?? "handler.info", fields),
+          error: (fields, message) => runtimeLog("error", message ?? "handler.error", fields)
+        }
+      });
+      const serializedOutput = JSON.stringify(output);
+      if (serializedOutput === undefined || Buffer.byteLength(serializedOutput) > server.responseMaxBytes) throw Object.assign(new Error("worker_response_too_large"), { classification: "size" });
       const validateOutput = ajv.compile(server.outputSchema as AnySchema);
       if (!validateOutput(output)) throw Object.assign(new Error("output_schema_failed"), { classification: "schema" });
       await db.query(
@@ -107,6 +142,7 @@ export function registerMcpRoutes(app: FastifyInstance, db: Db, config: AppConfi
         [server.id]
       );
       await appendAudit(db, { eventType: "mcp.invocation.completed", actorType: "kaja", actorId: principal.credentialId, objectType: "mcp_server", objectId: server.id, after: { latencyMs: Date.now() - started }, correlationId });
+      await runtimeLog("info", "mcp.invocation.completed", { latencyMs: Date.now() - started });
       return { jsonrpc: "2.0", id: body.id ?? null, result: { content: [{ type: "text", text: JSON.stringify(output) }], structuredContent: output } };
     } catch (error) {
       await db.query(
@@ -116,6 +152,7 @@ export function registerMcpRoutes(app: FastifyInstance, db: Db, config: AppConfi
         [server.id]
       );
       await appendAudit(db, { eventType: "mcp.invocation.failed", actorType: "kaja", actorId: principal.credentialId, objectType: "mcp_server", objectId: server.id, after: { latencyMs: Date.now() - started, error: error instanceof Error ? error.message : "unknown" }, correlationId });
+      await runtimeLog("error", "mcp.invocation.failed", { latencyMs: Date.now() - started, error: error instanceof Error ? error.message : "unknown" });
       return { jsonrpc: "2.0", id: body.id ?? null, error: { code: -32603, message: "Handler failed" } };
     }
   });

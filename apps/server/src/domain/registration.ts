@@ -70,14 +70,107 @@ const manifestSchema = z.object({
   })
 }).strict();
 
+const onboardingManifestSchema = z.object({
+  schemaVersion: z.literal("1.4"),
+  registrationRevision: z.string().min(1).max(80),
+  environment: z.enum(["production", "staging"]),
+  handlerKey: z.string().regex(/^[a-z0-9][a-z0-9_-]{1,62}$/),
+  handlerVersion: z.string().regex(/^\d+\.\d+\.\d+(?:-[a-z0-9.-]+)?$/i),
+  displayName: z.string().min(1).max(120),
+  businessPurpose: z.string().min(10).max(2_000),
+  owners: z.object({
+    service: z.string().min(1).max(160),
+    technical: z.string().min(1).max(160),
+    security: z.string().min(1).max(160),
+    operations: z.string().min(1).max(160)
+  }).strict(),
+  source: z.object({
+    runtime: z.literal("nodejs22-typescript"),
+    entrypoint: z.literal("src/index.ts"),
+    testCommand: z.literal("pnpm test")
+  }).strict(),
+  runtime: z.object({
+    memoryMb: z.number().int().min(64).max(512),
+    cpuCores: z.number().min(0.1).max(2),
+    pidsLimit: z.number().int().min(16).max(256),
+    egressAllowlist: z.array(z.string().regex(/^[a-z0-9.-]+(?::\d+)?$/i)).max(20).default([])
+  }).strict(),
+  tool: z.object({
+    title: z.string().min(1).max(120),
+    description: z.string().min(1).max(2_000),
+    inputSchema: z.record(z.unknown()),
+    outputSchema: z.record(z.unknown()),
+    annotations: z.object({
+      readOnlyHint: z.boolean(),
+      destructiveHint: z.boolean(),
+      idempotentHint: z.boolean(),
+      openWorldHint: z.boolean(),
+      taskSupport: z.literal("forbidden")
+    }).strict()
+  }).strict(),
+  behavior: z.object({
+    effectClass: z.enum(["READ_ONLY", "IDEMPOTENT_WRITE", "NON_IDEMPOTENT_WRITE"]),
+    timeoutMs: z.number().int().min(100).max(60_000),
+    maxConcurrency: z.number().int().min(1).max(32),
+    requestMaxBytes: z.number().int().min(1).max(1_048_576),
+    responseMaxBytes: z.number().int().min(1).max(5_242_880),
+    rateLimit: z.object({ windowSeconds: z.number().int().min(1), maxRequests: z.number().int().min(1) }).strict(),
+    shutdownPolicy: z.enum(["COMPLETE_IN_FLIGHT", "CANCEL_SAFE", "COMPENSATE"]),
+    idempotencyPolicy: z.string().min(1).max(500),
+    retryPolicy: z.object({ automaticRetry: z.literal(false) }).strict()
+  }).strict(),
+  testContract: z.object({
+    safeInput: z.record(z.unknown()),
+    expectedResult: z.record(z.unknown()),
+    cleanupOrCompensation: z.string().min(1).max(1_000)
+  }).strict(),
+  monitoringProfile: z.object({
+    sloTargets: z.record(z.unknown()),
+    probeIntervals: z.record(z.unknown()),
+    alertRules: z.array(z.record(z.unknown())).min(1).max(50),
+    runbookRef: z.string().min(1).max(500),
+    primaryAlertChannel: z.string().min(1).max(200),
+    backupAlertChannel: z.string().min(1).max(200)
+  }).strict(),
+  change: z.object({
+    rollbackRef: z.string().min(1).max(500),
+    decommissionRef: z.string().min(1).max(500),
+    reviewDueAt: z.string().datetime()
+  }).strict()
+}).strict();
+
 export type RegistrationManifest = z.infer<typeof manifestSchema>;
+export type OnboardingManifest = z.infer<typeof onboardingManifestSchema>;
+
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>).sort(([left], [right]) => left.localeCompare(right));
+    return `{${entries.map(([key, child]) => `${JSON.stringify(key)}:${canonicalJson(child)}`).join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function validateJsonSchemas(inputSchema: Record<string, unknown>, outputSchema: Record<string, unknown>): void {
+  const ajv = new Ajv2020({ strict: true, allErrors: true });
+  ajv.compile(inputSchema);
+  ajv.compile(outputSchema);
+}
 
 export function validateManifest(input: unknown): { manifest: RegistrationManifest; digest: string } {
   const manifest = manifestSchema.parse(input);
-  const ajv = new Ajv2020({ strict: true, allErrors: true });
-  ajv.compile(manifest.tool.inputSchema);
-  ajv.compile(manifest.tool.outputSchema);
-  const canonical = JSON.stringify(manifest, Object.keys(manifest).sort());
+  validateJsonSchemas(manifest.tool.inputSchema, manifest.tool.outputSchema);
+  const canonical = canonicalJson(manifest);
+  return {
+    manifest,
+    digest: `sha256:${createHash("sha256").update(canonical).digest("hex")}`
+  };
+}
+
+export function validateOnboardingManifest(input: unknown): { manifest: OnboardingManifest; digest: string } {
+  const manifest = onboardingManifestSchema.parse(input);
+  validateJsonSchemas(manifest.tool.inputSchema, manifest.tool.outputSchema);
+  const canonical = canonicalJson(manifest);
   return {
     manifest,
     digest: `sha256:${createHash("sha256").update(canonical).digest("hex")}`

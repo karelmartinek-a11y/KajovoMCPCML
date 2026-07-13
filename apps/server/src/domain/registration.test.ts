@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { validateManifest } from "./registration.js";
+import { validateManifest, validateOnboardingManifest } from "./registration.js";
 
 const validManifest = {
   schemaVersion: "1.3",
@@ -53,5 +53,44 @@ describe("registration manifest", () => {
   it("rejects unknown fields and automatic retry", () => {
     expect(() => validateManifest({ ...validManifest, extra: true })).toThrow();
     expect(() => validateManifest({ ...validManifest, behavior: { ...validManifest.behavior, retryPolicy: { automaticRetry: true } } })).toThrow();
+  });
+});
+
+const onboardingManifest = {
+  schemaVersion: "1.4",
+  registrationRevision: "rev-1",
+  environment: "production",
+  handlerKey: "example-handler",
+  handlerVersion: "1.0.0",
+  displayName: "Example",
+  businessPurpose: "A concrete production purpose.",
+  owners: { service: "svc", technical: "tech", security: "sec", operations: "ops" },
+  source: { runtime: "nodejs22-typescript", entrypoint: "src/index.ts", testCommand: "pnpm test" },
+  runtime: { memoryMb: 128, cpuCores: 0.5, pidsLimit: 32, egressAllowlist: ["api.example.com"] },
+  tool: {
+    title: "Example",
+    description: "Example tool",
+    inputSchema: { type: "object", additionalProperties: false, properties: {} },
+    outputSchema: { type: "object", additionalProperties: false, properties: {} },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false, taskSupport: "forbidden" }
+  },
+  behavior: {
+    effectClass: "READ_ONLY", timeoutMs: 1000, maxConcurrency: 1, requestMaxBytes: 1024, responseMaxBytes: 1024,
+    rateLimit: { windowSeconds: 60, maxRequests: 10 }, shutdownPolicy: "COMPLETE_IN_FLIGHT", idempotencyPolicy: "read only", retryPolicy: { automaticRetry: false }
+  },
+  testContract: { safeInput: {}, expectedResult: {}, cleanupOrCompensation: "none required" },
+  monitoringProfile: { sloTargets: {}, probeIntervals: {}, alertRules: [{ severity: "critical" }], runbookRef: "docs/runbooks/example.md", primaryAlertChannel: "primary", backupAlertChannel: "backup" },
+  change: { rollbackRef: "rollback", decommissionRef: "decommission", reviewDueAt: "2027-01-01T00:00:00.000Z" }
+};
+
+describe("automated onboarding manifest", () => {
+  it("accepts the isolated Node.js 22 contract", () => {
+    expect(validateOnboardingManifest(onboardingManifest).digest).toMatch(/^sha256:[a-f0-9]{64}$/);
+  });
+
+  it("rejects runtime expansion, unknown fields and automatic retries", () => {
+    expect(() => validateOnboardingManifest({ ...onboardingManifest, runtime: { ...onboardingManifest.runtime, memoryMb: 2048 } })).toThrow();
+    expect(() => validateOnboardingManifest({ ...onboardingManifest, bypassActivation: true })).toThrow();
+    expect(() => validateOnboardingManifest({ ...onboardingManifest, behavior: { ...onboardingManifest.behavior, retryPolicy: { automaticRetry: true } } })).toThrow();
   });
 });

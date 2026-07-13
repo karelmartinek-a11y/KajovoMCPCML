@@ -16,17 +16,19 @@ import {
   MoreHorizontal,
   Plus,
   RefreshCw,
+  Rocket,
   Save,
   Search,
   Server as ServerIcon,
   ShieldCheck,
   SlidersHorizontal,
   Terminal,
+  Workflow,
   X
 } from "lucide-react";
 import "./styles.css";
 
-type Page = "monitoring" | "tokens" | "permissions" | "audit";
+type Page = "monitoring" | "integration" | "tokens" | "permissions" | "audit";
 type Session = { authenticated: boolean; account: string | null };
 type Server = {
   id: string;
@@ -80,9 +82,52 @@ type KajaPermission = {
 };
 type AuditEvent = { id: number; event_type: string; actor_type: string; object_type: string; object_id: string; correlation_id: string; created_at: string };
 type SecretResult = { publicId: string; label: string; clientSecret: string; fingerprint: string; expiresAt: string | null };
+type IntegrationToken = {
+  id: string;
+  label: string;
+  fingerprint: string;
+  jobId: string | null;
+  issuedAt: string;
+  initialExpiresAt: string;
+  expiresAt: string;
+  maxExpiresAt: string;
+  lastUsedAt: string | null;
+  revokedAt: string | null;
+  active: boolean;
+  jobState: string | null;
+  code: string | null;
+  hostname: string | null;
+};
+type IntegrationSecret = IntegrationToken & { token: string };
+type OnboardingGate = { gate_name: string; stage: string; status: string; evidence: Record<string, unknown>; correlation_id: string; started_at: string | null; completed_at: string | null };
+type OnboardingEvent = { id: number; from_state: string | null; to_state: string; event_type: string; detail: Record<string, unknown>; correlation_id: string; created_at: string };
+type OnboardingJob = {
+  id: string;
+  state: string;
+  correlationId: string;
+  lockVersion: number;
+  sourceRevision: number;
+  code: string | null;
+  hostname: string | null;
+  resource: string | null;
+  toolName: string | null;
+  serverId: string | null;
+  githubPrUrl: string | null;
+  imageDigest: string | null;
+  sbomDigest: string | null;
+  blockingErrorCode: string | null;
+  blockingErrorDetail: string | null;
+  createdAt: string | null;
+  updatedAt: string | null;
+  completedAt: string | null;
+  gates?: OnboardingGate[];
+  events?: OnboardingEvent[];
+};
+type MonitoringProbe = { id: number; server_id: string; code: string; hostname: string; probe_type: string; status: string; latency_ms: number | null; correlation_id: string; checked_at: string };
 
 const pageNames: Record<Page, string> = {
   monitoring: "Monitoring MCP",
+  integration: "Implementační tokeny",
   tokens: "Tokeny",
   permissions: "Správa oprávnění",
   audit: "Audit"
@@ -231,6 +276,72 @@ function SecretModal({ secret, onClose }: { secret: SecretResult; onClose: () =>
   );
 }
 
+function CreateIntegrationTokenModal({ resumeJobId, onClose, onCreated }: { resumeJobId?: string; onClose: () => void; onCreated: (secret: IntegrationSecret) => void }) {
+  const [label, setLabel] = useState(resumeJobId ? `Pokračování jobu ${resumeJobId.slice(0, 8)}` : "");
+  const [error, setError] = useState("");
+  async function submit(event: React.FormEvent) {
+    event.preventDefault();
+    if (!label.trim()) { setError("Zadej označení implementačního tokenu."); return; }
+    try {
+      const result = await api<IntegrationSecret>("/api/integration-tokens", {
+        method: "POST",
+        headers: { "x-csrf-token": csrf() },
+        body: JSON.stringify({ label: label.trim(), resumeJobId })
+      });
+      onCreated(result);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Token se nepodařilo vytvořit");
+    }
+  }
+  return (
+    <Modal title={resumeJobId ? "Navazující implementační token" : "Automaticky integrovat MCP server"} onClose={onClose}>
+      <form className="modal-form" onSubmit={(event) => { void submit(event); }}>
+        <div className="form-intro"><span className="modal-icon"><Workflow size={20} /></span><p>Token má 512 bitů entropie, platí nejprve 2 hodiny a smí založit právě jeden onboardingový job a jeden MCP server. Serverový job jej může prodlužovat nejvýše 24 hodin.</p></div>
+        <label>Označení tokenu<span className="field-hint">Jméno programátora, týmu nebo integrace</span><input autoFocus value={label} onChange={(event) => setLabel(event.target.value)} maxLength={120} placeholder="Např. Fakturační MCP – dodavatel" /></label>
+        {resumeJobId ? <div className="permission-preview"><strong>Pokračování existujícího jobu</strong><code>{resumeJobId}</code><span>Předchozí token bude revokován. KCML identita zůstane zachována.</span></div> : null}
+        {error && <p className="error">{error}</p>}
+        <footer className="modal-actions"><button type="button" className="secondary" onClick={onClose}>Zrušit</button><button type="submit"><Rocket size={16} /> Vygenerovat token</button></footer>
+      </form>
+    </Modal>
+  );
+}
+
+function IntegrationSecretModal({ secret, onClose }: { secret: IntegrationSecret; onClose: () => void }) {
+  const [copied, setCopied] = useState(false);
+  async function copy() {
+    await navigator.clipboard.writeText(secret.token);
+    setCopied(true);
+  }
+  return (
+    <Modal title="Implementační token byl vytvořen" onClose={onClose}>
+      <div className="secret-dialog">
+        <p>Token se zobrazuje pouze nyní. KajovoMCPCML ukládá jen HMAC digest a fingerprint.</p>
+        <div className="secret-once"><strong>{secret.label}</strong><code>{secret.token}</code><span>Fingerprint {secret.fingerprint}</span><span>Počáteční expirace {formatDate(secret.initialExpiresAt)} · nejzazší expirace {formatDate(secret.maxExpiresAt)}</span></div>
+        <div className="permission-preview"><strong>Programátorské API</strong><code>POST https://register.hcasc.cz/v1/onboardings</code><span>Bearer token + multipart pole <code>manifest</code> a <code>source</code> + hlavička <code>Idempotency-Key</code>.</span></div>
+        <footer className="modal-actions"><button className="secondary" onClick={onClose}>Zavřít</button><button onClick={() => { void copy(); }}><ClipboardCopy size={16} /> {copied ? "Zkopírováno" : "Zkopírovat token"}</button></footer>
+      </div>
+    </Modal>
+  );
+}
+
+function IntegrationConfirmModal({ token, action, onClose, onConfirm }: { token: IntegrationToken; action: "revoke" | "delete"; onClose: () => void; onConfirm: () => Promise<void> }) {
+  const [typed, setTyped] = useState("");
+  const [busy, setBusy] = useState(false);
+  async function confirmAction() {
+    setBusy(true);
+    try { await onConfirm(); } finally { setBusy(false); }
+  }
+  return (
+    <Modal title={action === "revoke" ? "Revokovat implementační token?" : "Smazat záznam tokenu?"} onClose={onClose}>
+      <div className="modal-form">
+        <p className="destructive-copy">{action === "revoke" ? "Programátorské API token okamžitě odmítne. Běžící krok jobu skončí fail-closed a nebude znovu pronajat." : "Token bude revokován a skryt z přehledu; auditní a onboardingová stopa zůstane zachována."}</p>
+        <label>Pro potvrzení opiš označení<input value={typed} onChange={(event) => setTyped(event.target.value)} placeholder={token.label} /></label>
+        <footer className="modal-actions"><button className="secondary" onClick={onClose}>Zrušit</button><button className="danger-button" disabled={typed !== token.label || busy} onClick={() => { void confirmAction(); }}>{action === "revoke" ? "Revokovat" : "Smazat"}</button></footer>
+      </div>
+    </Modal>
+  );
+}
+
 function ConfirmModal({ credential, action, onClose, onConfirm }: { credential: KajaCredential; action: "revoke" | "delete"; onClose: () => void; onConfirm: () => Promise<void> }) {
   const [typed, setTyped] = useState("");
   const [busy, setBusy] = useState(false);
@@ -298,7 +409,7 @@ function ServerDetailModal({ server, onClose }: { server: Server; onClose: () =>
   );
 }
 
-function MonitoringPage({ servers, onRefresh }: { servers: Server[]; onRefresh: () => void }) {
+function MonitoringPage({ servers, probes, onRefresh, onAutomatedOnboarding }: { servers: Server[]; probes: MonitoringProbe[]; onRefresh: () => void; onAutomatedOnboarding: () => void }) {
   const [query, setQuery] = useState("");
   const [timeRange, setTimeRange] = useState("24h");
   const [detailServer, setDetailServer] = useState<Server | null>(null);
@@ -306,9 +417,12 @@ function MonitoringPage({ servers, onRefresh }: { servers: Server[]; onRefresh: 
   const degraded = servers.filter((server) => server.operationalState === "DEGRADED").length;
   const offline = servers.filter((server) => !server.enabled || ["SUSPENDED", "QUARANTINED", "RETIRED"].includes(server.registrationState)).length;
   const filtered = servers.filter((server) => `${server.displayName} ${server.hostname} ${server.code}`.toLowerCase().includes(query.toLowerCase()));
+  const rangeMs = timeRange === "30d" ? 30 * 86400000 : timeRange === "7d" ? 7 * 86400000 : 86400000;
+  const visibleProbes = probes.filter((probe) => new Date(probe.checked_at).getTime() > Date.now() - rangeMs).slice(0, 80).reverse();
   return (
     <>
       <PageHeader title="Monitoring MCP" description="Přehled stavu a dostupnosti MCP serverů">
+        <button onClick={onAutomatedOnboarding}><Rocket size={17} /> Automaticky integrovat MCP server</button>
         <IconButton label="Obnovit monitoring" onClick={onRefresh}><RefreshCw size={17} /></IconButton>
         <label className="range-select"><Clock3 size={16} /><select value={timeRange} onChange={(event) => setTimeRange(event.target.value)} aria-label="Časový rozsah monitoringu"><option value="24h">Posledních 24 hodin</option><option value="7d">Posledních 7 dní</option><option value="30d">Posledních 30 dní</option></select><ChevronDown size={15} /></label>
       </PageHeader>
@@ -323,7 +437,7 @@ function MonitoringPage({ servers, onRefresh }: { servers: Server[]; onRefresh: 
         <div className="timeline-chart" aria-label="Dostupnost MCP serverů za posledních 24 hodin">
           <div className="chart-y-axis"><span>100%</span><span>75%</span><span>50%</span><span>25%</span><span>0%</span></div>
           <div className="chart-grid">
-            <div className="timeline-empty"><ServerIcon size={34} /><strong>Žádná data k zobrazení</strong><span>Nejsou evidované žádné MCP servery.</span></div>
+            {visibleProbes.length === 0 ? <div className="timeline-empty"><ServerIcon size={34} /><strong>Žádná data k zobrazení</strong><span>Probe scheduler zatím neuložil žádnou kontrolu.</span></div> : <div className="probe-timeline">{visibleProbes.map((probe) => <span key={probe.id} className={`probe-point ${probe.status.toLowerCase()}`} title={`${probe.code} · ${probe.probe_type} · ${probe.status} · ${formatDate(probe.checked_at)}`} />)}</div>}
             <div className="chart-x-axis"><span>18:00</span><span>22:00</span><span>02:00</span><span>06:00</span><span>10:00</span><span>14:00</span></div>
           </div>
         </div>
@@ -333,7 +447,7 @@ function MonitoringPage({ servers, onRefresh }: { servers: Server[]; onRefresh: 
         {servers.length === 0 ? (
           <div className="empty-state server-empty">
             <ServerIcon size={34} /><strong>Katalog MCP serverů je prázdný</strong>
-            <p>Tokeny lze připravit, ale oprávnění půjde přiřadit až po registraci serveru.</p>
+            <p>Spusť automatickou integraci. Server se objeví až po ověření zdrojů, CI, podepsaném OCI deployi a veřejných aktivačních testech.</p>
           </div>
         ) : (
           <table><thead><tr><th>Server</th><th>Hostname</th><th>Registrace</th><th>Provoz</th><th>Volání</th><th>Auth chyby</th><th>Poslední kontrola</th><th>Akce</th></tr></thead>
@@ -341,6 +455,43 @@ function MonitoringPage({ servers, onRefresh }: { servers: Server[]; onRefresh: 
         )}
       </section>
       {detailServer ? <ServerDetailModal server={detailServer} onClose={() => setDetailServer(null)} /> : null}
+    </>
+  );
+}
+
+function OnboardingJobModal({ jobId, onClose, onResume, onCancel }: { jobId: string; onClose: () => void; onResume: (jobId: string) => void; onCancel: (jobId: string) => Promise<void> }) {
+  const [job, setJob] = useState<OnboardingJob | null>(null);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    void api<{ job: OnboardingJob }>(`/api/onboarding-jobs/${jobId}`).then((result) => setJob(result.job)).catch((err) => setError(err instanceof Error ? err.message : "Detail se nepodařilo načíst"));
+  }, [jobId]);
+  return (
+    <Modal title="Detail onboarding jobu" onClose={onClose}>
+      {!job ? <div className="server-detail">{error ? <p className="error">{error}</p> : <p>Načítám detail…</p>}</div> : <div className="job-detail">
+        <div className="server-detail-status"><span className={`status-dot ${job.state === "ACTIVE" ? "ok" : ["FAILED", "QUARANTINED", "CANCELLED"].includes(job.state) ? "danger" : "warn"}`} /><strong>{job.state}</strong><span>{job.code ?? "Bez identity"}</span></div>
+        <dl className="job-metadata"><dt>Job ID</dt><dd><code>{job.id}</code></dd><dt>Correlation ID</dt><dd><code>{job.correlationId}</code></dd><dt>HTTPS resource</dt><dd>{job.resource ? <a href={job.resource} target="_blank" rel="noreferrer">{job.resource}</a> : "-"}</dd><dt>PR / CI</dt><dd>{job.githubPrUrl ? <a href={job.githubPrUrl} target="_blank" rel="noreferrer">Otevřít pull request</a> : "-"}</dd><dt>Image digest</dt><dd><code>{job.imageDigest ?? "-"}</code></dd><dt>SBOM digest</dt><dd><code>{job.sbomDigest ?? "-"}</code></dd><dt>Revize zdrojů</dt><dd>{job.sourceRevision}</dd></dl>
+        {job.blockingErrorCode ? <div className="notice error"><AlertTriangle size={18} /><span><strong>{job.blockingErrorCode}</strong><br />{job.blockingErrorDetail}</span></div> : null}
+        <section><h3>Bezpečnostní a aktivační brány</h3><div className="gate-grid">{job.gates?.map((gate) => <article key={gate.gate_name}><span className={`status-dot ${gate.status === "PASS" ? "ok" : ["FAIL", "QUARANTINED"].includes(gate.status) ? "danger" : "warn"}`} /><div><strong>{gate.gate_name}</strong><small>{gate.stage} · {gate.status}</small></div></article>)}</div></section>
+        <section><h3>Časová osa</h3><ol className="job-timeline">{job.events?.map((event) => <li key={event.id}><span className="status-dot ok" /><div><strong>{event.event_type}</strong><small>{event.from_state ?? "START"} → {event.to_state} · {formatDate(event.created_at)}</small><code>{event.correlation_id}</code></div></li>)}</ol></section>
+        <footer className="modal-actions"><button className="secondary" onClick={onClose}>Zavřít</button>{job.state !== "ACTIVE" && job.state !== "QUARANTINED" && job.state !== "CANCELLED" ? <button className="secondary" onClick={() => onResume(job.id)}>Vystavit navazující token</button> : null}{!["ACTIVE", "FAILED", "QUARANTINED", "CANCELLED"].includes(job.state) ? <button className="danger-button" onClick={() => { void onCancel(job.id); }}>Zrušit job</button> : null}</footer>
+      </div>}
+    </Modal>
+  );
+}
+
+function IntegrationTokensPage({ tokens, jobs, onCreate, onOpenJob, onResume, onRevoke, onDelete, onRefresh }: { tokens: IntegrationToken[]; jobs: OnboardingJob[]; onCreate: () => void; onOpenJob: (id: string) => void; onResume: (id: string) => void; onRevoke: (token: IntegrationToken) => void; onDelete: (token: IntegrationToken) => void; onRefresh: () => void }) {
+  const [query, setQuery] = useState("");
+  const filtered = tokens.filter((token) => `${token.label} ${token.fingerprint} ${token.code ?? ""}`.toLowerCase().includes(query.toLowerCase()));
+  return (
+    <>
+      <PageHeader title="Implementační tokeny" description="Jednorázové 512bitové tokeny pro plně automatický onboarding jednoho MCP serveru.">
+        <label className="search-box"><Search size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Hledat token, job nebo KCML…" aria-label="Hledat implementační token" /></label>
+        <button onClick={onCreate}><Plus size={17} /> Vygenerovat token</button><IconButton label="Obnovit" onClick={onRefresh}><RefreshCw size={17} /></IconButton>
+      </PageHeader>
+      <section className="panel table-panel"><div className="panel-head"><div><h2>Vydané tokeny</h2><p>Hodnotu tokenu nelze měnit ani znovu zobrazit.</p></div><span className="panel-count">{filtered.length} záznamů</span></div>
+        {filtered.length === 0 ? <div className="empty-state"><Workflow size={34} /><strong>Žádné implementační tokeny</strong><p>Vygeneruj první token a předej jej programátorovi bezpečným kanálem.</p></div> : <div className="table-scroll"><table><thead><tr><th>Označení</th><th>Fingerprint</th><th>KCML / job</th><th>Stav</th><th>Aktuální expirace</th><th>Maximum</th><th>Akce</th></tr></thead><tbody>{filtered.map((token) => <tr key={token.id}><td><strong>{token.label}</strong><span className="cell-subtitle">Vydán {formatDate(token.issuedAt)}</span></td><td><code>{token.fingerprint}</code></td><td>{token.code ?? "Čeká na upload"}<span className="cell-subtitle">{token.jobId ? token.jobId.slice(0, 8) : "Nevázaný"}</span></td><td><span className={`badge ${token.active ? "ok" : "danger"}`}>{token.jobState ?? (token.active ? "PŘIPRAVEN" : "NEPLATNÝ")}</span></td><td>{formatDate(token.expiresAt)}</td><td>{formatDate(token.maxExpiresAt)}</td><td><div className="row-actions">{token.jobId ? <button className="small-button" onClick={() => onOpenJob(token.jobId!)}>Detail</button> : null}{token.jobId && !["ACTIVE", "QUARANTINED", "CANCELLED"].includes(token.jobState ?? "") && !token.active ? <button className="small-button" onClick={() => onResume(token.jobId!)}>Navázat</button> : null}<button className="small-button" disabled={!token.active} onClick={() => onRevoke(token)}>Revokovat</button><button className="small-button danger-link" onClick={() => onDelete(token)}>Smazat</button></div></td></tr>)}</tbody></table></div>}
+      </section>
+      <section className="panel"><div className="panel-head"><h2>Onboardingové joby</h2><span className="panel-count">{jobs.length} jobů</span></div>{jobs.length === 0 ? <div className="empty-state server-empty"><Rocket size={32} /><strong>Zatím nebyl zahájen žádný upload</strong></div> : <div className="job-cards">{jobs.map((job) => <button key={job.id} onClick={() => onOpenJob(job.id)}><span className={`status-dot ${job.state === "ACTIVE" ? "ok" : ["FAILED", "QUARANTINED", "CANCELLED"].includes(job.state) ? "danger" : "warn"}`} /><span><strong>{job.code ?? "Čeká na identitu"}</strong><small>{job.state} · {formatDate(job.updatedAt)}</small></span><ChevronDown className="item-chevron" size={15} /></button>)}</div>}</section>
     </>
   );
 }
@@ -424,24 +575,37 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
   const [servers, setServers] = useState<Server[]>([]);
   const [credentials, setCredentials] = useState<KajaCredential[]>([]);
   const [events, setEvents] = useState<AuditEvent[]>([]);
+  const [integrationTokens, setIntegrationTokens] = useState<IntegrationToken[]>([]);
+  const [onboardingJobs, setOnboardingJobs] = useState<OnboardingJob[]>([]);
+  const [probes, setProbes] = useState<MonitoringProbe[]>([]);
   const [selectedCredentialId, setSelectedCredentialId] = useState<string | null>(null);
   const [permissions, setPermissions] = useState<KajaPermission[]>([]);
   const [savingPermissions, setSavingPermissions] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [secret, setSecret] = useState<SecretResult | null>(null);
+  const [integrationCreate, setIntegrationCreate] = useState<{ resumeJobId?: string } | null>(null);
+  const [integrationSecret, setIntegrationSecret] = useState<IntegrationSecret | null>(null);
+  const [integrationConfirm, setIntegrationConfirm] = useState<{ token: IntegrationToken; action: "revoke" | "delete" } | null>(null);
+  const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
   const [confirm, setConfirm] = useState<{ credential: KajaCredential; action: "revoke" | "delete" } | null>(null);
   const [error, setError] = useState("");
   async function load() {
     setError("");
     try {
-      const [serverRes, credentialRes, auditRes] = await Promise.all([
+      const [serverRes, credentialRes, auditRes, integrationRes, jobsRes, probesRes] = await Promise.all([
         api<{ servers: Server[] }>("/api/mcp-servers"),
         api<{ credentials: KajaCredential[] }>("/api/kaja"),
-        api<{ events: AuditEvent[] }>("/api/audit")
+        api<{ events: AuditEvent[] }>("/api/audit"),
+        api<{ tokens: IntegrationToken[] }>("/api/integration-tokens"),
+        api<{ jobs: OnboardingJob[] }>("/api/onboarding-jobs"),
+        api<{ probes: MonitoringProbe[] }>("/api/monitoring-probes")
       ]);
       setServers(serverRes.servers);
       setCredentials(credentialRes.credentials);
       setEvents(auditRes.events);
+      setIntegrationTokens(integrationRes.tokens);
+      setOnboardingJobs(jobsRes.jobs);
+      setProbes(probesRes.probes);
       setSelectedCredentialId((current) => current ?? credentialRes.credentials[0]?.id ?? null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Načtení selhalo");
@@ -481,6 +645,19 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
     await load();
   }
 
+  async function runIntegrationConfirm() {
+    if (!integrationConfirm) return;
+    await api(`/api/integration-tokens/${integrationConfirm.token.id}/${integrationConfirm.action}`, { method: "POST", headers: { "x-csrf-token": csrf() }, body: "{}" });
+    setIntegrationConfirm(null);
+    await load();
+  }
+
+  async function cancelOnboardingJob(jobId: string) {
+    await api(`/api/onboarding-jobs/${jobId}/cancel`, { method: "POST", headers: { "x-csrf-token": csrf() }, body: "{}" });
+    setSelectedJobId(null);
+    await load();
+  }
+
   async function logout() {
     await api("/api/logout", { method: "POST", body: "{}" });
     onLogout();
@@ -497,6 +674,7 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
         <div className="brand-row"><span className="brand-mark"><ShieldCheck size={22} /></span><div><strong>KCML</strong><span>Správce MCP serverů</span></div></div>
         <nav>
           <button aria-pressed={page === "monitoring"} className={page === "monitoring" ? "active" : ""} onClick={() => setPage("monitoring")}><Activity size={18} /> Monitoring MCP</button>
+          <button aria-pressed={page === "integration"} className={page === "integration" ? "active" : ""} onClick={() => setPage("integration")}><Workflow size={18} /> Implementační tokeny</button>
           <button aria-pressed={page === "tokens"} className={page === "tokens" ? "active" : ""} onClick={() => setPage("tokens")}><KeyRound size={18} /> Tokeny</button>
           <button aria-pressed={page === "permissions"} className={page === "permissions" ? "active" : ""} onClick={() => setPage("permissions")}><LockKeyhole size={18} /> Správa oprávnění</button>
           <button aria-pressed={page === "audit"} className={page === "audit" ? "active" : ""} onClick={() => setPage("audit")}><Terminal size={18} /> Audit</button>
@@ -506,7 +684,8 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
       <section className="workspace">
         <div className="mobile-topbar"><div className="brand-row"><span className="brand-mark"><ShieldCheck size={20} /></span><strong>KCML</strong></div><span>{pageNames[page]}</span></div>
         {error && <div className="notice error"><AlertTriangle size={18} /> {error}</div>}
-        {page === "monitoring" && <MonitoringPage servers={servers} onRefresh={() => { void load(); }} />}
+        {page === "monitoring" && <MonitoringPage servers={servers} probes={probes} onRefresh={() => { void load(); }} onAutomatedOnboarding={() => setIntegrationCreate({})} />}
+        {page === "integration" && <IntegrationTokensPage tokens={integrationTokens} jobs={onboardingJobs} onCreate={() => setIntegrationCreate({})} onOpenJob={setSelectedJobId} onResume={(jobId) => setIntegrationCreate({ resumeJobId: jobId })} onRevoke={(token) => setIntegrationConfirm({ token, action: "revoke" })} onDelete={(token) => setIntegrationConfirm({ token, action: "delete" })} onRefresh={() => { void load(); }} />}
         {page === "tokens" && <TokensPage credentials={credentials} onOpenCreate={() => setCreateOpen(true)} onEditPermissions={openPermissions} onConfirm={(credential, action) => setConfirm({ credential, action })} onRefresh={() => { void load(); }} />}
         {page === "permissions" && <PermissionsPage credentials={credentials} servers={servers} selectedId={selectedCredentialId} permissions={permissions} saving={savingPermissions} onSelect={setSelectedCredentialId} onChange={setPermissions} onSave={() => { void savePermissions(); }} />}
         {page === "audit" && <AuditPage events={events} />}
@@ -514,6 +693,10 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
       {createOpen && <CreateTokenModal serverCount={servers.length} onClose={() => setCreateOpen(false)} onCreated={(created) => { setCreateOpen(false); setSecret(created); void load(); }} />}
       {secret && <SecretModal secret={secret} onClose={() => setSecret(null)} />}
       {confirm && <ConfirmModal credential={confirm.credential} action={confirm.action} onClose={() => setConfirm(null)} onConfirm={runConfirm} />}
+      {integrationCreate && <CreateIntegrationTokenModal resumeJobId={integrationCreate.resumeJobId} onClose={() => setIntegrationCreate(null)} onCreated={(created) => { setIntegrationCreate(null); setIntegrationSecret(created); setPage("integration"); void load(); }} />}
+      {integrationSecret && <IntegrationSecretModal secret={integrationSecret} onClose={() => setIntegrationSecret(null)} />}
+      {integrationConfirm && <IntegrationConfirmModal token={integrationConfirm.token} action={integrationConfirm.action} onClose={() => setIntegrationConfirm(null)} onConfirm={runIntegrationConfirm} />}
+      {selectedJobId && <OnboardingJobModal jobId={selectedJobId} onClose={() => setSelectedJobId(null)} onResume={(jobId) => { setSelectedJobId(null); setIntegrationCreate({ resumeJobId: jobId }); }} onCancel={cancelOnboardingJob} />}
     </main>
   );
 }

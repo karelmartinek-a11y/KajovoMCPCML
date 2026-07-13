@@ -9,6 +9,10 @@ function asTimestamp(value: unknown): string | null {
   return null;
 }
 
+function optionalText(value: unknown): string | null {
+  return typeof value === "string" ? value : typeof value === "number" ? String(value) : null;
+}
+
 function mapServer(row: Record<string, unknown>): McpServer {
   return {
     id: String(row.id),
@@ -28,6 +32,17 @@ function mapServer(row: Record<string, unknown>): McpServer {
     contractVersion: String(row.contract_version),
     artifactDigest: String(row.artifact_digest),
     manifestDigest: String(row.manifest_digest),
+    imageReference: optionalText(row.image_reference),
+    imageDigest: optionalText(row.image_digest),
+    sbomDigest: optionalText(row.sbom_digest),
+    provenanceDigest: optionalText(row.provenance_digest),
+    runtimeSocket: optionalText(row.runtime_socket),
+    timeoutMs: Number(row.timeout_ms ?? 30_000),
+    maxConcurrency: Number(row.max_concurrency ?? 1),
+    requestMaxBytes: Number(row.request_max_bytes ?? 1_048_576),
+    responseMaxBytes: Number(row.response_max_bytes ?? 5_242_880),
+    rateWindowSeconds: Number(row.rate_window_seconds ?? 60),
+    rateMaxRequests: Number(row.rate_max_requests ?? 60),
     revocationEpoch: String(row.revocation_epoch),
     successCount: Number(row.success_count ?? 0),
     unauthorizedCount: Number(row.unauthorized_count ?? 0),

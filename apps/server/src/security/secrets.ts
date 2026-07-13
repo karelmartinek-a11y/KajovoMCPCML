@@ -44,7 +44,9 @@ export function safeEqual(a: Buffer, b: Buffer): boolean {
 
 export function redact(input: unknown): unknown {
   if (typeof input === "string") {
-    return input.replace(/(Bearer\s+)[A-Za-z0-9_-]+/gi, "$1[REDACTED]");
+    return input
+      .replace(/(Bearer\s+)[A-Za-z0-9_-]+/gi, "$1[REDACTED]")
+      .replace(/\bkc[ie]_[A-Za-z0-9_-]{40,}\b/g, "[REDACTED]");
   }
   if (Array.isArray(input)) return input.map(redact);
   if (input && typeof input === "object") {

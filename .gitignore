@@ -8,3 +8,5 @@ coverage/
 !.env.example
 *.log
 tmp/
+.codex-docx-work/
+__pycache__/

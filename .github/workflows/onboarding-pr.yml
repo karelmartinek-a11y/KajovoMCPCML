@@ -1,0 +1,188 @@
+name: MCP onboarding PR gates
+
+on:
+  pull_request:
+    paths:
+      - "handlers/**"
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  path-policy:
+    name: path-policy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0, persist-credentials: false }
+      - run: scripts/onboarding/handler-dir.sh "origin/${{ github.base_ref }}"
+
+  manifest-schema:
+    name: manifest-schema
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0, persist-credentials: false }
+      - name: Validate generated metadata and package contract
+        run: |
+          dir="$(scripts/onboarding/handler-dir.sh "origin/${{ github.base_ref }}")"
+          DIR="$dir" node --input-type=module <<'NODE'
+          import fs from "node:fs";
+          const dir = process.env.DIR;
+          const metadata = JSON.parse(fs.readFileSync(`${dir}/.kcml-onboarding.json`, "utf8"));
+          const pkg = JSON.parse(fs.readFileSync(`${dir}/package.json`, "utf8"));
+          if (!/^KCML\d{4,}$/.test(metadata.code) || !/^sha256:[a-f0-9]{64}$/.test(metadata.sourceDigest)) throw new Error("invalid onboarding metadata");
+          if (pkg.type !== "module" || !String(pkg.engines?.node).includes("22")) throw new Error("Node.js 22 ESM package required");
+          for (const name of Object.keys(pkg.scripts ?? {})) if (!["test","lint","typecheck","build"].includes(name)) throw new Error(`forbidden script ${name}`);
+          NODE
+
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0, persist-credentials: false }
+      - uses: pnpm/action-setup@v4
+        with: { version: 9.15.4 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: |
+          dir="$(scripts/onboarding/handler-dir.sh "origin/${{ github.base_ref }}")"
+          cd "$dir"
+          pnpm install --frozen-lockfile --ignore-scripts
+          pnpm exec eslint src --max-warnings=0
+
+  typecheck:
+    name: typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0, persist-credentials: false }
+      - uses: pnpm/action-setup@v4
+        with: { version: 9.15.4 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: |
+          dir="$(scripts/onboarding/handler-dir.sh "origin/${{ github.base_ref }}")"
+          cd "$dir"
+          pnpm install --frozen-lockfile --ignore-scripts
+          pnpm exec tsc --noEmit -p tsconfig.json
+
+  unit-tests:
+    name: unit-tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0, persist-credentials: false }
+      - uses: pnpm/action-setup@v4
+        with: { version: 9.15.4 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: |
+          dir="$(scripts/onboarding/handler-dir.sh "origin/${{ github.base_ref }}")"
+          cd "$dir"
+          pnpm install --frozen-lockfile --ignore-scripts
+          pnpm exec vitest run
+
+  contract-tests:
+    name: contract-tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0, persist-credentials: false }
+      - uses: pnpm/action-setup@v4
+        with: { version: 9.15.4 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: |
+          dir="$(scripts/onboarding/handler-dir.sh "origin/${{ github.base_ref }}")"
+          cd "$dir"
+          pnpm install --frozen-lockfile --ignore-scripts
+          pnpm exec tsc -p tsconfig.json
+          cd "$GITHUB_WORKSPACE"
+          node scripts/onboarding/contract-test.mjs "$dir"
+
+  secret-scan:
+    name: secret-scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0, persist-credentials: false }
+      - name: Reject credential material
+        run: |
+          dir="$(scripts/onboarding/handler-dir.sh "origin/${{ github.base_ref }}")"
+          if rg -n --hidden --glob '!pnpm-lock.yaml' "BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY|github_pat_|ghp_[A-Za-z0-9]{20,}|sk-[A-Za-z0-9_-]{20,}|kci_[A-Za-z0-9_-]{40,}|Kaja[0-9]{4,}:[A-Za-z0-9_-]{20,}|(password|client_secret|api[_-]?key)[[:space:]]*[:=][[:space:]]*[\"']?[A-Za-z0-9_+/=.-]{16,}" "$dir"; then
+            exit 1
+          fi
+
+  sast:
+    name: sast
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0, persist-credentials: false }
+      - uses: github/codeql-action/init@v3
+        with: { languages: javascript-typescript }
+      - uses: github/codeql-action/analyze@v3
+
+  sca-license:
+    name: sca-license
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0, persist-credentials: false }
+      - uses: pnpm/action-setup@v4
+        with: { version: 9.15.4 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: |
+          dir="$(scripts/onboarding/handler-dir.sh "origin/${{ github.base_ref }}")"
+          cd "$dir"
+          pnpm install --frozen-lockfile --ignore-scripts
+          pnpm audit --prod --audit-level high
+          pnpm licenses list --prod --json > /tmp/licenses.json
+          node --input-type=module <<'NODE'
+          import fs from "node:fs";
+          const data = JSON.parse(fs.readFileSync("/tmp/licenses.json", "utf8"));
+          const allowed = /^(MIT|ISC|Apache-2.0|BSD-2-Clause|BSD-3-Clause)$/;
+          for (const [license, packages] of Object.entries(data)) if (!allowed.test(license) && packages.length) throw new Error(`license not allowed: ${license}`);
+          NODE
+
+  sbom:
+    name: sbom
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0, persist-credentials: false }
+      - uses: anchore/sbom-action@v0
+        with:
+          path: handlers
+          format: spdx-json
+          output-file: /tmp/onboarding.spdx.json
+          upload-artifact: false
+      - run: test -s /tmp/onboarding.spdx.json
+
+  reproducible-build:
+    name: reproducible-build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0, persist-credentials: false }
+      - uses: pnpm/action-setup@v4
+        with: { version: 9.15.4 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: |
+          dir="$(scripts/onboarding/handler-dir.sh "origin/${{ github.base_ref }}")"
+          cd "$dir"
+          pnpm install --frozen-lockfile --ignore-scripts
+          rm -rf dist && pnpm exec tsc -p tsconfig.json && find dist -type f -print0 | sort -z | xargs -0 sha256sum > /tmp/build-1
+          rm -rf dist && pnpm exec tsc -p tsconfig.json && find dist -type f -print0 | sort -z | xargs -0 sha256sum > /tmp/build-2
+          diff -u /tmp/build-1 /tmp/build-2

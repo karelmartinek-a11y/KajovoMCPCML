@@ -1,0 +1,28 @@
+[Unit]
+Description=KCML central allowlisted egress proxy
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=kcml
+Group=kcml
+WorkingDirectory=/opt/kcml/current
+EnvironmentFile=/etc/kcml/kcml.env
+ExecStart=/usr/bin/node apps/server/dist/cli/egress-proxy.js
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+ReadWritePaths=/var/lib/kcml/egress
+
+[Install]
+WantedBy=multi-user.target

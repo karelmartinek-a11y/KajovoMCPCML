@@ -4,6 +4,8 @@ After=network.target postgresql.service
 
 [Service]
 Type=simple
+User=kcml
+Group=kcml
 WorkingDirectory=/opt/kcml/current
 EnvironmentFile=/etc/kcml/kcml.env
 ExecStart=/usr/bin/node apps/server/dist/index.js
@@ -12,7 +14,7 @@ RestartSec=5
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
-ReadWritePaths=/opt/kcml /var/log/kcml
+ReadWritePaths=/opt/kcml /var/log/kcml /var/lib/kcml/runtime
 
 [Install]
 WantedBy=multi-user.target

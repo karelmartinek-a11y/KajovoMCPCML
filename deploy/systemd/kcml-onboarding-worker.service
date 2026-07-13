@@ -1,0 +1,34 @@
+[Unit]
+Description=KCML automated onboarding worker
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=kcml
+Group=kcml
+WorkingDirectory=/opt/kcml/current
+EnvironmentFile=/etc/kcml/kcml.env
+Environment=HOME=/var/lib/kcml/podman
+Environment=XDG_DATA_HOME=/var/lib/kcml/podman/data
+Environment=XDG_CONFIG_HOME=/var/lib/kcml/podman/config
+Environment=XDG_RUNTIME_DIR=/run/kcml-podman
+RuntimeDirectory=kcml-podman
+RuntimeDirectoryMode=0700
+ExecStart=/usr/bin/node apps/server/dist/cli/onboarding-worker.js
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+ReadWritePaths=/var/lib/kcml/onboarding /var/lib/kcml/runtime /var/lib/kcml/podman /run/kcml-podman
+
+[Install]
+WantedBy=multi-user.target

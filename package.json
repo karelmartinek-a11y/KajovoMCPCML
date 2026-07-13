@@ -11,7 +11,7 @@
     "build": "pnpm -r build",
     "dev": "pnpm --filter @kcml/server dev",
     "lint": "eslint .",
-    "test": "vitest run",
+    "test": "vitest run --exclude '**/._*'",
     "typecheck": "pnpm -r typecheck",
     "ci": "pnpm lint && pnpm typecheck && pnpm test && pnpm build",
     "db:migrate": "pnpm --filter @kcml/server db:migrate",
