@@ -47,7 +47,7 @@ type AttestationStatement = {
   subject?: Array<{ digest?: { sha256?: string } }>;
   predicate?: {
     invocation?: { configSource?: { digest?: { sha1?: string } } };
-    metadata?: { buildInvocationId?: string | number };
+    metadata?: { buildInvocationID?: string | number };
   };
 };
 
@@ -79,7 +79,7 @@ export function verifyAttestationEvidence(
   const provenance = statements(provenanceOutput).find((statement) =>
     hasSubject(statement, imageDigest)
     && statement.predicate?.invocation?.configSource?.digest?.sha1 === expectedSourceCommit
-    && String(statement.predicate?.metadata?.buildInvocationId ?? "") === expectedBuildId
+    && String(statement.predicate?.metadata?.buildInvocationID ?? "") === expectedBuildId
   );
   if (!provenance) throw new Error("provenance_evidence_mismatch");
 }

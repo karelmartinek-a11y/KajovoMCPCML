@@ -72,9 +72,10 @@ jobs:
         run: |
           jq -n \
             --arg commit "$GITHUB_SHA" \
-            --arg digest "$IMAGE_DIGEST" \
-            --arg workflow "$GITHUB_WORKFLOW" \
-            '{buildType:"https://hcasc.cz/kcml/handler-build/v1", invocation:{configSource:{digest:{sha1:$commit}}}, metadata:{buildInvocationId:env.GITHUB_RUN_ID,workflow:$workflow}, subject:[{name:"handler-image",digest:{sha256:($digest|sub("^sha256:";""))}}]}' \
+            --arg builder "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/onboarding-build.yml@refs/heads/main" \
+            --arg source "git+https://github.com/${GITHUB_REPOSITORY}@${GITHUB_SHA}" \
+            --arg handler "${{ matrix.handler }}" \
+            '{builder:{id:$builder},buildType:"https://hcasc.cz/kcml/handler-build/v1",invocation:{configSource:{uri:$source,digest:{sha1:$commit},entryPoint:".github/workflows/onboarding-build.yml"},parameters:{handler:$handler},environment:{}},metadata:{buildInvocationID:env.GITHUB_RUN_ID,completeness:{parameters:true,environment:true,materials:false},reproducible:false},materials:[{uri:$source,digest:{sha1:$commit}}]}' \
             > /tmp/provenance.json
       - name: Sign image, SBOM and provenance
         env:

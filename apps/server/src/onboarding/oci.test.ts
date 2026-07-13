@@ -15,7 +15,7 @@ describe("OCI attestation evidence", () => {
       subject,
       predicate: {
         invocation: { configSource: { digest: { sha1: "commit-123" } } },
-        metadata: { buildInvocationId: "98765" }
+        metadata: { buildInvocationID: "98765" }
       }
     });
     expect(() => verifyAttestationEvidence(sbom, provenance, imageDigest, "commit-123", "98765")).not.toThrow();
@@ -27,7 +27,7 @@ describe("OCI attestation evidence", () => {
       subject,
       predicate: {
         invocation: { configSource: { digest: { sha1: "commit-123" } } },
-        metadata: { buildInvocationId: "different-run" }
+        metadata: { buildInvocationID: "different-run" }
       }
     });
     expect(() => verifyAttestationEvidence(sbom, provenance, imageDigest, "commit-123", "98765"))
