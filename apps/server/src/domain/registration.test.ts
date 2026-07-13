@@ -1,22 +1,28 @@
 import { describe, expect, it } from "vitest";
-import { validateManifest, validateOnboardingManifest } from "./registration.js";
+import { digestCanonicalJson, validateManifest, validateOnboardingManifest } from "./registration.js";
+
+const inputSchema = { type: "object", additionalProperties: false, properties: {} };
+const outputSchema = { type: "object", additionalProperties: false, properties: {} };
 
 const validManifest = {
   schemaVersion: "1.3",
   registrationRevision: "rev-1",
   environment: "production",
+  identity: { code: "KCML0001", hostname: "kcml0001.hcasc.cz", resource: "https://kcml0001.hcasc.cz/mcp" },
   handlerKey: "example",
   handlerVersion: "1.0.0",
   displayName: "Example",
   businessPurpose: "A concrete production purpose.",
   owners: { service: "svc", technical: "tech", security: "sec", operations: "ops" },
   tool: {
+    name: "example",
     title: "example",
     description: "Example tool",
-    inputSchema: { type: "object", additionalProperties: false, properties: {} },
-    outputSchema: { type: "object", additionalProperties: false, properties: {} },
+    inputSchema,
+    outputSchema,
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false, taskSupport: "forbidden" }
   },
+  contractDigests: { inputSchema: digestCanonicalJson(inputSchema), outputSchema: digestCanonicalJson(outputSchema) },
   behavior: {
     effectClass: "READ_ONLY",
     timeoutMs: 1000,
@@ -53,6 +59,15 @@ describe("registration manifest", () => {
   it("rejects unknown fields and automatic retry", () => {
     expect(() => validateManifest({ ...validManifest, extra: true })).toThrow();
     expect(() => validateManifest({ ...validManifest, behavior: { ...validManifest.behavior, retryPolicy: { automaticRetry: true } } })).toThrow();
+  });
+
+  it("binds the digest to nested contract values", () => {
+    const original = validateManifest(validManifest).digest;
+    const changed = validateManifest({
+      ...validManifest,
+      behavior: { ...validManifest.behavior, timeoutMs: validManifest.behavior.timeoutMs + 1 }
+    }).digest;
+    expect(changed).not.toBe(original);
   });
 });
 

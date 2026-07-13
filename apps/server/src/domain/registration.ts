@@ -7,6 +7,11 @@ const manifestSchema = z.object({
   schemaVersion: z.literal("1.3"),
   registrationRevision: z.string().min(1),
   environment: z.enum(["production", "staging"]),
+  identity: z.object({
+    code: z.string().regex(/^KCML[0-9]{4,}$/i),
+    hostname: z.string().regex(/^kcml[0-9]{4,}[.]hcasc[.]cz$/i),
+    resource: z.string().url()
+  }),
   handlerKey: z.string().regex(/^[a-z0-9_-]+$/),
   handlerVersion: z.string().min(1),
   displayName: z.string().min(1),
@@ -18,6 +23,7 @@ const manifestSchema = z.object({
     operations: z.string().min(1)
   }),
   tool: z.object({
+    name: z.string().regex(/^[a-z0-9_-]+$/),
     title: z.string().min(1),
     description: z.string().min(1),
     inputSchema: z.record(z.unknown()),
@@ -29,6 +35,10 @@ const manifestSchema = z.object({
       openWorldHint: z.boolean(),
       taskSupport: z.literal("forbidden")
     })
+  }),
+  contractDigests: z.object({
+    inputSchema: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+    outputSchema: z.string().regex(/^sha256:[a-f0-9]{64}$/)
   }),
   behavior: z.object({
     effectClass: z.enum(["READ_ONLY", "IDEMPOTENT_WRITE", "NON_IDEMPOTENT_WRITE"]),
@@ -157,9 +167,27 @@ function validateJsonSchemas(inputSchema: Record<string, unknown>, outputSchema:
   ajv.compile(outputSchema);
 }
 
+function canonicalize(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalize);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, nested]) => [key, canonicalize(nested)])
+    );
+  }
+  return value;
+}
+
+export function digestCanonicalJson(value: unknown): string {
+  return `sha256:${createHash("sha256").update(JSON.stringify(canonicalize(value))).digest("hex")}`;
+}
+
 export function validateManifest(input: unknown): { manifest: RegistrationManifest; digest: string } {
   const manifest = manifestSchema.parse(input);
   validateJsonSchemas(manifest.tool.inputSchema, manifest.tool.outputSchema);
+  if (manifest.contractDigests.inputSchema !== digestCanonicalJson(manifest.tool.inputSchema)) throw new Error("input_schema_digest_mismatch");
+  if (manifest.contractDigests.outputSchema !== digestCanonicalJson(manifest.tool.outputSchema)) throw new Error("output_schema_digest_mismatch");
   const canonical = canonicalJson(manifest);
   return {
     manifest,

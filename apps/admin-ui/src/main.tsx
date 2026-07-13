@@ -28,7 +28,8 @@ import {
 } from "lucide-react";
 import "./styles.css";
 
-type Page = "monitoring" | "integration" | "tokens" | "permissions" | "audit";
+type Page = "monitoring" | "registration" | "integration" | "tokens" | "permissions" | "audit";
+type ServerAction = "test" | "trial" | "mcp-test" | "bind-manifest" | "disable" | "resume" | "activate";
 type Session = { authenticated: boolean; account: string | null };
 type Server = {
   id: string;
@@ -43,14 +44,33 @@ type Server = {
   handlerKey: string;
   handlerVersion: string;
   contractVersion: string;
+  inputSchema: unknown;
+  outputSchema: unknown;
   artifactDigest: string;
   manifestDigest: string;
   successCount: number;
   unauthorizedCount: number;
   failureCount: number;
+  lastLatencyMs: number | null;
+  averageLatencyMs: number | null;
+  p95LatencyMs: number | null;
   lastSuccessAt: string | null;
   lastFailureAt: string | null;
   lastUnauthorizedAt: string | null;
+  handlerSmokePassed: boolean;
+  manifestIdentityBound: boolean;
+  uiMcpTest: {
+    status: "PASS" | "FAIL";
+    testedAt: string;
+    latencyMs: number;
+    schemaValidated?: boolean;
+    toolCount?: number;
+    deviceCount?: number;
+    entityCount?: number;
+    rowCount?: number;
+    errorCode?: string;
+  } | null;
+  acceptancePassed: boolean;
   createdAt: string;
   updatedAt: string;
 };
@@ -124,9 +144,14 @@ type OnboardingJob = {
   events?: OnboardingEvent[];
 };
 type MonitoringProbe = { id: number; server_id: string; code: string; hostname: string; probe_type: string; status: string; latency_ms: number | null; correlation_id: string; checked_at: string };
+type McpTestResult = {
+  result: { status: "PASS"; testedAt: string; latencyMs: number; schemaValidated: boolean; toolCount: number; deviceCount: number; entityCount: number; rowCount: number };
+  response: unknown;
+};
 
 const pageNames: Record<Page, string> = {
   monitoring: "Monitoring MCP",
+  registration: "Registrace serveru",
   integration: "Implementační tokeny",
   tokens: "Tokeny",
   permissions: "Správa oprávnění",
@@ -342,6 +367,27 @@ function IntegrationConfirmModal({ token, action, onClose, onConfirm }: { token:
   );
 }
 
+function McpTestResultModal({ value, onClose }: { value: McpTestResult; onClose: () => void }) {
+  return (
+    <Modal title="Výsledek skutečného MCP testu" onClose={onClose}>
+      <div className="test-result-dialog">
+        <div className="notice"><ShieldCheck size={18} /> OAuth, autorizace, initialize, tools/list, tools/call a výstupní schéma prošly.</div>
+        <dl className="registration-contract">
+          <dt>Výsledek</dt><dd>{value.result.status}</dd>
+          <dt>Latence celého toku</dt><dd>{value.result.latencyMs} ms</dd>
+          <dt>Nástroje</dt><dd>{value.result.toolCount}</dd>
+          <dt>Zařízení / entity</dt><dd>{value.result.deviceCount} / {value.result.entityCount}</dd>
+          <dt>Řádky tabulky</dt><dd>{value.result.rowCount}</dd>
+          <dt>Validace schématu</dt><dd>{value.result.schemaValidated ? "PASS" : "FAIL"}</dd>
+        </dl>
+        <h3>Přesná MCP odpověď</h3>
+        <pre className="test-output">{JSON.stringify(value.response, null, 2)}</pre>
+        <footer className="modal-actions"><button type="button" onClick={onClose}>Zavřít výsledek</button></footer>
+      </div>
+    </Modal>
+  );
+}
+
 function ConfirmModal({ credential, action, onClose, onConfirm }: { credential: KajaCredential; action: "revoke" | "delete"; onClose: () => void; onConfirm: () => Promise<void> }) {
   const [typed, setTyped] = useState("");
   const [busy, setBusy] = useState(false);
@@ -385,7 +431,7 @@ function MetricCard({ tone, icon, value, label }: { tone: "neutral" | "success" 
   return <article className={`metric-card ${tone}`}><span className="metric-icon">{icon}</span><strong>{value}</strong><span>{label}</span></article>;
 }
 
-function ServerDetailModal({ server, onClose }: { server: Server; onClose: () => void }) {
+function ServerDetailModal({ server, busy, onClose, onAction }: { server: Server; busy: boolean; onClose: () => void; onAction: (action: ServerAction) => void }) {
   return (
     <Modal title={server.displayName} onClose={onClose}>
       <div className="server-detail">
@@ -396,20 +442,52 @@ function ServerDetailModal({ server, onClose }: { server: Server; onClose: () =>
           <dt>Nástroj</dt><dd>{server.toolName}</dd>
           <dt>Handler</dt><dd>{server.handlerKey} · {server.handlerVersion}</dd>
           <dt>Contract</dt><dd>{server.contractVersion}</dd>
+          <dt>Artifact digest</dt><dd><code>{server.artifactDigest}</code></dd>
+          <dt>Manifest digest</dt><dd><code>{server.manifestDigest}</code></dd>
           <dt>Úspěšná volání</dt><dd>{server.successCount}</dd>
           <dt>Chyby autorizace</dt><dd>{server.unauthorizedCount}</dd>
           <dt>Provozní chyby</dt><dd>{server.failureCount}</dd>
+          <dt>Latence poslední / průměr / p95</dt><dd>{server.lastLatencyMs ?? "-"} / {server.averageLatencyMs ?? "-"} / {server.p95LatencyMs ?? "-"} ms</dd>
           <dt>Poslední úspěch</dt><dd>{formatDate(server.lastSuccessAt)}</dd>
           <dt>Poslední chyba</dt><dd>{formatDate(server.lastFailureAt)}</dd>
+          <dt>Smoke test</dt><dd>{server.handlerSmokePassed ? "PASS" : "NOT TESTED"}</dd>
+          <dt>Identita v manifestu</dt><dd>{server.manifestIdentityBound ? "PASS" : "VYŽADUJE SYNCHRONIZACI"}</dd>
+          <dt>Skutečný MCP test</dt><dd>{server.uiMcpTest?.status ?? "NOT TESTED"}{server.uiMcpTest ? ` · ${server.uiMcpTest.latencyMs} ms` : ""}</dd>
+          <dt>Akceptační matice</dt><dd>{server.acceptancePassed ? "PASS" : "NOT TESTED"}</dd>
         </dl>
         {server.description ? <p>{server.description}</p> : null}
-        <footer className="modal-actions"><button type="button" onClick={onClose}>Zavřít detail</button></footer>
+        <details><summary>Vstupní JSON Schema</summary><pre className="test-output">{JSON.stringify(server.inputSchema, null, 2)}</pre></details>
+        <details><summary>Výstupní JSON Schema</summary><pre className="test-output">{JSON.stringify(server.outputSchema, null, 2)}</pre></details>
+        <footer className="modal-actions">
+          <button type="button" className="secondary" onClick={onClose}>Zavřít detail</button>
+          {server.registrationState === "REGISTERED_DISABLED" ? <button type="button" disabled={busy} onClick={() => onAction("test")}>Otestovat handler</button> : null}
+          {!server.manifestIdentityBound ? <button type="button" disabled={busy} onClick={() => onAction("bind-manifest")}>Synchronizovat manifest</button> : null}
+          {server.registrationState === "REGISTERED_DISABLED" && server.handlerSmokePassed ? <button type="button" disabled={busy} onClick={() => onAction("trial")}>Povolit TRIAL</button> : null}
+          {["TRIAL", "ACTIVE"].includes(server.registrationState) ? <button type="button" disabled={busy} onClick={() => onAction("mcp-test")}>Otestovat přes MCP</button> : null}
+          {server.registrationState === "TRIAL" && server.acceptancePassed ? <button type="button" disabled={busy} onClick={() => onAction("activate")}>Aktivovat</button> : null}
+          {["TRIAL", "ACTIVE"].includes(server.registrationState) ? <button type="button" className="danger-button" disabled={busy} onClick={() => { if (window.confirm("Opravdu okamžitě vypnout server a zneplatnit jeho access tokeny?")) onAction("disable"); }}>Vypnout server</button> : null}
+          {server.registrationState === "SUSPENDED" ? <button type="button" disabled={busy} onClick={() => onAction("resume")}>Obnovit provoz</button> : null}
+        </footer>
       </div>
     </Modal>
   );
 }
 
-function MonitoringPage({ servers, probes, onRefresh, onAutomatedOnboarding }: { servers: Server[]; probes: MonitoringProbe[]; onRefresh: () => void; onAutomatedOnboarding: () => void }) {
+function MonitoringPage({
+  servers,
+  probes,
+  actionBusy,
+  onRefresh,
+  onAutomatedOnboarding,
+  onServerAction
+}: {
+  servers: Server[];
+  probes: MonitoringProbe[];
+  actionBusy: boolean;
+  onRefresh: () => void;
+  onAutomatedOnboarding: () => void;
+  onServerAction: (server: Server, action: ServerAction) => Promise<void>;
+}) {
   const [query, setQuery] = useState("");
   const [timeRange, setTimeRange] = useState("24h");
   const [detailServer, setDetailServer] = useState<Server | null>(null);
@@ -454,7 +532,31 @@ function MonitoringPage({ servers, probes, onRefresh, onAutomatedOnboarding }: {
             <tbody>{filtered.map((server) => <tr key={server.id}><td><strong>{server.displayName}</strong><span className="cell-subtitle">{server.code}</span></td><td>{server.hostname}</td><td><span className="badge neutral">{server.registrationState}</span></td><td><span className="badge ok">{server.operationalState}</span></td><td>{server.successCount}/{server.failureCount}</td><td>{server.unauthorizedCount}</td><td>{formatDate(server.updatedAt)}</td><td><IconButton label={`Detail serveru ${server.displayName}`} onClick={() => setDetailServer(server)}><MoreHorizontal size={17} /></IconButton></td></tr>)}</tbody></table>
         )}
       </section>
-      {detailServer ? <ServerDetailModal server={detailServer} onClose={() => setDetailServer(null)} /> : null}
+      {detailServer ? <ServerDetailModal server={servers.find((server) => server.id === detailServer.id) ?? detailServer} busy={actionBusy} onClose={() => setDetailServer(null)} onAction={(action) => { void onServerAction(detailServer, action); }} /> : null}
+    </>
+  );
+}
+
+function RegistrationPage({ servers, busy, onRegister }: { servers: Server[]; busy: boolean; onRegister: () => Promise<void> }) {
+  const existing = servers.find((server) => server.handlerKey === "home_assistant_device_inventory");
+  return (
+    <>
+      <PageHeader title="Registrace MCP serveru" description="Systémem řízené přidělení identity a registrace jednoúčelového KCML handleru" />
+      <section className="panel registration-panel">
+        <div className="panel-head"><div><h2>Seznam zařízení Home Assistant</h2><p>Read-only nástroj vracející tabulku zařízení, umístění, typů, ovladatelných hodnot, čitelných informací a aktuálních stavů.</p></div><span className={`badge ${existing ? "ok" : "neutral"}`}>{existing ? existing.registrationState : "PŘIPRAVENO"}</span></div>
+        <dl className="registration-contract">
+          <dt>Tool name</dt><dd><code>get_home_assistant_device_inventory</code></dd>
+          <dt>Handler</dt><dd><code>home_assistant_device_inventory@1.0.0</code></dd>
+          <dt>Vstup</dt><dd>Prázdný striktní objekt bez parametrů</dd>
+          <dt>Výstup</dt><dd>Strukturované řádky a Markdown tabulka, maximálně 2 MiB</dd>
+          <dt>Vedlejší účinky</dt><dd>Žádné; pouze čtení přes lokální Home Assistant agent</dd>
+          <dt>Identita</dt><dd>{existing ? `${existing.code} · https://${existing.hostname}/mcp` : "Přidělí katalog automaticky"}</dd>
+        </dl>
+        <div className="notice"><ShieldCheck size={18} /> Token Home Assistantu se do KCML katalogu ani handleru nepřenáší.</div>
+        <footer className="modal-actions">
+          <button disabled={Boolean(existing) || busy} onClick={() => { void onRegister(); }}><Plus size={17} /> {existing ? "Server je registrován" : "Registrovat server"}</button>
+        </footer>
+      </section>
     </>
   );
 }
@@ -588,6 +690,8 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
   const [integrationConfirm, setIntegrationConfirm] = useState<{ token: IntegrationToken; action: "revoke" | "delete" } | null>(null);
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
   const [confirm, setConfirm] = useState<{ credential: KajaCredential; action: "revoke" | "delete" } | null>(null);
+  const [serverActionBusy, setServerActionBusy] = useState(false);
+  const [mcpTestResult, setMcpTestResult] = useState<McpTestResult | null>(null);
   const [error, setError] = useState("");
   async function load() {
     setError("");
@@ -668,12 +772,41 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
     setPage("permissions");
   }
 
+  async function registerInventoryServer() {
+    setServerActionBusy(true);
+    setError("");
+    try {
+      await api("/api/mcp-servers/home-assistant-inventory", { method: "POST", headers: { "x-csrf-token": csrf() }, body: "{}" });
+      await load();
+      setPage("monitoring");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Registrace selhala");
+    } finally {
+      setServerActionBusy(false);
+    }
+  }
+
+  async function runServerAction(server: Server, action: ServerAction) {
+    setServerActionBusy(true);
+    setError("");
+    try {
+      const result = await api<unknown>(`/api/mcp-servers/${server.id}/${action}`, { method: "POST", headers: { "x-csrf-token": csrf() }, body: "{}" });
+      if (action === "mcp-test") setMcpTestResult(result as McpTestResult);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Operace serveru selhala");
+    } finally {
+      setServerActionBusy(false);
+    }
+  }
+
   return (
     <main className="app-shell">
       <aside className="sidebar">
         <div className="brand-row"><span className="brand-mark"><ShieldCheck size={22} /></span><div><strong>KCML</strong><span>Správce MCP serverů</span></div></div>
         <nav>
           <button aria-pressed={page === "monitoring"} className={page === "monitoring" ? "active" : ""} onClick={() => setPage("monitoring")}><Activity size={18} /> Monitoring MCP</button>
+          <button aria-pressed={page === "registration"} className={page === "registration" ? "active" : ""} onClick={() => setPage("registration")}><Plus size={18} /> Registrace serveru</button>
           <button aria-pressed={page === "integration"} className={page === "integration" ? "active" : ""} onClick={() => setPage("integration")}><Workflow size={18} /> Implementační tokeny</button>
           <button aria-pressed={page === "tokens"} className={page === "tokens" ? "active" : ""} onClick={() => setPage("tokens")}><KeyRound size={18} /> Tokeny</button>
           <button aria-pressed={page === "permissions"} className={page === "permissions" ? "active" : ""} onClick={() => setPage("permissions")}><LockKeyhole size={18} /> Správa oprávnění</button>
@@ -684,7 +817,8 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
       <section className="workspace">
         <div className="mobile-topbar"><div className="brand-row"><span className="brand-mark"><ShieldCheck size={20} /></span><strong>KCML</strong></div><span>{pageNames[page]}</span></div>
         {error && <div className="notice error"><AlertTriangle size={18} /> {error}</div>}
-        {page === "monitoring" && <MonitoringPage servers={servers} probes={probes} onRefresh={() => { void load(); }} onAutomatedOnboarding={() => setIntegrationCreate({})} />}
+        {page === "monitoring" && <MonitoringPage servers={servers} probes={probes} actionBusy={serverActionBusy} onRefresh={() => { void load(); }} onAutomatedOnboarding={() => setIntegrationCreate({})} onServerAction={runServerAction} />}
+        {page === "registration" && <RegistrationPage servers={servers} busy={serverActionBusy} onRegister={registerInventoryServer} />}
         {page === "integration" && <IntegrationTokensPage tokens={integrationTokens} jobs={onboardingJobs} onCreate={() => setIntegrationCreate({})} onOpenJob={setSelectedJobId} onResume={(jobId) => setIntegrationCreate({ resumeJobId: jobId })} onRevoke={(token) => setIntegrationConfirm({ token, action: "revoke" })} onDelete={(token) => setIntegrationConfirm({ token, action: "delete" })} onRefresh={() => { void load(); }} />}
         {page === "tokens" && <TokensPage credentials={credentials} onOpenCreate={() => setCreateOpen(true)} onEditPermissions={openPermissions} onConfirm={(credential, action) => setConfirm({ credential, action })} onRefresh={() => { void load(); }} />}
         {page === "permissions" && <PermissionsPage credentials={credentials} servers={servers} selectedId={selectedCredentialId} permissions={permissions} saving={savingPermissions} onSelect={setSelectedCredentialId} onChange={setPermissions} onSave={() => { void savePermissions(); }} />}
@@ -692,6 +826,7 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
       </section>
       {createOpen && <CreateTokenModal serverCount={servers.length} onClose={() => setCreateOpen(false)} onCreated={(created) => { setCreateOpen(false); setSecret(created); void load(); }} />}
       {secret && <SecretModal secret={secret} onClose={() => setSecret(null)} />}
+      {mcpTestResult && <McpTestResultModal value={mcpTestResult} onClose={() => setMcpTestResult(null)} />}
       {confirm && <ConfirmModal credential={confirm.credential} action={confirm.action} onClose={() => setConfirm(null)} onConfirm={runConfirm} />}
       {integrationCreate && <CreateIntegrationTokenModal resumeJobId={integrationCreate.resumeJobId} onClose={() => setIntegrationCreate(null)} onCreated={(created) => { setIntegrationCreate(null); setIntegrationSecret(created); setPage("integration"); void load(); }} />}
       {integrationSecret && <IntegrationSecretModal secret={integrationSecret} onClose={() => setIntegrationSecret(null)} />}

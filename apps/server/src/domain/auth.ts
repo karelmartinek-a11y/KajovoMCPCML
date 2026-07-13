@@ -189,6 +189,15 @@ export async function listKajaPermissions(db: Db, credentialId: string): Promise
 export async function replaceKajaPermissions(db: Db, actorId: string, correlationId: string, credentialId: string, permissions: KajaPermissionInput[]): Promise<void> {
   const credential = await db.query("select id, public_id from kaja_credential where id=$1 and deleted_at is null and revoked_at is null and active is true", [credentialId]);
   if (!credential.rowCount) throw Object.assign(new Error("not_found"), { statusCode: 404 });
+  const previousResult = await db.query(
+    "select server_id,access_level from kaja_permission where credential_id=$1 and revoked_at is null",
+    [credentialId]
+  );
+  const previousExecutable = new Set(
+    previousResult.rows
+      .filter((row) => ["EXECUTE", "MANAGE"].includes(String(row.access_level)))
+      .map((row) => String(row.server_id))
+  );
   const byServer = new Map<string, KajaPermissionInput>();
   for (const permission of permissions) byServer.set(permission.serverId, permission);
   const normalized = Array.from(byServer.values());
@@ -205,6 +214,42 @@ export async function replaceKajaPermissions(db: Db, actorId: string, correlatio
        on conflict (credential_id, server_id) do update set revoked_at=null, granted_at=now(), access_level=excluded.access_level`,
       [credentialId, permission.serverId, permission.accessLevel]
     );
+  }
+  const currentExecutable = new Set(
+    normalized
+      .filter((permission) => ["EXECUTE", "MANAGE"].includes(permission.accessLevel))
+      .map((permission) => permission.serverId)
+  );
+  const removedExecutable = [...previousExecutable].filter((serverId) => !currentExecutable.has(serverId));
+  if (removedExecutable.length) {
+    await db.query(
+      "update access_token set revoked_at=coalesce(revoked_at,now()) where credential_id=$1 and server_id=any($2::uuid[])",
+      [credentialId, removedExecutable]
+    );
+    for (const serverId of removedExecutable) {
+      await appendAudit(db, {
+        eventType: "permission.revoked",
+        actorType: "admin",
+        actorId,
+        objectType: "mcp_server",
+        objectId: serverId,
+        after: { credentialId },
+        correlationId
+      });
+    }
+  }
+  for (const permission of normalized) {
+    if (!previousExecutable.has(permission.serverId) && currentExecutable.has(permission.serverId)) {
+      await appendAudit(db, {
+        eventType: "permission.granted",
+        actorType: "admin",
+        actorId,
+        objectType: "mcp_server",
+        objectId: permission.serverId,
+        after: { credentialId, accessLevel: permission.accessLevel },
+        correlationId
+      });
+    }
   }
   await appendAudit(db, {
     eventType: "kaja.permissions.updated",
