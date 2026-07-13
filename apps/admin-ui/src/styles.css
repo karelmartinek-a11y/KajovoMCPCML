@@ -234,10 +234,18 @@ code { font-family: "SFMono-Regular", Consolas, monospace; font-size: 10.5px; }
 .badge.danger { background: #f9e1df; color: #a62a24; }
 .badge.neutral { background: #edf1f4; color: #53606d; }
 
-.integration-token-table th, .integration-token-table td { height: 72px; }
-.integration-token-table th:nth-child(5) { min-width: 255px; }
-.integration-token-table th:nth-child(6) { min-width: 150px; }
-.integration-token-table th:nth-child(7) { min-width: 210px; }
+.integration-token-table { min-width: 900px; table-layout: fixed; }
+.integration-token-table th, .integration-token-table td { height: 112px; white-space: normal; }
+.integration-token-table th:nth-child(1) { width: 22%; }
+.integration-token-table th:nth-child(2) { width: 12%; }
+.integration-token-table th:nth-child(3) { width: 27%; }
+.integration-token-table th:nth-child(4) { width: 27%; }
+.integration-token-table th:nth-child(5) { width: 12%; }
+.cell-fingerprint { display: block; margin-top: 7px; color: #637181; }
+.integration-state-cell, .token-timing-cell { display: grid; gap: 8px; }
+.integration-state-cell { justify-items: start; }
+.token-timing-cell { grid-template-columns: minmax(110px, 0.8fr) minmax(145px, 1.2fr); align-items: start; }
+.integration-row-actions { flex-wrap: wrap; }
 .integration-run-state, .token-countdown, .token-maximum { display: grid; gap: 4px; white-space: normal; }
 .integration-run-heading { display: flex; align-items: center; gap: 7px; }
 .integration-run-heading strong { color: #344150; font-size: 11px; }
