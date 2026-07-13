@@ -31,6 +31,7 @@ const envSchema = z.object({
   ONBOARDING_WORKER_INTERVAL_MS: z.coerce.number().int().min(1_000).default(15_000),
   GITHUB_OWNER: z.string().min(1).optional(),
   GITHUB_REPO: z.string().min(1).optional(),
+  GITHUB_TOKEN: z.string().min(20).optional(),
   GITHUB_APP_ID: z.string().min(1).optional(),
   GITHUB_APP_INSTALLATION_ID: z.string().min(1).optional(),
   GITHUB_APP_PRIVATE_KEY_BASE64: z.string().min(1).optional(),
@@ -52,16 +53,17 @@ const envSchema = z.object({
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["EGRESS_CAPABILITY_HMAC_KEY_BASE64"], message: "egress capability HMAC key must be independent" });
   }
   if (!config.ONBOARDING_WORKER_ENABLED) return;
-  for (const key of [
-    "GITHUB_OWNER",
-    "GITHUB_REPO",
-    "GITHUB_APP_ID",
-    "GITHUB_APP_INSTALLATION_ID",
-    "GITHUB_APP_PRIVATE_KEY_BASE64",
-    "OCI_IMAGE_NAMESPACE",
-    "OCI_SIGNING_PUBLIC_KEY"
-  ] as const) {
+  for (const key of ["GITHUB_OWNER", "GITHUB_REPO", "OCI_IMAGE_NAMESPACE", "OCI_SIGNING_PUBLIC_KEY"] as const) {
     if (!config[key]) ctx.addIssue({ code: z.ZodIssueCode.custom, path: [key], message: `${key} is required when onboarding worker is enabled` });
+  }
+  if (!config.GITHUB_TOKEN) {
+    for (const key of ["GITHUB_APP_ID", "GITHUB_APP_INSTALLATION_ID", "GITHUB_APP_PRIVATE_KEY_BASE64"] as const) {
+      if (!config[key]) ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: [key],
+        message: `${key} is required when onboarding worker uses GitHub App authentication`
+      });
+    }
   }
 });
 

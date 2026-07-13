@@ -1697,7 +1697,7 @@ Jeden 512bitový `kci_` token smí nevratně založit nebo obnovit právě jeden
 
 - Manifest 1.4 je strict a popisuje Node.js 22/TypeScript ESM handler, schémata, limity, safe test, monitoring, změnové vazby a egress allowlist.
 - ZIP má nejvýše 10 MiB/50 MiB/1000 položek a obsahuje jen schválené kořenové soubory a `.ts` pod `src/`. Traversal, symlink, binární addon, Dockerfile, `.env`, lifecycle script, tajemství, nepřesná/nepovolená závislost nebo rozšířený tsconfig jsou odmítnuty před spuštěním.
-- GitHub App zapisuje jen `handlers/KCMLNNNN/`, vytváří PR a sleduje required checks. PR runner nemá produkční tajemství ani uložené checkout credentials. Auto-merge nastane pouze po úplném PASS. Actions-read oprávnění slouží výhradně ke svázání úspěšného trusted main run ID s provenance.
+- GitHub API autorizace (existující repository token nebo doporučená least-privilege GitHub App) zapisuje jen `handlers/KCMLNNNN/`, vytváří PR a sleduje required checks. PR runner nemá produkční tajemství ani uložené checkout credentials. Auto-merge nastane pouze po úplném PASS. Actions-read oprávnění slouží výhradně ke svázání úspěšného trusted main run ID s provenance.
 - Důvěryhodný main workflow s pevným Dockerfile sestaví OCI image, SBOM a provenance, image podepíše a publikuje do GHCR. Worker ověří commit, build ID, digest, podpis a attestace.
 - Handler běží samostatně v rootless Podman: non-root, read-only, cap-drop ALL, no-new-privileges, CPU/RAM/PID/timeout/concurrency limity, log-driver none, network none a privátní Unix socket. Pevný supervisor spouští každý call v odděleném podprocesu a po timeoutu jej násilně ukončí.
 - Strukturované logy se vracejí gateway a redigují. Povolený upstream je dostupný jen přes `context.egress.fetch` a centrální Unix-socket proxy s per-job capability, přesným HTTPS allowlistem a SSRF/DNS-rebinding ochranou.
@@ -1717,7 +1717,7 @@ Cross-host chyba, audience bypass, digest drift, neplatný podpis/provenance neb
 | Závislost | Release podmínka |
 | --- | --- |
 | HTTPS | Wildcard DNS a platný DNS-01 certifikát `*.hcasc.cz`; nginx exact register host, regex KCML hosty, zachovaný Host a default deny. |
-| GitHub | Nainstalovaná GitHub App s minimálními contents/PR/check a Actions-read permissions; branch protection a required checks odpovídají workeru. |
+| GitHub | GitHub API autorizace s contents/PR/check a Actions-read permissions; podporován je existující repository token, doporučena je least-privilege GitHub App; branch protection a required checks odpovídají workeru. |
 | Supply chain | GHCR namespace, důvěryhodný signing key, cosign verify, SBOM/provenance attestace a immutable digest. |
 | Runtime | Rootless Podman pro uživatele `kcml`, worker a egress-proxy systemd služby, karanténní/runtime adresáře a privátní socket permissions. |
 | Testy | Root CI včetně PostgreSQL migrací a integračních testů, onboarding PR gates, runtime/supply-chain staging E2E a desktop/mobile browser QA. |

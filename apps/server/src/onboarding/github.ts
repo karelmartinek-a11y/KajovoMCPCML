@@ -40,7 +40,8 @@ export class GitHubOnboardingClient {
 
   constructor(private readonly config: AppConfig) {}
 
-  private async installationToken(): Promise<string> {
+  private async accessToken(): Promise<string> {
+    if (this.config.GITHUB_TOKEN) return this.config.GITHUB_TOKEN;
     if (this.token && this.token.expiresAt > Date.now() + 60_000) return this.token.value;
     if (!this.config.GITHUB_APP_INSTALLATION_ID) throw new Error("github_app_not_configured");
     const response = await fetch(`https://api.github.com/app/installations/${this.config.GITHUB_APP_INSTALLATION_ID}/access_tokens`, {
@@ -60,7 +61,7 @@ export class GitHubOnboardingClient {
   }
 
   private async request(method: string, endpoint: string, body?: unknown): Promise<GitHubResponse> {
-    const token = await this.installationToken();
+    const token = await this.accessToken();
     const response = await fetch(`https://api.github.com${endpoint}`, {
       method,
       headers: {

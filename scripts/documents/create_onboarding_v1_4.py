@@ -129,6 +129,11 @@ def build(source: Path, destination: Path) -> None:
     )
     replace_exact(
         document,
+        "Onboarding worker s GitHub App vytvoří branch integration/kcmlNNNN/<job-id>, zapíše pouze handlers/KCMLNNNN/ a otevře PR. Workflow, root konfigurace, auth a platformní bezpečnostní soubory nesmí PR změnit. GitHub App má read oprávnění pro Actions, aby svázala úspěšný trusted main run ID s provenance.",
+        "Onboarding worker s provozovatelem nakonfigurovanou GitHub API autorizací vytvoří branch integration/kcmlNNNN/<job-id>, zapíše pouze handlers/KCMLNNNN/ a otevře PR. Workflow, root konfigurace, auth a platformní bezpečnostní soubory nesmí PR změnit. Autorizace má přístup pouze k potřebným operacím repozitáře a ke čtení Actions, aby svázala úspěšný trusted main run ID s provenance."
+    )
+    replace_exact(
+        document,
         "☐ Pokud job skončil FAILED nebo QUARANTINED, programátor stav nepřepisuje; předá correlation ID a blockingError správci.",
         "☐ Při UPLOAD_REVISION programátor opravil blockingError a neúspěšné gates a opakoval PUT/GET až do ACTIVE. Pouze STOP / QUARANTINED předá správci s job ID a correlation ID."
     )

@@ -15,7 +15,7 @@ The production stack is:
 - SQL migrations committed in `apps/server/src/migrations`.
 - Nginx reverse proxy with exact host routing, restricted KCML regex routing
   and a DNS-01 wildcard certificate for `*.hcasc.cz`.
-- GitHub App PR automation, least-privilege PR CI, trusted main image build,
+- GitHub API PR automation (existing repository authorization or preferred least-privilege GitHub App), least-privilege PR CI, trusted main image build,
   GHCR, SBOM/provenance and cosign verification.
 - Rootless Podman workers with private Unix sockets, network deny-all and a
   separate allowlisted egress proxy.
