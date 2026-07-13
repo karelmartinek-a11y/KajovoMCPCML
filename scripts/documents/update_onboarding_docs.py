@@ -304,7 +304,7 @@ def append_connect_chapters(doc):
 
     doc.add_heading("27.1 Vystavení a správa tokenu v UI", level=2)
     add_steps(doc, [
-        "Na obrazovce Monitoring MCP zvolit Automaticky integrovat MCP server, nebo otevřít sekci Implementační tokeny a zvolit Vygenerovat token.",
+        "Na obrazovce Monitoring MCP nebo v sekci Implementační tokeny zvolit Vygenerovat Integrační token.",
         "Zadat srozumitelné označení. Systém vytvoří 512bitovou náhodnou hodnotu s prefixem kci_, zobrazí ji právě jednou a do databáze uloží pouze HMAC digest, key ID a šestnáctiznakový fingerprint.",
         "Token předat programátorovi odděleným bezpečným kanálem. Nevkládat jej do repozitáře, ticketu, screenshotu, logu, příkazové historie ani CI proměnné sdílené s pull requesty.",
         "V sekci Implementační tokeny sledovat aktuální expiraci, 24hodinový strop, job, KCML kód, PR/CI/deploy/testy a výslednou HTTPS adresu. Token nelze editovat; lze jej revokovat nebo skrýt s ponecháním auditu.",
@@ -502,7 +502,7 @@ def update_connect():
                 "podepsaný OCI deploy, veřejné testy a automatickou aktivaci pouze po úplném PASS."
             )
     replacements = {
-        "V UI správce zvolit Přidat MCP server.": "V UI zvolit Automaticky integrovat MCP server a vystavit integrační token. Ruční registrace ani přímá správcovská aktivace nového serveru nejsou dostupné.",
+        "V UI správce zvolit Přidat MCP server.": "V UI zvolit Vygenerovat Integrační token. Ruční registrace ani přímá správcovská aktivace nového serveru nejsou dostupné.",
         "Po úspěchu změnit stav přes PENDING_TECH_REVIEW, PENDING_SECURITY_REVIEW, PENDING_TEST, APPROVED, REGISTERED_DISABLED až na TRIAL nebo ACTIVE.": "Automatický job uloží jednotlivé gates, vytvoří REGISTERED_DISABLED, provede TRIAL_TESTING a po úplném PASS sám přejde do ACTIVE/enabled=true; ruční přepsání výsledku je zakázáno.",
         "☐ Server byl aktivován až po schválení a zůstává vypnutý, dokud není explicitně zapnut.": "☐ Server byl aktivován pouze automatickým stavovým automatem po úplném PASS; při automatickém onboardingu není závěrečné ruční kliknutí ani možnost obejít gate.",
         "Rezervovat identitu výhradně přes katalogové UI nebo jeho schválené API. Převzít přidělený KCML kód, hostname a resource beze změny. V handleru je nezapisovat natvrdo; handler je čte z context.server. Identita smí být uložena jen v katalogovém záznamu a schváleném manifestu.": "Použít integrační token a POST https://register.hcasc.cz/v1/onboardings. Identitu rezervuje transakčně systém; programátor převezme přidělený KCML kód, hostname, resource a toolName beze změny. Identitu nevkládá do vstupního manifestu ani natvrdo do handleru.",

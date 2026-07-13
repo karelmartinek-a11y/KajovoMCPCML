@@ -144,6 +144,8 @@ const pageNames: Record<Page, string> = {
   audit: "Audit"
 };
 
+const integrationTokenActionLabel = "Vygenerovat Integrační token";
+
 const accessLabels: Record<AccessLevel, string> = {
   READ: "Čtení",
   EXECUTE: "Spouštění",
@@ -310,13 +312,13 @@ function CreateIntegrationTokenModal({ resumeJobId, onClose, onCreated }: { resu
     }
   }
   return (
-    <Modal title={resumeJobId ? "Navazující implementační token" : "Automaticky integrovat MCP server"} onClose={onClose}>
+    <Modal title={resumeJobId ? "Navazující implementační token" : integrationTokenActionLabel} onClose={onClose}>
       <form className="modal-form" onSubmit={(event) => { void submit(event); }}>
         <div className="form-intro"><span className="modal-icon"><Workflow size={20} /></span><p>Po vygenerování předáte programátorovi Connect in Catalog v1.4 a jednorázově zobrazený token. Na první upload má 2 hodiny; potom sám sleduje stav, opravuje případné vratné chyby a systém automaticky dokončí registraci, HTTPS, testy, autorizaci, logging, monitoring a aktivaci.</p></div>
         <label>Poznámka k novému serveru<span className="field-hint">Pouze vaše interní označení, například účel serveru nebo dodavatel. Do konfigurace serveru se nepřenáší.</span><textarea autoFocus value={note} onChange={(event) => setNote(event.target.value)} maxLength={120} rows={3} placeholder="Např. Fakturační MCP – dodavatel ABC" /></label>
         {resumeJobId ? <div className="permission-preview"><strong>Pokračování existujícího jobu</strong><code>{resumeJobId}</code><span>Předchozí token bude revokován. KCML identita zůstane zachována.</span></div> : null}
         {error && <p className="error">{error}</p>}
-        <footer className="modal-actions"><button type="button" className="secondary" onClick={onClose} disabled={busy}>Zrušit</button><button type="submit" disabled={busy}><Rocket size={16} /> {busy ? "Generuji…" : "Vygenerovat token"}</button></footer>
+        <footer className="modal-actions"><button type="button" className="secondary" onClick={onClose} disabled={busy}>Zrušit</button><button type="submit" disabled={busy}><Rocket size={16} /> {busy ? "Generuji…" : integrationTokenActionLabel}</button></footer>
       </form>
     </Modal>
   );
@@ -465,7 +467,7 @@ function MonitoringPage({
   return (
     <>
       <PageHeader title="Monitoring MCP" description="Přehled stavu a dostupnosti MCP serverů">
-        <button onClick={onAutomatedOnboarding}><Rocket size={17} /> Automaticky integrovat MCP server</button>
+        <button onClick={onAutomatedOnboarding}><Rocket size={17} /> {integrationTokenActionLabel}</button>
         <IconButton label="Obnovit monitoring" onClick={onRefresh}><RefreshCw size={17} /></IconButton>
         <label className="range-select"><Clock3 size={16} /><select value={timeRange} onChange={(event) => setTimeRange(event.target.value)} aria-label="Časový rozsah monitoringu"><option value="24h">Posledních 24 hodin</option><option value="7d">Posledních 7 dní</option><option value="30d">Posledních 30 dní</option></select><ChevronDown size={15} /></label>
       </PageHeader>
@@ -529,7 +531,7 @@ function IntegrationTokensPage({ tokens, jobs, onCreate, onOpenJob, onResume, on
     <>
       <PageHeader title="Implementační tokeny" description="Poznámka, onboarding katalog a jednorázový token pro automatickou integraci jednoho MCP serveru.">
         <label className="search-box"><Search size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Hledat token, job nebo KCML…" aria-label="Hledat implementační token" /></label>
-        <button onClick={onCreate}><Plus size={17} /> Vygenerovat token</button><IconButton label="Obnovit" onClick={onRefresh}><RefreshCw size={17} /></IconButton>
+        <button onClick={onCreate}><Plus size={17} /> {integrationTokenActionLabel}</button><IconButton label="Obnovit" onClick={onRefresh}><RefreshCw size={17} /></IconButton>
       </PageHeader>
       <section className="panel table-panel"><div className="panel-head"><div><h2>Vydané tokeny</h2><p>Hodnotu tokenu nelze měnit ani znovu zobrazit.</p></div><span className="panel-count">{filtered.length} záznamů</span></div>
         {filtered.length === 0 ? <div className="empty-state"><Workflow size={34} /><strong>Žádné implementační tokeny</strong><p>Vygeneruj první token a předej jej programátorovi bezpečným kanálem.</p></div> : <div className="table-scroll"><table><thead><tr><th>Označení</th><th>Fingerprint</th><th>KCML / job</th><th>Stav</th><th>Aktuální expirace</th><th>Maximum</th><th>Akce</th></tr></thead><tbody>{filtered.map((token) => <tr key={token.id}><td><strong>{token.label}</strong><span className="cell-subtitle">Vydán {formatDate(token.issuedAt)}</span></td><td><code>{token.fingerprint}</code></td><td>{token.code ?? "Čeká na upload"}<span className="cell-subtitle">{token.jobId ? token.jobId.slice(0, 8) : "Nevázaný"}</span></td><td><span className={`badge ${token.active ? "ok" : "danger"}`}>{token.jobState ?? (token.active ? "PŘIPRAVEN" : "NEPLATNÝ")}</span></td><td>{formatDate(token.expiresAt)}</td><td>{formatDate(token.maxExpiresAt)}</td><td><div className="row-actions">{token.jobId ? <button className="small-button" onClick={() => onOpenJob(token.jobId!)}>Detail</button> : null}{token.jobId && !["ACTIVE", "QUARANTINED", "CANCELLED"].includes(token.jobState ?? "") && !token.active ? <button className="small-button" onClick={() => onResume(token.jobId!)}>Navázat</button> : null}<button className="small-button" disabled={!token.active} onClick={() => onRevoke(token)}>Revokovat</button><button className="small-button danger-link" onClick={() => onDelete(token)}>Smazat</button></div></td></tr>)}</tbody></table></div>}

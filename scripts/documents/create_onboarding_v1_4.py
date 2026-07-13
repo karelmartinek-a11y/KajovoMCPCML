@@ -72,7 +72,7 @@ def build(source: Path, destination: Path) -> None:
     replace_exact(
         document,
         "Preferovaně v UI zvolit Automaticky integrovat MCP server a vystavit integrační token; ruční Přidat MCP server zůstává pouze správcovská cesta mimo automatický onboarding.",
-        "V UI zvolit Automaticky integrovat MCP server a vystavit integrační token. Ruční registrace ani přímá správcovská aktivace nového serveru nejsou dostupné."
+        "V UI zvolit Vygenerovat Integrační token. Ruční registrace ani přímá správcovská aktivace nového serveru nejsou dostupné."
     )
     replace_exact(
         document,
