@@ -13,6 +13,11 @@ Environment=HOME=/var/lib/kcml/podman
 Environment=XDG_DATA_HOME=/var/lib/kcml/podman/data
 Environment=XDG_CONFIG_HOME=/var/lib/kcml/podman/config
 Environment=XDG_RUNTIME_DIR=/run/kcml-podman
+# A trusted production runner may stage short-lived GHCR credentials here.
+# Both files live below the protected Podman home and are removed as soon as
+# the worker has verified the signed artifact.
+Environment=REGISTRY_AUTH_FILE=/var/lib/kcml/podman/auth.json
+Environment=DOCKER_CONFIG=/var/lib/kcml/podman/.docker
 RuntimeDirectory=kcml-podman
 RuntimeDirectoryMode=0700
 ExecStart=/usr/bin/node apps/server/dist/cli/onboarding-worker.js

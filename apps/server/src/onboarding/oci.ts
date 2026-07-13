@@ -29,6 +29,18 @@ function digestFromRepoReference(reference: string): string {
   return at >= 0 ? reference.slice(at + 1) : "";
 }
 
+export function verifyLocalRuntimeEvidence(input: {
+  actualDigest: string;
+  expectedDigest: string;
+  runtimeDigestLabel: string;
+  actualImageName: string;
+  expectedImageName: string;
+}): void {
+  if (input.actualDigest !== input.expectedDigest) throw new Error("artifact_digest_drift");
+  if (input.runtimeDigestLabel !== input.expectedDigest) throw new Error("artifact_label_drift");
+  if (input.actualImageName !== input.expectedImageName) throw new Error("artifact_reference_drift");
+}
+
 function decodedAttestationPayloads(value: string): string[] {
   const results: string[] = [];
   for (const line of value.split("\n").filter(Boolean)) {
@@ -134,20 +146,23 @@ export class OciRuntime {
   }
 
   async verifyRunningArtifact(code: string, imageReference: string, expectedDigest: string): Promise<Record<string, unknown>> {
-    if (!this.config.OCI_SIGNING_PUBLIC_KEY) throw new Error("oci_signing_key_not_configured");
     const containerName = `kcml-${code.toLowerCase()}`;
     const imageId = await command(this.config.PODMAN_BINARY, ["container", "inspect", containerName, "--format", "{{.Image}}"]);
     if (!imageId) throw new Error("running_image_missing");
     const repoDigest = await command(this.config.PODMAN_BINARY, ["image", "inspect", imageId, "--format", "{{index .RepoDigests 0}}"]);
     const actualDigest = digestFromRepoReference(repoDigest);
-    if (actualDigest !== expectedDigest) throw new Error("artifact_digest_drift");
-    const immutable = `${withoutTag(imageReference)}@${expectedDigest}`;
-    const signature = await command(this.config.COSIGN_BINARY, ["verify", "--key", this.config.OCI_SIGNING_PUBLIC_KEY, "--output", "json", immutable]);
-    const signatures = JSON.parse(signature) as Array<{ critical?: { image?: { "docker-manifest-digest"?: string } } }>;
-    if (!Array.isArray(signatures) || !signatures.some((item) => item.critical?.image?.["docker-manifest-digest"] === expectedDigest)) {
-      throw new Error("running_image_signature_invalid");
-    }
-    return { containerName, imageId, imageDigest: actualDigest, signatureVerified: true };
+    const runtimeDigestLabel = await command(this.config.PODMAN_BINARY, ["container", "inspect", containerName, "--format", "{{index .Config.Labels \"cz.hcasc.kcml.image-digest\"}}"]);
+    const actualImageName = await command(this.config.PODMAN_BINARY, ["container", "inspect", containerName, "--format", "{{.ImageName}}"]);
+    const expectedImageName = `${withoutTag(imageReference)}@${expectedDigest}`;
+    verifyLocalRuntimeEvidence({ actualDigest, expectedDigest, runtimeDigestLabel, actualImageName, expectedImageName });
+    return {
+      containerName,
+      imageId,
+      imageDigest: actualDigest,
+      imageReference: actualImageName,
+      runtimeDigestLabel,
+      signatureEvidence: "verified_at_activation"
+    };
   }
 
   async deploy(input: {

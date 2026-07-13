@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { verifyAttestationEvidence } from "./oci.js";
+import { verifyAttestationEvidence, verifyLocalRuntimeEvidence } from "./oci.js";
 
 function envelope(statement: unknown): string {
   return JSON.stringify({ payload: Buffer.from(JSON.stringify(statement)).toString("base64") });
@@ -32,5 +32,35 @@ describe("OCI attestation evidence", () => {
     });
     expect(() => verifyAttestationEvidence(sbom, provenance, imageDigest, "commit-123", "98765"))
       .toThrow("provenance_evidence_mismatch");
+  });
+});
+
+describe("local runtime integrity evidence", () => {
+  const expectedDigest = `sha256:${"b".repeat(64)}`;
+  const expectedImageName = `ghcr.io/example/private-handler@${expectedDigest}`;
+
+  it("accepts the exact locally running immutable artifact", () => {
+    expect(() => verifyLocalRuntimeEvidence({
+      actualDigest: expectedDigest,
+      expectedDigest,
+      runtimeDigestLabel: expectedDigest,
+      actualImageName: expectedImageName,
+      expectedImageName
+    })).not.toThrow();
+  });
+
+  it.each([
+    ["digest", { actualDigest: `sha256:${"c".repeat(64)}` }, "artifact_digest_drift"],
+    ["label", { runtimeDigestLabel: `sha256:${"c".repeat(64)}` }, "artifact_label_drift"],
+    ["reference", { actualImageName: "ghcr.io/example/other@sha256:deadbeef" }, "artifact_reference_drift"]
+  ])("rejects %s drift", (_name, override, code) => {
+    expect(() => verifyLocalRuntimeEvidence({
+      actualDigest: expectedDigest,
+      expectedDigest,
+      runtimeDigestLabel: expectedDigest,
+      actualImageName: expectedImageName,
+      expectedImageName,
+      ...override
+    })).toThrow(code);
   });
 });

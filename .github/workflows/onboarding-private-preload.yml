@@ -1,0 +1,85 @@
+name: Preload private MCP image on production
+
+on:
+  workflow_run:
+    workflows: ["Build signed MCP handler images"]
+    types: [completed]
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  preload:
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main'
+    runs-on: [self-hosted, kcml-production]
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 2
+          persist-credentials: false
+
+      - name: Preload signed private image and release the onboarding worker
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SOURCE_COMMIT: ${{ github.event.workflow_run.head_sha }}
+          GHCR_ACTOR: ${{ github.actor }}
+        run: |
+          set -euo pipefail
+          test -n "$GHCR_TOKEN"
+          test -f /etc/kcml/kcml.env
+          set -a
+          . /etc/kcml/kcml.env
+          set +a
+
+          auth_file=/var/lib/kcml/podman/auth.json
+          docker_config=/var/lib/kcml/podman/.docker/config.json
+          cleanup() {
+            rm -f "$auth_file" "$docker_config"
+          }
+          trap cleanup EXIT
+
+          install -d -m 0700 -o kcml -g kcml /var/lib/kcml/podman /var/lib/kcml/podman/.docker
+          printf '%s' "$GHCR_TOKEN" | runuser -u kcml -- env \
+            HOME=/var/lib/kcml/podman \
+            XDG_DATA_HOME=/var/lib/kcml/podman/data \
+            XDG_CONFIG_HOME=/var/lib/kcml/podman/config \
+            XDG_RUNTIME_DIR=/run/kcml-podman \
+            podman login --authfile "$auth_file" --username "$GHCR_ACTOR" --password-stdin ghcr.io >/dev/null
+          install -m 0600 -o kcml -g kcml "$auth_file" "$docker_config"
+
+          handlers="$(git diff --name-only "$SOURCE_COMMIT^1" "$SOURCE_COMMIT" \
+            | awk -F/ '/^handlers\/KCML[0-9]{4,}\// {print $1"/"$2}' \
+            | sort -u)"
+          test -n "$handlers"
+          while IFS= read -r handler; do
+            code="${handler#handlers/}"
+            image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/kajovomcpcml-handlers/${code,,}:${SOURCE_COMMIT}"
+            runuser -u kcml -- env \
+              HOME=/var/lib/kcml/podman \
+              XDG_DATA_HOME=/var/lib/kcml/podman/data \
+              XDG_CONFIG_HOME=/var/lib/kcml/podman/config \
+              XDG_RUNTIME_DIR=/run/kcml-podman \
+              REGISTRY_AUTH_FILE="$auth_file" \
+              sh -c 'cd /var/lib/kcml/podman && podman system migrate && podman pull "$1" >/dev/null' sh "$image"
+          done <<< "$handlers"
+
+          systemctl restart kcml-onboarding-worker
+          for _attempt in $(seq 1 120); do
+            state="$(psql "$DATABASE_URL" -Atq -v commit="$SOURCE_COMMIT" \
+              -c "select state from onboarding_job where source_commit=:'commit' order by created_at desc limit 1")"
+            case "$state" in
+              DEPLOYING|REGISTERED_DISABLED|TRIAL_TESTING|ACTIVE)
+                exit 0
+                ;;
+              FAILED|QUARANTINED|CANCELLED)
+                echo "::error::Onboarding reached terminal state $state while the private image credential was active."
+                exit 1
+                ;;
+            esac
+            sleep 5
+          done
+          echo "::error::The onboarding worker did not verify the private image before the bounded credential window expired."
+          exit 1

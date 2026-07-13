@@ -60,7 +60,7 @@ function shouldQuarantine(error: Error): boolean {
 }
 
 function isTransientBuildError(error: Error): boolean {
-  return /manifest unknown|not found|github_api_failed.*(?:502|503|504)|ECONN|ETIMEDOUT|fetch failed/i.test(error.message);
+  return /manifest unknown|not found|unauthorized|authentication required|github_api_failed.*(?:502|503|504)|ECONN|ETIMEDOUT|fetch failed/i.test(error.message);
 }
 
 export class OnboardingWorker {
