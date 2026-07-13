@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
 import http from "node:http";
@@ -8,6 +8,48 @@ import type { AppConfig } from "../config.js";
 import type { OnboardingManifest } from "../domain/registration.js";
 
 const execFileAsync = promisify(execFile);
+
+type CommandInvocation = { binary: string; args: string[] };
+
+export function rootlessPodmanServiceInvocation(input: {
+  binary: string;
+  args: string[];
+  runtimeUid: number | undefined;
+  env: Readonly<Record<string, string | undefined>>;
+  unitId?: string;
+}): CommandInvocation {
+  if (input.runtimeUid === undefined || input.runtimeUid === 0) {
+    throw new Error("rootless_runtime_user_required");
+  }
+  const home = input.env.HOME ?? "/var/lib/kcml/podman";
+  const userRuntime = `/run/user/${input.runtimeUid}`;
+  const serviceEnvironment: Array<[string, string]> = [
+    ["HOME", home],
+    ["USER", input.env.USER ?? "kcml"],
+    ["LOGNAME", input.env.LOGNAME ?? input.env.USER ?? "kcml"],
+    ["XDG_DATA_HOME", input.env.XDG_DATA_HOME ?? `${home}/data`],
+    ["XDG_CONFIG_HOME", input.env.XDG_CONFIG_HOME ?? `${home}/config`],
+    ["XDG_RUNTIME_DIR", userRuntime],
+    ["DBUS_SESSION_BUS_ADDRESS", `unix:path=${userRuntime}/bus`]
+  ];
+  for (const name of ["REGISTRY_AUTH_FILE", "DOCKER_CONFIG"] as const) {
+    const value = input.env[name];
+    if (value) serviceEnvironment.push([name, value]);
+  }
+  const unitId = (input.unitId ?? randomUUID()).replace(/[^A-Za-z0-9_.-]/g, "-");
+  return {
+    binary: "/usr/bin/systemd-run",
+    args: [
+      "--user", "--quiet", "--wait", "--pipe", "--collect",
+      `--unit=kcml-podman-${unitId}`,
+      "--property", `WorkingDirectory=${home}`,
+      "--property", "UMask=0077",
+      ...serviceEnvironment.flatMap(([name, value]) => ["--setenv", `${name}=${value}`]),
+      input.binary,
+      ...input.args
+    ]
+  };
+}
 
 export function sanitizeCommandFailure(value: string): string {
   return value
@@ -20,8 +62,16 @@ export function sanitizeCommandFailure(value: string): string {
 }
 
 async function command(binary: string, args: string[], timeout = 120_000): Promise<string> {
+  const label = path.basename(binary);
+  const invocation = label === "podman"
+    ? rootlessPodmanServiceInvocation({ binary, args, runtimeUid: process.getuid?.(), env: process.env })
+    : { binary, args };
   try {
-    const result = await execFileAsync(binary, args, { timeout, maxBuffer: 10 * 1024 * 1024, encoding: "utf8" });
+    const result = await execFileAsync(invocation.binary, invocation.args, {
+      timeout,
+      maxBuffer: 10 * 1024 * 1024,
+      encoding: "utf8"
+    });
     return result.stdout.trim();
   } catch (error) {
     const failure = error as { stderr?: unknown; stdout?: unknown; code?: unknown; signal?: unknown };
@@ -34,7 +84,7 @@ async function command(binary: string, args: string[], timeout = 120_000): Promi
         ? String(failure.signal)
         : "unknown";
     const detail = sanitizeCommandFailure(output) || `exit=${exit}`;
-    throw new Error(`command_failed:${path.basename(binary)}:${detail}`);
+    throw new Error(`command_failed:${label}:${detail}`);
   }
 }
 

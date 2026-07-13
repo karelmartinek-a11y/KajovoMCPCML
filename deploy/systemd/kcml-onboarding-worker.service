@@ -20,9 +20,10 @@ Environment=DOCKER_CONFIG=/var/lib/kcml/podman/.docker
 ExecStart=/usr/bin/node apps/server/dist/cli/onboarding-worker.js
 Restart=on-failure
 RestartSec=5
-# Rootless Podman needs the setuid newuidmap/newgidmap helpers. The handler
-# container itself is still started with --security-opt=no-new-privileges.
-NoNewPrivileges=false
+# Podman is submitted to the persistent kcml user manager, so the hardened
+# worker never executes newuidmap/newgidmap itself. Handler containers retain
+# their own cap-drop and no-new-privileges restrictions.
+NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
