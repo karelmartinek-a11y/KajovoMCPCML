@@ -35,40 +35,19 @@ jobs:
           . /etc/kcml/kcml.env
           set +a
 
-          [[ "$GITHUB_RUN_ID" =~ ^[0-9]+$ ]]
-          runtime_dir="/run/kcml-preload-${GITHUB_RUN_ID}"
           auth_file=/var/lib/kcml/podman/auth.json
           docker_config=/var/lib/kcml/podman/.docker/config.json
           cleanup() {
             rm -f "$auth_file" "$docker_config"
-            rm -rf -- "$runtime_dir"
           }
           trap cleanup EXIT
 
-          install -d -m 0700 -o kcml -g kcml /var/lib/kcml/podman /var/lib/kcml/podman/.docker "$runtime_dir"
-          printf '%s' "$GHCR_TOKEN" | runuser -u kcml -- env \
-            HOME=/var/lib/kcml/podman \
-            XDG_DATA_HOME=/var/lib/kcml/podman/data \
-            XDG_CONFIG_HOME=/var/lib/kcml/podman/config \
-            XDG_RUNTIME_DIR="$runtime_dir" \
-            podman login --authfile "$auth_file" --username "$GHCR_ACTOR" --password-stdin ghcr.io >/dev/null
+          install -d -m 0700 -o kcml -g kcml /var/lib/kcml/podman /var/lib/kcml/podman/.docker
+          umask 077
+          encoded_auth="$(printf '%s:%s' "$GHCR_ACTOR" "$GHCR_TOKEN" | base64 -w0)"
+          printf '{"auths":{"ghcr.io":{"auth":"%s"}}}\n' "$encoded_auth" > "$auth_file"
+          unset encoded_auth
           install -m 0600 -o kcml -g kcml "$auth_file" "$docker_config"
-
-          handlers="$(git diff --name-only "$SOURCE_COMMIT^1" "$SOURCE_COMMIT" \
-            | awk -F/ '/^handlers\/KCML[0-9]{4,}\// {print $1"/"$2}' \
-            | sort -u)"
-          test -n "$handlers"
-          while IFS= read -r handler; do
-            code="${handler#handlers/}"
-            image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/kajovomcpcml-handlers/${code,,}:${SOURCE_COMMIT}"
-            runuser -u kcml -- env \
-              HOME=/var/lib/kcml/podman \
-              XDG_DATA_HOME=/var/lib/kcml/podman/data \
-              XDG_CONFIG_HOME=/var/lib/kcml/podman/config \
-              XDG_RUNTIME_DIR="$runtime_dir" \
-              REGISTRY_AUTH_FILE="$auth_file" \
-              sh -c 'cd /var/lib/kcml/podman && podman pull "$1" >/dev/null' sh "$image"
-          done <<< "$handlers"
 
           # The worker polls pending artifact jobs on its own. Restarting it
           # here can terminate an in-flight Podman verification and turn an
