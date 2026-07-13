@@ -510,7 +510,7 @@ function MonitoringPage({
   );
 }
 
-function OnboardingJobModal({ jobId, onClose, onResume, onCancel }: { jobId: string; onClose: () => void; onResume: (jobId: string) => void; onCancel: (jobId: string) => Promise<void> }) {
+function OnboardingJobModal({ jobId, onClose, onResume, onCancel, onReleaseQuarantine }: { jobId: string; onClose: () => void; onResume: (jobId: string) => void; onCancel: (jobId: string) => Promise<void>; onReleaseQuarantine: (job: OnboardingJob) => void }) {
   const [job, setJob] = useState<OnboardingJob | null>(null);
   const [error, setError] = useState("");
   useEffect(() => {
@@ -524,8 +524,48 @@ function OnboardingJobModal({ jobId, onClose, onResume, onCancel }: { jobId: str
         {job.blockingErrorCode ? <div className="notice error"><AlertTriangle size={18} /><span><strong>{job.blockingErrorCode}</strong><br />{job.blockingErrorDetail}</span></div> : null}
         <section><h3>Bezpečnostní a aktivační brány</h3><div className="gate-grid">{job.gates?.map((gate) => <article key={gate.gate_name}><span className={`status-dot ${gate.status === "PASS" ? "ok" : ["FAIL", "QUARANTINED"].includes(gate.status) ? "danger" : "warn"}`} /><div><strong>{gate.gate_name}</strong><small>{gate.stage} · {gate.status}</small></div></article>)}</div></section>
         <section><h3>Časová osa</h3><ol className="job-timeline">{job.events?.map((event) => <li key={event.id}><span className="status-dot ok" /><div><strong>{event.event_type}</strong><small>{event.from_state ?? "START"} → {event.to_state} · {formatDate(event.created_at)}</small><code>{event.correlation_id}</code></div></li>)}</ol></section>
-        <footer className="modal-actions"><button className="secondary" onClick={onClose}>Zavřít</button>{job.state !== "ACTIVE" && job.state !== "QUARANTINED" && job.state !== "CANCELLED" ? <button className="secondary" onClick={() => onResume(job.id)}>Vystavit navazující token</button> : null}{!["ACTIVE", "FAILED", "QUARANTINED", "CANCELLED"].includes(job.state) ? <button className="danger-button" onClick={() => { void onCancel(job.id); }}>Zrušit job</button> : null}</footer>
+        <footer className="modal-actions"><button className="secondary" onClick={onClose}>Zavřít</button>{job.state === "QUARANTINED" ? <button className="danger-button" onClick={() => onReleaseQuarantine(job)}>Schválit novou revizi</button> : null}{job.state !== "ACTIVE" && job.state !== "QUARANTINED" && job.state !== "CANCELLED" ? <button className="secondary" onClick={() => onResume(job.id)}>Vystavit navazující token</button> : null}{!["ACTIVE", "FAILED", "QUARANTINED", "CANCELLED"].includes(job.state) ? <button className="danger-button" onClick={() => { void onCancel(job.id); }}>Zrušit job</button> : null}</footer>
       </div>}
+    </Modal>
+  );
+}
+
+function QuarantineReleaseModal({ job, onClose, onReleased }: { job: OnboardingJob; onClose: () => void; onReleased: () => Promise<void> }) {
+  const [confirmedCode, setConfirmedCode] = useState("");
+  const [reason, setReason] = useState("");
+  const [password, setPassword] = useState("");
+  const [totp, setTotp] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  async function submit(event: React.FormEvent) {
+    event.preventDefault();
+    setBusy(true);
+    setError("");
+    try {
+      await api(`/api/onboarding-jobs/${job.id}/release-quarantine`, {
+        method: "POST",
+        headers: { "x-csrf-token": csrf() },
+        body: JSON.stringify({ confirmedCode: confirmedCode.trim(), reason: reason.trim(), password, totp: totp.trim() })
+      });
+      await onReleased();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Uvolnění karantény selhalo");
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <Modal title="Schválit novou registrační revizi" onClose={onClose}>
+      <form className="modal-form" onSubmit={(event) => { void submit(event); }}>
+        <div className="notice error"><AlertTriangle size={18} /><span>Server zůstane vypnutý. Tato ruční akce pouze povolí nahrání nové revize a její kompletní bezpečnostní přetestování.</span></div>
+        <label>Důvod a doložená náprava<textarea autoFocus value={reason} onChange={(event) => setReason(event.target.value)} minLength={10} maxLength={1000} rows={4} /></label>
+        <label>Pro potvrzení opište přesný KCML kód<input value={confirmedCode} onChange={(event) => setConfirmedCode(event.target.value)} placeholder={job.code ?? "KCML…"} /></label>
+        <input type="text" autoComplete="username" value="karmar78" readOnly hidden />
+        <label>Heslo administrátora<input name="password" value={password} onChange={(event) => setPassword(event.target.value)} type="password" autoComplete="current-password" /></label>
+        <label>Jednorázový MFA kód (je-li zapnutý)<input value={totp} onChange={(event) => setTotp(event.target.value)} inputMode="numeric" autoComplete="one-time-code" /></label>
+        {error ? <p className="error">{error}</p> : null}
+        <footer className="modal-actions"><button type="button" className="secondary" onClick={onClose}>Zrušit</button><button type="submit" className="danger-button" disabled={busy || confirmedCode !== job.code || reason.trim().length < 10 || !password}>{busy ? "Ověřuji…" : "Schválit novou revizi"}</button></footer>
+      </form>
     </Modal>
   );
 }
@@ -684,6 +724,7 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
   const [integrationSecret, setIntegrationSecret] = useState<IntegrationSecret | null>(null);
   const [integrationConfirm, setIntegrationConfirm] = useState<{ token: IntegrationToken; action: "revoke" | "delete" } | null>(null);
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
+  const [quarantineRelease, setQuarantineRelease] = useState<OnboardingJob | null>(null);
   const [confirm, setConfirm] = useState<{ credential: KajaCredential; action: "revoke" | "delete" } | null>(null);
   const [error, setError] = useState("");
   async function load() {
@@ -793,7 +834,8 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
       {integrationCreate && <CreateIntegrationTokenModal resumeJobId={integrationCreate.resumeJobId} onClose={() => setIntegrationCreate(null)} onCreated={(created) => { setIntegrationCreate(null); setIntegrationSecret(created); setPage("integration"); void load(); }} />}
       {integrationSecret && <IntegrationSecretModal secret={integrationSecret} onClose={() => setIntegrationSecret(null)} />}
       {integrationConfirm && <IntegrationConfirmModal token={integrationConfirm.token} action={integrationConfirm.action} onClose={() => setIntegrationConfirm(null)} onConfirm={runIntegrationConfirm} />}
-      {selectedJobId && <OnboardingJobModal jobId={selectedJobId} onClose={() => setSelectedJobId(null)} onResume={(jobId) => { setSelectedJobId(null); setIntegrationCreate({ resumeJobId: jobId }); }} onCancel={cancelOnboardingJob} />}
+      {selectedJobId && <OnboardingJobModal jobId={selectedJobId} onClose={() => setSelectedJobId(null)} onResume={(jobId) => { setSelectedJobId(null); setIntegrationCreate({ resumeJobId: jobId }); }} onCancel={cancelOnboardingJob} onReleaseQuarantine={(job) => { setSelectedJobId(null); setQuarantineRelease(job); }} />}
+      {quarantineRelease && <QuarantineReleaseModal job={quarantineRelease} onClose={() => setQuarantineRelease(null)} onReleased={async () => { setQuarantineRelease(null); await load(); }} />}
     </main>
   );
 }

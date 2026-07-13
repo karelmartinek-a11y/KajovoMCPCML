@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
+import argon2 from "argon2";
+import { authenticator } from "otplib";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { ZodError } from "zod";
 import type { AppConfig } from "../config.js";
@@ -15,6 +17,7 @@ import {
   listIntegrationTokens,
   listOnboardingJobs,
   replaceOnboardingSource,
+  releaseQuarantinedOnboardingJob,
   requestDigest,
   revokeIntegrationToken
 } from "../domain/onboarding.js";
@@ -226,6 +229,33 @@ export function registerOnboardingRoutes(app: FastifyInstance, db: Db, config: A
     const { id } = request.params as { id: string };
     try {
       await cancelOnboardingJob(db, id, "admin", accountId, correlationId);
+      return { ok: true };
+    } catch (error) {
+      return sendError(reply, statusCode(error), errorCode(error), undefined, correlationId);
+    }
+  });
+
+  app.post("/api/onboarding-jobs/:id/release-quarantine", async (request, reply) => {
+    const correlationId = randomUUID();
+    const accountId = await adminIdentity(db, config, request, reply, correlationId, true);
+    if (!accountId) return;
+    const { id } = request.params as { id: string };
+    const body = request.body as { confirmedCode?: unknown; reason?: unknown; password?: unknown; totp?: unknown };
+    const confirmedCode = typeof body.confirmedCode === "string" ? body.confirmedCode.trim() : "";
+    const reason = typeof body.reason === "string" ? body.reason.trim() : "";
+    const password = typeof body.password === "string" ? body.password : "";
+    const totp = typeof body.totp === "string" ? body.totp.trim() : "";
+    if (!confirmedCode || reason.length < 10 || reason.length > 1000 || !password) {
+      return sendError(reply, 400, "invalid_quarantine_release", "Vyžaduje se přesný KCML kód, důvod (10–1000 znaků) a heslo.", correlationId);
+    }
+    const account = await db.query("select password_hash,mfa_enabled,mfa_secret from admin_account where id=$1", [accountId]);
+    const passwordOk = Boolean(account.rowCount && account.rows[0].password_hash) && await argon2.verify(String(account.rows[0].password_hash), password);
+    const mfaOk = account.rowCount && account.rows[0].mfa_enabled
+      ? authenticator.check(totp, String(account.rows[0].mfa_secret))
+      : true;
+    if (!passwordOk || !mfaOk) return sendError(reply, 403, "reauthentication_failed", "Opětovné ověření administrátora selhalo.", correlationId);
+    try {
+      await releaseQuarantinedOnboardingJob(db, id, confirmedCode, reason, accountId, correlationId);
       return { ok: true };
     } catch (error) {
       return sendError(reply, statusCode(error), errorCode(error), undefined, correlationId);

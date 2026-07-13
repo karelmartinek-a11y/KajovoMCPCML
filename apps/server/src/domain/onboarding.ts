@@ -45,7 +45,7 @@ const TRANSITIONS: Record<OnboardingJobState, ReadonlySet<OnboardingJobState>> =
   TRIAL_TESTING: new Set(["ACTIVE", "REGISTERED_DISABLED", "CANCELLED", "FAILED", "QUARANTINED"]),
   ACTIVE: new Set(),
   FAILED: new Set(["SOURCE_UPLOADED", "CANCELLED"]),
-  QUARANTINED: new Set(),
+  QUARANTINED: new Set(["AWAITING_REVISION"]),
   CANCELLED: new Set()
 };
 
@@ -194,16 +194,17 @@ export async function createIntegrationToken(
           where onboarding_job_id=$1 and id<>$2 and revoked_at is null`,
         [resumeJobId, inserted.rows[0].id]
       );
+      const resumeDeployment = resumeHasServer && !["AWAITING_REVISION", "FAILED"].includes(String(resumeState));
       await client.query(
         `update onboarding_job
-            set token_id=$2, state=case when server_id is not null then 'DEPLOYING' else state end,
-                runtime_stopped_at=case when server_id is not null then null else runtime_stopped_at end,
+            set token_id=$2, state=case when $3 then 'DEPLOYING' else state end,
+                runtime_stopped_at=case when $3 then null else runtime_stopped_at end,
                 next_run_at=now(), blocking_error_code=null,
                 blocking_error_detail=null, lock_version=lock_version+1
           where id=$1`,
-        [resumeJobId, inserted.rows[0].id]
+        [resumeJobId, inserted.rows[0].id, resumeDeployment]
       );
-      if (resumeState && resumeHasServer) {
+      if (resumeState && resumeDeployment) {
         await recordTransition(client, resumeJobId, resumeState, "DEPLOYING", "job.resumed", {}, correlationId);
       }
     }
@@ -222,6 +223,43 @@ export async function createIntegrationToken(
     ...mapToken(result),
     token: secret.value
   };
+}
+
+export async function releaseQuarantinedOnboardingJob(
+  db: Db,
+  jobId: string,
+  confirmedCode: string,
+  reason: string,
+  actorId: string,
+  correlationId: string
+): Promise<void> {
+  await tx(db, async (client) => {
+    const result = await client.query("select * from onboarding_job where id=$1 for update", [jobId]);
+    if (!result.rowCount) throw Object.assign(new Error("job_not_found"), { statusCode: 404 });
+    const row = result.rows[0];
+    if (String(row.state) !== "QUARANTINED") throw Object.assign(new Error("job_not_quarantined"), { statusCode: 409 });
+    if (!row.code || String(row.code) !== confirmedCode) throw Object.assign(new Error("confirmation_code_mismatch"), { statusCode: 400 });
+    assertTransition("QUARANTINED", "AWAITING_REVISION");
+    await client.query(
+      `update onboarding_job
+          set state='AWAITING_REVISION', completed_at=null, next_run_at=now(), lock_version=lock_version+1
+        where id=$1`,
+      [jobId]
+    );
+    await client.query("update integration_token set revoked_at=coalesce(revoked_at,now()), lock_version=lock_version+1 where onboarding_job_id=$1 and revoked_at is null", [jobId]);
+    await client.query("update egress_capability set revoked_at=coalesce(revoked_at,now()) where job_id=$1 and revoked_at is null", [jobId]);
+    await recordTransition(client, jobId, "QUARANTINED", "AWAITING_REVISION", "quarantine.revision_approved", { reason }, correlationId);
+    await appendAudit(client, {
+      eventType: "onboarding.quarantine.revision_approved",
+      actorType: "admin",
+      actorId,
+      objectType: "onboarding_job",
+      objectId: jobId,
+      before: { state: "QUARANTINED" },
+      after: { state: "AWAITING_REVISION", confirmedCode, reason },
+      correlationId
+    });
+  });
 }
 
 export async function listIntegrationTokens(db: Db) {

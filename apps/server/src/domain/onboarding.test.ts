@@ -35,6 +35,7 @@ describe("automated onboarding token policy", () => {
     expect(() => assertTransition("SOURCE_UPLOADED", "PR_CREATED")).not.toThrow();
     expect(() => assertTransition("DEPLOYING", "CANCELLED")).not.toThrow();
     expect(() => assertTransition("TRIAL_TESTING", "CANCELLED")).not.toThrow();
+    expect(() => assertTransition("QUARANTINED", "AWAITING_REVISION")).not.toThrow();
     expect(() => assertTransition("SOURCE_UPLOADED", "ACTIVE")).toThrow("invalid_state_transition");
     expect(requestDigest(`sha256:${"a".repeat(64)}`, `sha256:${"b".repeat(64)}`)).toMatch(/^sha256:[a-f0-9]{64}$/);
   });
