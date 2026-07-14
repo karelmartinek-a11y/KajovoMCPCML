@@ -1,0 +1,201 @@
+{
+  "version": "1.6",
+  "serviceKind": "MCP",
+  "manifestSchemaVersion": "1.5",
+  "canonicalDigest": "sha256:pending-generated-at-runtime",
+  "manifestExamplePath": "docs/onboarding-manifest-v1.5.example.json",
+  "requiredArtifacts": [
+    "sourceZip",
+    "manifest",
+    "sbom",
+    "provenance",
+    "negativeTestsEvidence",
+    "loadProfileEvidence"
+  ],
+  "gateRules": [
+    "G01_SCHEMA",
+    "G02_INTENT_BINDING",
+    "G03_OWNERSHIP",
+    "G04_ARTIFACT_INTEGRITY",
+    "G05_ENDPOINT_SAFETY",
+    "G06_AUTH_ACCEPTANCE",
+    "G07_SCOPE_ENFORCEMENT",
+    "G08_STATE_CONTRACTS",
+    "G09_LOGGING",
+    "G10_MONITORING",
+    "G11_DISABLE_ENFORCEMENT",
+    "G12_PERMISSION_MUTATION",
+    "G13_RESILIENCE",
+    "G14_REGISTRATION_FINALIZATION"
+  ],
+  "errorCodes": [
+    "INVALID_MANIFEST",
+    "INVALID_INTEGRATION_TOKEN",
+    "INVALID_INTENT_BINDING",
+    "UNSAFE_ENDPOINT",
+    "AUTH_ACCEPTANCE_FAILED",
+    "MONITORING_CONTRACT_FAILED",
+    "DISABLE_ENFORCEMENT_FAILED",
+    "PERMISSION_MUTATION_FAILED"
+  ],
+  "jsonSchema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "KCML MCP managed service manifest v1.5",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "registrationRevision",
+      "environment",
+      "handlerKey",
+      "handlerVersion",
+      "displayName",
+      "businessPurpose",
+      "owners",
+      "contacts",
+      "criticality",
+      "review",
+      "source",
+      "runtime",
+      "tool",
+      "contractDigests",
+      "behavior",
+      "testContract",
+      "protocol",
+      "dependencies",
+      "dataGovernance",
+      "monitoringProfile",
+      "maintenance",
+      "autoQuarantine",
+      "errorCatalog",
+      "evidence",
+      "approvals",
+      "change"
+    ],
+    "properties": {
+      "schemaVersion": { "const": "1.5" },
+      "registrationRevision": { "type": "string", "minLength": 3, "maxLength": 80 },
+      "environment": { "enum": ["production", "staging"] },
+      "handlerKey": { "type": "string", "minLength": 2, "maxLength": 120 },
+      "handlerVersion": { "type": "string", "minLength": 1, "maxLength": 80 },
+      "displayName": { "type": "string", "minLength": 3, "maxLength": 120 },
+      "businessPurpose": { "type": "string", "minLength": 20, "maxLength": 2000 },
+      "owners": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["service", "technical", "security", "operations"],
+        "properties": {
+          "service": { "type": "string" },
+          "technical": { "type": "string" },
+          "security": { "type": "string" },
+          "operations": { "type": "string" }
+        }
+      },
+      "contacts": { "type": "object" },
+      "criticality": { "enum": ["LOW", "MEDIUM", "HIGH", "CRITICAL"] },
+      "review": { "type": "object" },
+      "source": { "type": "object" },
+      "runtime": { "type": "object" },
+      "tool": { "type": "object" },
+      "contractDigests": { "type": "object" },
+      "behavior": { "type": "object" },
+      "testContract": { "type": "object" },
+      "protocol": { "type": "object" },
+      "dependencies": { "type": "object" },
+      "dataGovernance": { "type": "object" },
+      "monitoringProfile": { "type": "object" },
+      "maintenance": { "type": "object" },
+      "autoQuarantine": { "type": "object" },
+      "errorCatalog": { "type": "array" },
+      "evidence": { "type": "object" },
+      "approvals": { "type": "object" },
+      "change": { "type": "object" }
+    }
+  },
+  "programmerApi": {
+    "openapi": "3.1.0",
+    "info": {
+      "title": "KCML service onboarding programmer API",
+      "version": "1.6"
+    },
+    "servers": [
+      {
+        "url": "https://{registerHost}",
+        "variables": {
+          "registerHost": {
+            "default": "register.hcasc.cz"
+          }
+        }
+      }
+    ],
+    "paths": {
+      "/v1/service-onboardings": {
+        "post": {
+          "summary": "Register an MCP managed service source bundle",
+          "parameters": [
+            {
+              "name": "Idempotency-Key",
+              "in": "header",
+              "required": true,
+              "schema": {
+                "type": "string",
+                "minLength": 8,
+                "maxLength": 128
+              }
+            }
+          ],
+          "requestBody": {
+            "required": true,
+            "content": {
+              "multipart/form-data": {
+                "schema": {
+                  "type": "object",
+                  "required": ["manifest", "source"],
+                  "properties": {
+                    "manifest": { "type": "string", "contentMediaType": "application/json" },
+                    "source": { "type": "string", "contentEncoding": "binary" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "/v1/service-onboardings/{id}": {
+        "get": {
+          "summary": "Read the current onboarding job state"
+        }
+      },
+      "/v1/service-onboardings/{id}/revision": {
+        "put": {
+          "summary": "Upload a corrected MCP manifest and source archive",
+          "parameters": [
+            {
+              "name": "Idempotency-Key",
+              "in": "header",
+              "required": true,
+              "schema": {
+                "type": "string",
+                "minLength": 8,
+                "maxLength": 128
+              }
+            },
+            {
+              "name": "If-Match",
+              "in": "header",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            }
+          ]
+        }
+      },
+      "/v1/service-onboardings/{id}/cancel": {
+        "post": {
+          "summary": "Cancel the active onboarding job"
+        }
+      }
+    }
+  }
+}

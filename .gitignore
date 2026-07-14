@@ -9,4 +9,6 @@ coverage/
 *.log
 tmp/
 .codex-docx-work/
+.docx_render_upgrade_plan/
+Managed_Service_Upgrade_Plan_KCML.docx
 __pycache__/

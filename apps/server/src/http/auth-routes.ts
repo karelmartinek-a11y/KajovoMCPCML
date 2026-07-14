@@ -3,6 +3,8 @@ import type { FastifyInstance } from "fastify";
 import type { AppConfig } from "../config.js";
 import type { Db } from "../db.js";
 import { issueAccessToken } from "../domain/auth.js";
+import { authorizeManagedServiceToken } from "../domain/managed-service.js";
+import { hmacToken } from "../security/secrets.js";
 import { hostOf, sendError } from "./errors.js";
 
 export function registerAuthRoutes(app: FastifyInstance, db: Db, config: AppConfig): void {
@@ -42,5 +44,39 @@ export function registerAuthRoutes(app: FastifyInstance, db: Db, config: AppConf
       const code = error instanceof Error ? error.message : "server_error";
       return sendError(reply, statusCode, code, undefined, correlationId);
     }
+  });
+
+  app.post("/oauth/introspect", async (request, reply) => {
+    const correlationId = randomUUID();
+    if (hostOf(request.headers.host) !== config.AUTH_HOST) return sendError(reply, 404, "not_found", undefined, correlationId);
+    const contentType = request.headers["content-type"] ?? "";
+    if (!String(contentType).includes("application/x-www-form-urlencoded")) return sendError(reply, 415, "unsupported_media_type", undefined, correlationId);
+    const body = request.body as { token?: string; resource?: string; operationId?: string; scope?: string; method?: string; path?: string };
+    if (!body.token || !body.resource) return sendError(reply, 400, "invalid_request", undefined, correlationId);
+    const decision = await authorizeManagedServiceToken(db, {
+      tokenDigest: hmacToken(body.token, config.ACCESS_TOKEN_HMAC_KEY_BASE64),
+      audience: body.resource,
+      environment: "production",
+      requiredScopes: [body.scope ?? "mcp.invoke"],
+      correlationId,
+      operationId: body.operationId ?? null,
+      requestMethod: body.method ?? null,
+      requestPath: body.path ?? null
+    });
+    return {
+      active: decision.allow,
+      code: decision.reasonCode,
+      decisionId: decision.decisionId,
+      correlationId: decision.correlationId,
+      serviceId: decision.serviceId,
+      principalId: decision.principalId,
+      operationId: decision.operationId,
+      scopes: decision.scopes,
+      apiState: decision.apiState,
+      lifecycleState: decision.lifecycleState,
+      permissionEpoch: decision.permissionEpoch,
+      serviceTokenEpoch: decision.serviceTokenEpoch,
+      activeRevisionEpoch: decision.activeRevisionEpoch
+    };
   });
 }

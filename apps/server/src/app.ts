@@ -9,10 +9,13 @@ import fastifyStatic from "@fastify/static";
 import type { AppConfig } from "./config.js";
 import type { Db } from "./db.js";
 import { isKcmlHostname } from "./domain/catalog.js";
+import { isReferenceExternalApiHostname } from "./domain/reference-external-api.js";
 import { registerAdminRoutes } from "./http/admin-routes.js";
 import { registerAuthRoutes } from "./http/auth-routes.js";
+import { registerExternalApiRoutes } from "./http/external-api-routes.js";
 import { registerMcpRoutes } from "./http/mcp.js";
 import { registerOnboardingRoutes } from "./http/onboarding-routes.js";
+import { registerReferenceExternalApiRoutes } from "./http/reference-external-api-routes.js";
 import { hostOf, sendError } from "./http/errors.js";
 import { createPostgresRateLimitStore } from "./http/postgres-rate-limit-store.js";
 
@@ -59,6 +62,7 @@ export async function buildApp(config: AppConfig, db: Db) {
     const isKnownHost = host === config.ADMIN_HOST
       || host === config.AUTH_HOST
       || host === config.REGISTER_HOST
+      || isReferenceExternalApiHostname(host, config.PUBLIC_BASE_DOMAIN)
       || isKcmlHostname(host, config.PUBLIC_BASE_DOMAIN);
     if (!isKnownHost) return sendError(reply, 404, "not_found");
   });
@@ -66,15 +70,18 @@ export async function buildApp(config: AppConfig, db: Db) {
   registerAdminRoutes(app, db, config);
   registerAuthRoutes(app, db, config);
   registerMcpRoutes(app, db, config);
+  registerReferenceExternalApiRoutes(app, config);
+  registerExternalApiRoutes(app, db, config);
   registerOnboardingRoutes(app, db, config);
 
   const adminDist = path.resolve(process.cwd(), "apps/admin-ui/dist");
   app.addHook("onRequest", async (request, reply) => {
     const host = hostOf(request.headers.host);
     if (host === config.ADMIN_HOST) return;
-    if (host === config.AUTH_HOST && (request.url === "/oauth/token" || request.url === "/.well-known/oauth-authorization-server")) return;
+    if (host === config.AUTH_HOST && (request.url === "/oauth/token" || request.url === "/oauth/introspect" || request.url === "/.well-known/oauth-authorization-server")) return;
     if (host === config.REGISTER_HOST && request.url.startsWith("/v1/")) return;
-    if (isKcmlHostname(host, config.PUBLIC_BASE_DOMAIN) && (request.url === "/mcp" || request.url.startsWith("/.well-known/oauth-protected-resource"))) return;
+    if (isReferenceExternalApiHostname(host, config.PUBLIC_BASE_DOMAIN)) return;
+    if (isKcmlHostname(host, config.PUBLIC_BASE_DOMAIN)) return;
     return sendError(reply, 404, "not_found");
   });
   await app.register(fastifyStatic, { root: adminDist, wildcard: false });

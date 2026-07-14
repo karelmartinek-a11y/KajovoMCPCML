@@ -175,6 +175,7 @@ curl -fsS -H "Host: kcml0002.${PUBLIC_BASE_DOMAIN:-hcasc.cz}" \
   | jq -e --arg resource "https://kcml0002.${PUBLIC_BASE_DOMAIN:-hcasc.cz}/mcp" '.resource == $resource' >/dev/null
 test "$(curl -sS -o /dev/null -w '%{http_code}' -H 'Host: unknown.invalid' \
   "http://127.0.0.1:${PORT:-3010}/health")" = "404"
+bash "$release_dir/deploy/scripts/smoke-reference-external-api.sh" "$release_dir"
 
 psql "$app_database_url" --no-psqlrc --quiet --set ON_ERROR_STOP=1 \
   --set alert_id="$test_alert_id" --set correlation="$test_correlation" --set release_id="$release_id" <<'SQL'

@@ -255,39 +255,84 @@ export type ServicePipelineEvent = {
 export type ExternalApiRegistrationManifest = {
   schemaVersion: "1.0";
   serviceKind: "EXTERNAL_API";
+  environment: "production" | "staging";
   registrationRevision: string;
   displayName: string;
-  code: string;
-  slug: string;
   description: string;
+  serviceIdentity: {
+    slug: string;
+    region: string;
+    basePath: string;
+  };
   owners: ManagedServiceOwnerSet;
   contacts: ManagedServiceContactSet;
   governance: ManagedServiceGovernance;
+  review: {
+    intervalDays: number;
+    approvedAt: string;
+    reviewDueAt: string;
+  };
   auth: {
     mode: ManagedServiceAuthMode;
     tokenEndpointUrl: string | null;
     jwksUrl: string | null;
     authMetadataUrl: string | null;
-    audience: string;
-    requiredScopes: string[];
+    gatewayEnforced: boolean;
   };
   endpoints: {
     baseUrl: string;
-    resourceUri: string;
     healthcheckUrl: string | null;
     readinessUrl: string | null;
   };
+  operations: Array<{
+    operationId: string;
+    method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+    path: string;
+    requiredScopes: string[];
+    idempotency: "READ_ONLY" | "IDEMPOTENT" | "NON_IDEMPOTENT";
+    requestSchema: Record<string, unknown>;
+    responseSchema: Record<string, unknown>;
+    timeoutMs: number;
+    maxPayloadBytes: number;
+  }>;
   rateLimit: {
-    windowSeconds: number | null;
-    maxRequests: number | null;
+    windowSeconds: number;
+    maxRequests: number;
   };
-  timeoutMs: number | null;
+  timeoutMs: number;
   monitoringProfile: {
     staleAfterSeconds: number;
-    probeIntervals: Record<string, number>;
-    alertRules: Array<Record<string, unknown>>;
+    probeIntervals: {
+      healthSeconds: number;
+      readinessSeconds: number;
+      tlsSeconds: number;
+      acceptanceSeconds: number;
+    };
+    alertRules: Array<{
+      probeType: string;
+      severity: "WARNING" | "HIGH" | "CRITICAL";
+      consecutiveFailures: number;
+    }>;
     runbookRef: string;
   };
+  loggingContract: {
+    correlationHeader: string;
+    redactHeaders: string[];
+  };
+  stateContract: {
+    operationalStatePath: string;
+    apiAcceptancePath: string;
+  };
+  egressPolicy: {
+    redirectsAllowed: false;
+    allowlist: string[];
+  };
+  errorCatalog: Array<{
+    code: string;
+    description: string;
+    classification: "FIXABLE" | "TRANSIENT" | "SECURITY_BLOCKER" | "INTERNAL";
+    retryable: boolean;
+  }>;
   evidence: {
     contractRefs: string[];
     securityRefs: string[];

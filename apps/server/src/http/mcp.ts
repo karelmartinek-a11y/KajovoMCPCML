@@ -7,6 +7,7 @@ import type { Db } from "../db.js";
 import { tx } from "../db.js";
 import { appendAudit } from "../domain/audit.js";
 import { getServerByHostname, isKcmlHostname, resourceFor } from "../domain/catalog.js";
+import { getManagedServiceByHostname } from "../domain/managed-service.js";
 import { beginInvocation, finalizeInvocation, recordFinalizationFailure } from "../domain/invocation.js";
 import { evaluateRecertification } from "../domain/recertification.js";
 import type { McpServer } from "../domain/types.js";
@@ -206,6 +207,16 @@ export function registerMcpRoutes(app: FastifyInstance, db: Db, config: AppConfi
   app.get("/.well-known/oauth-protected-resource", async (request, reply) => {
     const hostname = hostOf(request.headers.host);
     if (!isKcmlHostname(hostname, config.PUBLIC_BASE_DOMAIN)) return sendError(reply, 404, "not_found");
+    const managedService = await getManagedServiceByHostname(db, hostname);
+    if (managedService?.serviceKind === "EXTERNAL_API") {
+      if (managedService.apiState !== "ENABLED") return sendError(reply, 503, "service_unavailable", "Resource is unavailable");
+      return {
+        resource: managedService.resourceUri,
+        authorization_servers: [`https://${config.AUTH_HOST}`],
+        bearer_methods_supported: ["header"]
+      };
+    }
+    if (managedService && managedService.apiState !== "ENABLED") return sendError(reply, 503, "service_unavailable", "Resource is unavailable");
     const server = await getServerByHostname(db, hostname);
     if (!server) return sendError(reply, 404, "not_found");
     if (!serverCanServe(server)) {
@@ -229,6 +240,16 @@ export function registerMcpRoutes(app: FastifyInstance, db: Db, config: AppConfi
   app.get("/.well-known/oauth-protected-resource/mcp", async (request, reply) => {
     const hostname = hostOf(request.headers.host);
     if (!isKcmlHostname(hostname, config.PUBLIC_BASE_DOMAIN)) return sendError(reply, 404, "not_found");
+    const managedService = await getManagedServiceByHostname(db, hostname);
+    if (managedService?.serviceKind === "EXTERNAL_API") {
+      if (managedService.apiState !== "ENABLED") return sendError(reply, 503, "service_unavailable", "Resource is unavailable");
+      return {
+        resource: managedService.resourceUri,
+        authorization_servers: [`https://${config.AUTH_HOST}`],
+        bearer_methods_supported: ["header"]
+      };
+    }
+    if (managedService && managedService.apiState !== "ENABLED") return sendError(reply, 503, "service_unavailable", "Resource is unavailable");
     const server = await getServerByHostname(db, hostname);
     if (!server) return sendError(reply, 404, "not_found");
     if (!serverCanServe(server)) {
@@ -262,6 +283,11 @@ export function registerMcpRoutes(app: FastifyInstance, db: Db, config: AppConfi
     if (!["POST", "GET"].includes(request.method)) return sendError(reply, 405, "method_not_allowed", "Only POST and GET are supported", correlationId);
     if (!isKcmlHostname(hostname, config.PUBLIC_BASE_DOMAIN)) return sendError(reply, 404, "not_found", "Unknown resource", correlationId);
 
+    const managedService = await getManagedServiceByHostname(db, hostname);
+    if (managedService && managedService.apiState !== "ENABLED") {
+      await appendAudit(db, { eventType: "managed_service.api.disabled", actorType: "anonymous", objectType: "managed_service", objectId: managedService.id, correlationId });
+      return sendError(reply, 503, "service_unavailable", "Resource is unavailable", correlationId);
+    }
     const server = await getServerByHostname(db, hostname);
     if (!server) {
       await appendAudit(db, { eventType: "mcp.unknown_host", actorType: "anonymous", objectType: "hostname", objectId: hostname, correlationId });

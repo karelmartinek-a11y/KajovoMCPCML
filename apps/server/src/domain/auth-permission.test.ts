@@ -24,14 +24,12 @@ function fakeDb(previous: Array<{ server_id: string; access_level: string }>) {
 }
 
 describe("Kaja permission revocation", () => {
-  it("revokes existing access tokens when execute permission is removed", async () => {
+  it("keeps existing tokens but stops relying on token revocation for permission removal", async () => {
     const serverId = "11111111-1111-4111-8111-111111111111";
     const { db, query } = fakeDb([{ server_id: serverId, access_level: "EXECUTE" }]);
     await replaceKajaPermissions(db, "admin", "22222222-2222-4222-8222-222222222222", "credential", []);
-    expect(query).toHaveBeenCalledWith(
-      expect.stringContaining("update access_token set revoked_at"),
-      ["credential", [serverId]]
-    );
+    expect(query.mock.calls.some(([sql]) => String(sql).includes("update access_token set revoked_at"))).toBe(false);
+    expect(query.mock.calls.some(([sql]) => String(sql).includes("select legacy_mcp_server_id, id"))).toBe(true);
   });
 
   it("does not revoke access tokens when execute permission remains", async () => {

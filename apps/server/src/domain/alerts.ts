@@ -8,7 +8,8 @@ import { appendAudit } from "./audit.js";
 export type AlertSeverity = "WARNING" | "HIGH" | "CRITICAL";
 
 type RaiseAlert = {
-  serverId: string | null;
+  serverId?: string | null;
+  managedServiceId?: string | null;
   severity: AlertSeverity;
   alertType: string;
   title: string;
@@ -17,15 +18,18 @@ type RaiseAlert = {
 };
 
 export async function raiseAlert(client: pg.PoolClient, alert: RaiseAlert): Promise<{ id: string; created: boolean }> {
-  const lockKey = `${alert.serverId ?? "system"}:${alert.alertType}`;
+  const serverId = alert.serverId ?? null;
+  const managedServiceId = alert.managedServiceId ?? null;
+  const lockKey = `${serverId ?? "system"}:${managedServiceId ?? "system"}:${alert.alertType}`;
   await client.query("select pg_advisory_xact_lock(hashtextextended($1,0))", [lockKey]);
   const existing = await client.query(
     `select id from operational_alert
       where server_id is not distinct from $1
-        and alert_type=$2
+        and managed_service_id is not distinct from $2
+        and alert_type=$3
         and status in ('OPEN','ACKNOWLEDGED','SUPPRESSED')
       for update`,
-    [alert.serverId, alert.alertType]
+    [serverId, managedServiceId, alert.alertType]
   );
   if (existing.rowCount) {
     const id = String(existing.rows[0].id);
@@ -38,9 +42,9 @@ export async function raiseAlert(client: pg.PoolClient, alert: RaiseAlert): Prom
     return { id, created: false };
   }
   const inserted = await client.query(
-    `insert into operational_alert(server_id,severity,alert_type,title,detail,correlation_id)
-     values ($1,$2,$3,$4,$5,$6) returning id`,
-    [alert.serverId, alert.severity, alert.alertType, alert.title, JSON.stringify(alert.detail), alert.correlationId]
+    `insert into operational_alert(server_id,managed_service_id,severity,alert_type,title,detail,correlation_id)
+     values ($1,$2,$3,$4,$5,$6,$7) returning id`,
+    [serverId, managedServiceId, alert.severity, alert.alertType, alert.title, JSON.stringify(alert.detail), alert.correlationId]
   );
   const id = String(inserted.rows[0].id);
   for (const channel of ["PRIMARY", "BACKUP"] as const) {
@@ -56,7 +60,8 @@ export async function raiseAlert(client: pg.PoolClient, alert: RaiseAlert): Prom
     objectType: "operational_alert",
     objectId: id,
     after: {
-      serverId: alert.serverId,
+      serverId,
+      managedServiceId,
       severity: alert.severity,
       alertType: alert.alertType,
       title: alert.title,
@@ -72,19 +77,23 @@ export async function raiseAlertWithDb(db: Db, alert: RaiseAlert): Promise<{ id:
 }
 
 export async function closeAlert(client: pg.PoolClient, params: {
-  serverId: string | null;
+  serverId?: string | null;
+  managedServiceId?: string | null;
   alertType: string;
   reason: string;
   correlationId: string;
 }): Promise<void> {
+  const serverId = params.serverId ?? null;
+  const managedServiceId = params.managedServiceId ?? null;
   const result = await client.query(
     `update operational_alert
         set status='CLOSED',closed_at=now(),last_seen_at=now()
       where server_id is not distinct from $1
-        and alert_type=$2
+        and managed_service_id is not distinct from $2
+        and alert_type=$3
         and status in ('OPEN','ACKNOWLEDGED','SUPPRESSED')
       returning id`,
-    [params.serverId, params.alertType]
+    [serverId, managedServiceId, params.alertType]
   );
   for (const row of result.rows) {
     await appendAudit(client, {
@@ -92,7 +101,7 @@ export async function closeAlert(client: pg.PoolClient, params: {
       actorType: "system",
       objectType: "operational_alert",
       objectId: String(row.id),
-      after: { reason: params.reason },
+      after: { reason: params.reason, serverId, managedServiceId },
       correlationId: params.correlationId
     });
   }
@@ -105,7 +114,7 @@ export async function expireAlertSuppressions(db: Db): Promise<number> {
       `update operational_alert
           set status='OPEN',suppression_reason=null,suppression_owner=null,suppressed_until=null,last_seen_at=now()
         where status='SUPPRESSED' and suppressed_until<=now()
-        returning id,server_id,alert_type`,
+        returning id,server_id,managed_service_id,alert_type`,
     );
     for (const row of result.rows) {
       await appendAudit(client, {
@@ -113,7 +122,7 @@ export async function expireAlertSuppressions(db: Db): Promise<number> {
         actorType: "system",
         objectType: "operational_alert",
         objectId: String(row.id),
-        after: { serverId: row.server_id, alertType: row.alert_type },
+        after: { serverId: row.server_id, managedServiceId: row.managed_service_id, alertType: row.alert_type },
         correlationId
       });
     }
@@ -136,12 +145,17 @@ async function leaseDelivery(db: Db): Promise<DeliveryLease | null> {
       `select delivery.id,delivery.alert_id,delivery.channel,delivery.idempotency_key,delivery.attempt_count,
               alert.severity,alert.alert_type,alert.title,alert.detail,alert.correlation_id,
               alert.first_seen_at,alert.last_seen_at,server.code,server.hostname,
+              managed.code as managed_code,managed.public_hostname as managed_hostname,
               revision.manifest->'owners'->>'service' as service_owner,
-              revision.manifest->'monitoringProfile'->>'runbookRef' as runbook_ref
+              revision.manifest->'monitoringProfile'->>'runbookRef' as runbook_ref,
+              managed_revision.manifest->'owners'->>'service' as managed_service_owner,
+              managed_revision.manifest->'monitoringProfile'->>'runbookRef' as managed_runbook_ref
          from alert_webhook_delivery delivery
          join operational_alert alert on alert.id=delivery.alert_id
          left join mcp_server server on server.id=alert.server_id
          left join registration_revision revision on revision.id=server.active_revision_id
+         left join managed_service managed on managed.id=alert.managed_service_id
+         left join managed_service_revision managed_revision on managed_revision.id=managed.active_revision_id
         where delivery.state in ('PENDING','RETRY')
           and delivery.next_attempt_at<=now()
         order by case alert.severity when 'CRITICAL' then 1 when 'HIGH' then 2 else 3 end,
@@ -178,6 +192,12 @@ async function leaseDelivery(db: Db): Promise<DeliveryLease | null> {
           hostname: row.hostname,
           serviceOwner: row.service_owner,
           runbookRef: row.runbook_ref
+        } : null,
+        managedService: row.managed_code ? {
+          code: row.managed_code,
+          hostname: row.managed_hostname,
+          serviceOwner: row.managed_service_owner,
+          runbookRef: row.managed_runbook_ref
         } : null
       }
     };

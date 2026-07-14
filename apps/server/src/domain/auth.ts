@@ -4,6 +4,11 @@ import { tx } from "../db.js";
 import { hmacToken, issueOpaqueSecret, hashPasswordLikeSecret, verifyPasswordLikeSecret, fingerprintSecret } from "../security/secrets.js";
 import { appendAudit } from "./audit.js";
 import { resourceFor } from "./catalog.js";
+import {
+  authorizeManagedServiceToken,
+  bumpManagedServicePermissionEpoch,
+  currentManagedServiceScopes
+} from "./managed-service.js";
 import { evaluateRecertification } from "./recertification.js";
 
 function timestamp(value: unknown): string | null {
@@ -66,6 +71,19 @@ export type KajaPermissionSummary = {
 export type KajaPermissionInput = {
   serverId: string;
   accessLevel: "EXECUTE";
+};
+
+export type ManagedServicePermissionSummary = {
+  managedServiceId: string;
+  code: string;
+  displayName: string;
+  serviceKind: string;
+  scopes: string[];
+};
+
+export type ManagedServicePermissionInput = {
+  managedServiceId: string;
+  scopeNames: string[];
 };
 
 export async function createKajaCredential(
@@ -233,22 +251,67 @@ export async function replaceKajaPermissions(db: Db, actorId: string, correlatio
     }
     const currentExecutable = new Set(normalized.map((permission) => permission.serverId));
     const removedExecutable = [...previousExecutable].filter((serverId) => !currentExecutable.has(serverId));
-    if (removedExecutable.length) {
-      await client.query(
-        "update access_token set revoked_at=coalesce(revoked_at,now()) where credential_id=$1 and server_id=any($2::uuid[])",
-        [credentialId, removedExecutable]
+    const changedServerIds = new Set<string>([...removedExecutable, ...normalized.map((permission) => permission.serverId)]);
+    if (changedServerIds.size) {
+      const managedMappings = await client.query(
+        `select legacy_mcp_server_id, id
+           from managed_service
+          where legacy_mcp_server_id = any($1::uuid[])`,
+        [[...changedServerIds]]
       );
-      for (const serverId of removedExecutable) {
-        await appendAudit(client, {
-          eventType: "permission.revoked",
-          actorType: "admin",
-          actorId,
-          objectType: "mcp_server",
-          objectId: serverId,
-          after: { credentialId },
-          correlationId
-        });
+      const managedByLegacy = new Map<string, string>();
+      for (const row of managedMappings.rows) {
+        managedByLegacy.set(String(row.legacy_mcp_server_id), String(row.id));
       }
+      for (const legacyServerId of changedServerIds) {
+        const managedServiceId = managedByLegacy.get(legacyServerId);
+        if (!managedServiceId) continue;
+        await client.query(
+          `update managed_service_permission
+              set revoked_at = coalesce(revoked_at, now()),
+                  state = 'REVOKED',
+                  valid_to = coalesce(valid_to, now()),
+                  permission_version = permission_version + 1
+            where credential_id = $1
+              and managed_service_id = $2
+              and revoked_at is null`,
+          [credentialId, managedServiceId]
+        );
+      }
+      for (const permission of normalized) {
+        const managedServiceId = managedByLegacy.get(permission.serverId);
+        if (!managedServiceId) continue;
+        await client.query(
+          `insert into managed_service_permission(
+              credential_id, managed_service_id, scope_id, granted_at, revoked_at, state, valid_from, valid_to, permission_version, audit_metadata
+           )
+           select $1, $2, scope.id, now(), null, 'GRANTED', now(), null, 0, $4
+             from managed_service_scope scope
+            where scope.managed_service_id = $2
+              and scope.scope_name = 'mcp.invoke'
+           on conflict (credential_id, managed_service_id, scope_id) do update
+             set revoked_at = null,
+                 state = 'GRANTED',
+                 valid_from = now(),
+                 valid_to = null,
+                 permission_version = managed_service_permission.permission_version + 1,
+                 audit_metadata = excluded.audit_metadata,
+                 granted_at = now()`,
+          [credentialId, managedServiceId, permission.accessLevel, JSON.stringify({ actorId, correlationId, accessLevel: permission.accessLevel })]
+        );
+      }
+      await bumpManagedServicePermissionEpoch(client, [...managedByLegacy.values()], correlationId, { actorId, credentialId });
+    }
+    for (const serverId of removedExecutable) {
+      await appendAudit(client, {
+        eventType: "permission.revoked",
+        actorType: "admin",
+        actorId,
+        objectType: "mcp_server",
+        objectId: serverId,
+        after: { credentialId },
+        correlationId
+      });
     }
     for (const permission of normalized) {
       if (!previousExecutable.has(permission.serverId) && currentExecutable.has(permission.serverId)) {
@@ -270,6 +333,117 @@ export async function replaceKajaPermissions(db: Db, actorId: string, correlatio
       objectType: "kaja_credential",
       objectId: credentialId,
       after: { publicId: credential.rows[0].public_id, permissions: normalized },
+      correlationId
+    });
+  });
+}
+
+export async function listManagedServicePermissions(db: Db, credentialId: string): Promise<ManagedServicePermissionSummary[]> {
+  const credential = await db.query("select 1 from kaja_credential where id=$1 and deleted_at is null", [credentialId]);
+  if (!credential.rowCount) throw Object.assign(new Error("not_found"), { statusCode: 404 });
+  const result = await db.query(
+    `select
+        service.id as managed_service_id,
+        service.code,
+        service.display_name,
+        service.service_kind,
+        array_remove(array_agg(scope.scope_name order by scope.scope_name), null) as scopes
+      from managed_service service
+      left join managed_service_permission permission
+        on permission.managed_service_id = service.id
+       and permission.credential_id = $1
+       and permission.revoked_at is null
+       and permission.state = 'GRANTED'
+      left join managed_service_scope scope on scope.id = permission.scope_id
+      group by service.id
+      order by service.created_at desc`,
+    [credentialId]
+  );
+  return result.rows.map((row) => ({
+    managedServiceId: String(row.managed_service_id),
+    code: String(row.code),
+    displayName: String(row.display_name),
+    serviceKind: String(row.service_kind),
+    scopes: (row.scopes as string[] | null) ?? []
+  }));
+}
+
+export async function replaceManagedServicePermissions(
+  db: Db,
+  actorId: string,
+  correlationId: string,
+  credentialId: string,
+  permissions: ManagedServicePermissionInput[]
+): Promise<void> {
+  await tx(db, async (client) => {
+    const credential = await client.query(
+      "select id, public_id from kaja_credential where id=$1 and deleted_at is null and revoked_at is null and active is true for update",
+      [credentialId]
+    );
+    if (!credential.rowCount) throw Object.assign(new Error("not_found"), { statusCode: 404 });
+    const normalized = new Map<string, string[]>();
+    for (const permission of permissions) normalized.set(permission.managedServiceId, [...new Set(permission.scopeNames)].sort());
+    const serviceIds = [...normalized.keys()];
+    if (serviceIds.length) {
+      const valid = await client.query("select id from managed_service where id = any($1::uuid[])", [serviceIds]);
+      if (valid.rowCount !== serviceIds.length) throw Object.assign(new Error("invalid_managed_service"), { statusCode: 400 });
+    }
+    for (const managedServiceId of serviceIds) {
+      const requestedScopes = normalized.get(managedServiceId) ?? [];
+      const scopes = await client.query(
+        `select id, scope_name
+           from managed_service_scope
+          where managed_service_id = $1
+            and scope_name = any($2::text[])
+            and revoked_at is null`,
+        [managedServiceId, requestedScopes]
+      );
+      if (scopes.rowCount !== requestedScopes.length) throw Object.assign(new Error("invalid_scope"), { statusCode: 400 });
+      await client.query(
+        `update managed_service_permission
+            set revoked_at = coalesce(revoked_at, now()),
+                state = 'REVOKED',
+                valid_to = coalesce(valid_to, now()),
+                permission_version = permission_version + 1
+          where credential_id = $1
+            and managed_service_id = $2
+            and revoked_at is null`,
+        [credentialId, managedServiceId]
+      );
+      for (const row of scopes.rows) {
+        await client.query(
+          `insert into managed_service_permission(
+              credential_id, managed_service_id, scope_id, granted_at, revoked_at, state, valid_from, valid_to, permission_version, audit_metadata
+           ) values ($1,$2,$3,now(),null,'GRANTED',now(),null,0,$4)
+           on conflict (credential_id, managed_service_id, scope_id) do update
+             set revoked_at = null,
+                 state = 'GRANTED',
+                 valid_from = now(),
+                 valid_to = null,
+                 permission_version = managed_service_permission.permission_version + 1,
+                 audit_metadata = excluded.audit_metadata,
+                 granted_at = now()`,
+          [credentialId, managedServiceId, row.id, JSON.stringify({ actorId, correlationId, scopeName: row.scope_name })]
+        );
+      }
+      await appendAudit(client, {
+        eventType: "managed_service.permissions.updated",
+        actorType: "admin",
+        actorId,
+        objectType: "managed_service",
+        objectId: managedServiceId,
+        after: { credentialId, scopeNames: requestedScopes },
+        correlationId
+      });
+    }
+    await bumpManagedServicePermissionEpoch(client, serviceIds, correlationId, { actorId, credentialId });
+    await appendAudit(client, {
+      eventType: "kaja.managed_service_permissions.updated",
+      actorType: "admin",
+      actorId,
+      objectType: "kaja_credential",
+      objectId: credentialId,
+      after: { publicId: credential.rows[0].public_id, permissions: [...normalized.entries()].map(([managedServiceId, scopeNames]) => ({ managedServiceId, scopeNames })) },
       correlationId
     });
   });
@@ -314,87 +488,106 @@ export async function issueAccessToken(db: Db, params: {
   const verified = await verifyPasswordLikeSecret(String(credential.secret_hash), params.clientSecret);
   if (!verified) throw Object.assign(new Error("invalid_client"), { statusCode: 401 });
 
-  const serverResult = await db.query(
-    `select ms.id, ms.code, ms.hostname, ms.enabled, ms.registration_state, ms.revocation_epoch,
-            rr.id as active_revision_id, rr.validation_state, rr.approved_at, rr.review_due_at, rr.review_interval_days,
-            coalesce(mp.enabled,false) as monitoring_enabled, mp.profile_digest as monitoring_profile_digest
-       from mcp_server ms
-       left join registration_revision rr on rr.id=ms.active_revision_id and rr.server_id=ms.id and rr.active=true
-       left join monitoring_profile mp on mp.server_id=ms.id and mp.registration_revision_id=rr.id
-      where $1 = ('https://' || ms.hostname || '/mcp')`,
+  const serviceResult = await db.query(
+    `select
+        ms.id, ms.code, ms.service_kind, ms.legacy_mcp_server_id, ms.resource_uri, ms.environment, ms.service_token_epoch, ms.permission_epoch, ms.active_revision_epoch,
+        revision.validation_state as active_revision_validation_state,
+        ms.lifecycle_state as registration_state, ms.api_state, ms.monitoring_enabled, ms.monitoring_profile_digest,
+        ms.review_approved_at as approved_at, ms.review_due_at, ms.review_interval_days
+      from managed_service ms
+      left join managed_service_revision revision on revision.id = ms.active_revision_id
+     where ms.resource_uri = $1`,
     [params.resource]
   );
-  if (!serverResult.rowCount) throw Object.assign(new Error("invalid_resource"), { statusCode: 400 });
-  const server = serverResult.rows[0];
-  assertRuntimeAvailable(server);
-  const permission = await db.query(
-    "select 1 from kaja_permission where credential_id=$1 and server_id=$2 and revoked_at is null and access_level='EXECUTE'",
-    [credential.id, server.id]
-  );
-  if (!permission.rowCount) throw Object.assign(new Error("insufficient_scope"), { statusCode: 403 });
+  if (!serviceResult.rowCount) throw Object.assign(new Error("invalid_resource"), { statusCode: 400 });
+  const service = serviceResult.rows[0];
+  if (service.service_kind === "MCP") {
+    assertRuntimeAvailable({
+      enabled: service.api_state === "ENABLED",
+      registration_state: service.registration_state,
+      monitoring_enabled: service.monitoring_enabled,
+      monitoring_profile_digest: service.monitoring_profile_digest,
+      active_revision_id: true,
+      validation_state: service.active_revision_validation_state,
+      approved_at: service.approved_at,
+      review_due_at: service.review_due_at,
+      review_interval_days: service.review_interval_days
+    });
+  }
+  const scopes = await currentManagedServiceScopes(db, String(credential.id), String(service.id));
+  if (!scopes.length) throw Object.assign(new Error("insufficient_scope"), { statusCode: 403 });
 
   const token = issueOpaqueSecret();
   const ttlSeconds = 15 * 60;
   const digest = hmacToken(token.value, params.hmacKey);
   await db.query(
-    `insert into access_token
-      (lookup_digest, key_id, fingerprint, credential_id, server_id, audience, expires_at, credential_revocation_epoch, server_revocation_epoch)
-     values ($1,$2,$3,$4,$5,$6, now() + ($7 || ' seconds')::interval, $8, $9)`,
-    [digest, params.keyId, token.fingerprint, credential.id, server.id, params.resource, ttlSeconds, credential.revocation_epoch, server.revocation_epoch]
+    `insert into managed_service_access_token
+      (lookup_digest, key_id, fingerprint, credential_id, managed_service_id, audience, scope_names, expires_at,
+       credential_revocation_epoch, service_revocation_epoch, environment, principal_token_epoch, service_token_epoch,
+       permission_epoch_snapshot, active_revision_epoch_snapshot)
+     values ($1,$2,$3,$4,$5,$6,$7, now() + ($8 || ' seconds')::interval, $9, $10, $11, $12, $13, $14, $15)`,
+    [
+      digest,
+      params.keyId,
+      token.fingerprint,
+      credential.id,
+      service.id,
+      params.resource,
+      scopes,
+      ttlSeconds,
+      credential.revocation_epoch,
+      service.service_token_epoch,
+      service.environment,
+      credential.principal_token_epoch,
+      service.service_token_epoch,
+      service.permission_epoch,
+      service.active_revision_epoch
+    ]
   );
+  if (service.legacy_mcp_server_id) {
+    await db.query(
+      `insert into access_token
+        (lookup_digest, key_id, fingerprint, credential_id, server_id, audience, expires_at, credential_revocation_epoch, server_revocation_epoch)
+       values ($1,$2,$3,$4,$5,$6, now() + ($7 || ' seconds')::interval, $8, $9)`,
+      [digest, params.keyId, token.fingerprint, credential.id, service.legacy_mcp_server_id, params.resource, ttlSeconds, credential.revocation_epoch, service.service_token_epoch]
+    );
+  }
   await appendAudit(db, {
     eventType: "access_token.issued",
     actorType: "kaja",
     actorId: credential.id,
-    objectType: "mcp_server",
-    objectId: server.id,
-    after: { resource: params.resource, fingerprint: token.fingerprint, expiresIn: ttlSeconds },
+    objectType: "managed_service",
+    objectId: service.id,
+    after: { resource: params.resource, fingerprint: token.fingerprint, expiresIn: ttlSeconds, scopes },
     correlationId: params.correlationId
   });
-  return { access_token: token.value, token_type: "Bearer", expires_in: ttlSeconds, scope: `mcp:${server.code}` };
+  return { access_token: token.value, token_type: "Bearer", expires_in: ttlSeconds, scope: scopes.join(" ") };
 }
 
 export async function validateBearer(db: Db, token: string, hostname: string, hmacKey: Buffer): Promise<{ credentialId: string; serverId: string; code: string; toolName: string }> {
   const digest = hmacToken(token, hmacKey);
   const resource = resourceFor(hostname);
-  const result = await db.query(
-    `select at.credential_id, at.server_id, ms.code, ms.tool_name, ms.enabled, ms.registration_state,
-            rr.id as active_revision_id, rr.validation_state, rr.approved_at, rr.review_due_at, rr.review_interval_days,
-            coalesce(mp.enabled,false) as monitoring_enabled, mp.profile_digest as monitoring_profile_digest
-       from access_token at
-       join kaja_credential kc on kc.id=at.credential_id
-       join mcp_server ms on ms.id=at.server_id
-       left join registration_revision rr on rr.id=ms.active_revision_id and rr.server_id=ms.id and rr.active=true
-       left join monitoring_profile mp on mp.server_id=ms.id and mp.registration_revision_id=rr.id
-      where at.lookup_digest=$1
-        and at.audience=$2
-        and at.expires_at > now()
-        and at.revoked_at is null
-        and kc.active is true
-        and kc.revoked_at is null
-        and kc.deleted_at is null
-        and (kc.expires_at is null or kc.expires_at > now())
-        and at.credential_revocation_epoch = kc.revocation_epoch
-        and at.server_revocation_epoch = ms.revocation_epoch`,
-    [digest, resource]
-  );
-  if (!result.rowCount) throw Object.assign(new Error("invalid_token"), { statusCode: 401, fingerprint: fingerprintSecret(token) });
-  try {
-    assertRuntimeAvailable(result.rows[0]);
-  } catch {
+  const decision = await authorizeManagedServiceToken(db, {
+      tokenDigest: digest,
+      audience: resource,
+      environment: "production",
+      requiredScopes: ["mcp.invoke"],
+      correlationId: fingerprintSecret(token),
+      operationId: "mcp.invoke"
+    });
+  if (!decision.allow) {
     throw Object.assign(new Error("invalid_token"), { statusCode: 401, fingerprint: fingerprintSecret(token) });
   }
-  await db.query(
-    `update access_token
-        set last_used_at=case
-          when last_used_at is null or last_used_at < now() - interval '1 minute' then now()
-          else last_used_at
-        end
-      where lookup_digest=$1`,
-    [digest]
+  const result = await db.query(
+    `select legacy.id as server_id, legacy.code, legacy.tool_name
+       from managed_service ms
+       join mcp_server legacy on legacy.id = ms.legacy_mcp_server_id
+      where ms.id = $1`,
+    [decision.serviceId]
   );
+  if (!result.rowCount) throw Object.assign(new Error("invalid_token"), { statusCode: 401, fingerprint: fingerprintSecret(token) });
   return {
-    credentialId: result.rows[0].credential_id,
+    credentialId: decision.principalId ?? "",
     serverId: result.rows[0].server_id,
     code: result.rows[0].code,
     toolName: result.rows[0].tool_name
@@ -418,7 +611,9 @@ async function updateCredentialLifecycle(
   );
   if (!result.rowCount) throw Object.assign(new Error("not_found"), { statusCode: 404 });
   await client.query("update kaja_permission set revoked_at=coalesce(revoked_at, now()) where credential_id=$1", [credentialId]);
+  await client.query("update managed_service_permission set revoked_at=coalesce(revoked_at, now()), state='REVOKED', valid_to=coalesce(valid_to, now()) where credential_id=$1", [credentialId]);
   await client.query("update access_token set revoked_at=coalesce(revoked_at, now()) where credential_id=$1", [credentialId]);
+  await client.query("update managed_service_access_token set revoked_at=coalesce(revoked_at, now()) where credential_id=$1", [credentialId]);
   return {
     publicId: String(result.rows[0].public_id),
     label: String(result.rows[0].label)

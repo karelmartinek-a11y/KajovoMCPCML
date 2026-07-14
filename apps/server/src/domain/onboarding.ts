@@ -46,7 +46,7 @@ async function disableOnboardingServer(client: pg.PoolClient, serverId: string, 
   await client.query("update egress_capability set revoked_at=coalesce(revoked_at,now()) where server_id=$1", [serverId]);
 }
 
-export const TERMINAL_JOB_STATES = new Set<OnboardingJobState>(["ACTIVE", "FAILED", "QUARANTINED", "CANCELLED"]);
+export const TERMINAL_JOB_STATES = new Set<OnboardingJobState>(["REGISTERED_DISABLED", "ACTIVE", "FAILED", "QUARANTINED", "CANCELLED"]);
 const HEARTBEAT_EXTENSION_MS = 2 * 60 * 60 * 1000;
 const INITIAL_TTL_MS = 2 * 60 * 60 * 1000;
 const MAX_TTL_MS = 24 * 60 * 60 * 1000;
@@ -74,6 +74,8 @@ export type IntegrationTokenPrincipal = {
   fingerprint: string;
   expiresAt: string;
   maxExpiresAt: string;
+  serviceKind: "MCP" | "EXTERNAL_API";
+  allowedPipeline: "MCP_ONBOARDING" | "EXTERNAL_API_REGISTRATION";
 };
 
 export type SourceEvidence = {
@@ -106,6 +108,9 @@ export function programmerActionForState(state: OnboardingJobState, blockingErro
         ? `Fix ${blockingErrorCode}, fetch the current ETag and upload a new source revision.`
         : "Inspect failed gates, fetch the current ETag and upload a new source revision."
     };
+  }
+  if (state === "REGISTERED_DISABLED") {
+    return { kind: "COMPLETE" as const, canUploadRevision: false, message: "Registration completed successfully and the managed service remains disabled until an administrator explicitly enables API access." };
   }
   if (state === "ACTIVE") {
     return { kind: "COMPLETE" as const, canUploadRevision: false, message: "Onboarding is complete and the MCP server is active." };
@@ -171,6 +176,8 @@ function mapToken(row: Record<string, unknown>) {
       criticality: typeof descriptor.criticality === "string" ? descriptor.criticality as OnboardingDescriptor["criticality"] : "MEDIUM"
     } satisfies OnboardingDescriptor,
     legacyBackfill: Boolean(row.legacy_backfill),
+    serviceKind: optionalText(row.service_kind) ?? "MCP",
+    allowedPipeline: optionalText(row.allowed_pipeline) ?? "MCP_ONBOARDING",
     jobId: optionalText(row.onboarding_job_id),
     issuedAt: asIso(row.issued_at) ?? "",
     initialExpiresAt: asIso(row.initial_expires_at) ?? "",
@@ -195,7 +202,8 @@ export async function createIntegrationToken(
   correlationId: string,
   label: string,
   descriptor: OnboardingDescriptor,
-  resumeJobId?: string
+  resumeJobId?: string,
+  options?: { serviceKind?: "MCP" | "EXTERNAL_API"; allowedPipeline?: "MCP_ONBOARDING" | "EXTERNAL_API_REGISTRATION" }
 ) {
   const secret = issueIntegrationSecret();
   const deadlines = tokenDeadlines();
@@ -221,10 +229,11 @@ export async function createIntegrationToken(
     const inserted = await client.query(
       `insert into integration_token
         (label, lookup_digest, key_id, fingerprint, created_by, onboarding_job_id,
-         descriptor, issued_at, initial_expires_at, expires_at, max_expires_at)
-       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+         descriptor, service_kind, allowed_pipeline, issued_at, initial_expires_at, expires_at, max_expires_at)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
        returning *`,
       [label, digest, config.INTEGRATION_TOKEN_HMAC_KEY_ID, secret.fingerprint, actorId, resumeJobId ?? null, descriptor,
+        options?.serviceKind ?? "MCP", options?.allowedPipeline ?? "MCP_ONBOARDING",
         deadlines.issuedAt, deadlines.initialExpiresAt, deadlines.expiresAt, deadlines.maxExpiresAt]
     );
     if (resumeJobId) {
@@ -253,7 +262,7 @@ export async function createIntegrationToken(
       actorId,
       objectType: "integration_token",
       objectId: inserted.rows[0].id,
-      after: { label, descriptor, fingerprint: secret.fingerprint, resumeJobId: resumeJobId ?? null, initialExpiresAt: deadlines.initialExpiresAt, maxExpiresAt: deadlines.maxExpiresAt },
+       after: { label, descriptor, serviceKind: options?.serviceKind ?? "MCP", allowedPipeline: options?.allowedPipeline ?? "MCP_ONBOARDING", fingerprint: secret.fingerprint, resumeJobId: resumeJobId ?? null, initialExpiresAt: deadlines.initialExpiresAt, maxExpiresAt: deadlines.maxExpiresAt },
       correlationId
     });
     return inserted.rows[0] as Record<string, unknown>;
@@ -356,7 +365,7 @@ export async function authenticateIntegrationToken(db: Db, token: string, config
   if (!token.startsWith("kci_") || token.length < 80 || token.length > 100) throw new Error("invalid_integration_token");
   const digest = hmacToken(token, config.INTEGRATION_TOKEN_HMAC_KEY_BASE64);
   const result = await db.query(
-    `select it.id, it.onboarding_job_id, it.fingerprint, it.expires_at, it.max_expires_at
+    `select it.id, it.onboarding_job_id, it.fingerprint, it.expires_at, it.max_expires_at, it.service_kind, it.allowed_pipeline
        from integration_token it
        left join onboarding_job oj on oj.id=it.onboarding_job_id
       where it.lookup_digest=$1
@@ -368,13 +377,15 @@ export async function authenticateIntegrationToken(db: Db, token: string, config
     [digest, config.INTEGRATION_TOKEN_HMAC_KEY_ID]
   );
   if (!result.rowCount) throw new Error("invalid_integration_token");
-  await db.query("update integration_token set last_used_at=now() where id=$1", [result.rows[0].id]);
+  await db.query("update integration_token set last_used_at=now(), usage_count=usage_count+1 where id=$1", [result.rows[0].id]);
   return {
     id: String(result.rows[0].id),
     jobId: result.rows[0].onboarding_job_id ? String(result.rows[0].onboarding_job_id) : null,
     fingerprint: String(result.rows[0].fingerprint),
     expiresAt: String(result.rows[0].expires_at),
-    maxExpiresAt: String(result.rows[0].max_expires_at)
+    maxExpiresAt: String(result.rows[0].max_expires_at),
+    serviceKind: (optionalText(result.rows[0].service_kind) ?? "MCP") as IntegrationTokenPrincipal["serviceKind"],
+    allowedPipeline: (optionalText(result.rows[0].allowed_pipeline) ?? "MCP_ONBOARDING") as IntegrationTokenPrincipal["allowedPipeline"]
   };
 }
 
@@ -418,11 +429,11 @@ export async function createOnboardingJob(
     const job = await client.query(
       `insert into onboarding_job
         (token_id, state, correlation_id, manifest, manifest_digest, source_digest,
-         source_archive_path, source_revision, kcml_number, code, hostname, tool_name)
-       values ($1,'SOURCE_UPLOADED',$2,$3,$4,$5,$6,1,$7,$8,$9,$10)
+         source_archive_path, source_revision, kcml_number, code, hostname, tool_name, service_kind)
+       values ($1,'SOURCE_UPLOADED',$2,$3,$4,$5,$6,1,$7,$8,$9,$10,$11)
        returning *`,
       [principal.id, correlationId, manifest, evidence.manifestDigest, evidence.sourceDigest,
-        evidence.archivePath, number, code, hostname, toolName]
+        evidence.archivePath, number, code, hostname, toolName, principal.serviceKind]
     );
     const jobId = String(job.rows[0].id);
     await client.query("update integration_token set onboarding_job_id=$2, lock_version=lock_version+1 where id=$1", [principal.id, jobId]);

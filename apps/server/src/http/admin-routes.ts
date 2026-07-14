@@ -13,11 +13,14 @@ import {
   deleteKajaCredential,
   listKajaCredentials,
   listKajaPermissions,
+  listManagedServicePermissions,
+  replaceManagedServicePermissions,
   replaceKajaPermissions,
   renameKajaCredential,
   revokeKajaCredential
 } from "../domain/auth.js";
 import { getServerById, listServers } from "../domain/catalog.js";
+import { listManagedServices, managedServiceLogs, managedServiceStateView, setManagedServiceApiState } from "../domain/managed-service.js";
 import { listOperationalConfig, updateOperationalConfig } from "../domain/operational-config.js";
 import { buildReadinessReport } from "../domain/readiness.js";
 import { evaluateRecertification } from "../domain/recertification.js";
@@ -184,6 +187,23 @@ async function consumeRecoveryCode(db: Db, accountId: string, code: string): Pro
     }
   }
   return false;
+}
+
+async function requireAdminReauthentication(
+  db: Db,
+  config: AppConfig,
+  accountId: string,
+  body: Record<string, unknown>
+): Promise<boolean> {
+  const password = typeof body.password === "string" ? body.password : "";
+  const totp = typeof body.totp === "string" ? body.totp.trim() : "";
+  if (!password) return false;
+  const account = await db.query("select password_hash,mfa_enabled,mfa_secret from admin_account where id=$1", [accountId]);
+  if (!account.rowCount) return false;
+  const passwordOk = await argon2.verify(String(account.rows[0].password_hash), password);
+  if (!passwordOk) return false;
+  if (!account.rows[0].mfa_enabled) return true;
+  return authenticator.check(totp, decryptMfaSecret(String(account.rows[0].mfa_secret), config.MFA_ENCRYPTION_KEY_BASE64));
 }
 
 async function setServerEnabled(
@@ -866,6 +886,100 @@ export function registerAdminRoutes(app: FastifyInstance, db: Db, config: AppCon
     };
   });
 
+  app.get("/api/managed-services", async (request, reply) => {
+    if (hostOf(request.headers.host) !== config.ADMIN_HOST) return sendError(reply, 404, "not_found");
+    const session = await sessionAccount(db, request, config);
+    if (!session) return sendError(reply, 401, "unauthorized");
+    return { services: await listManagedServices(db) };
+  });
+
+  app.get("/api/managed-services/:id/state", async (request, reply) => {
+    const correlationId = randomUUID();
+    if (hostOf(request.headers.host) !== config.ADMIN_HOST) return sendError(reply, 404, "not_found", undefined, correlationId);
+    const session = await sessionAccount(db, request, config);
+    if (!session) return sendError(reply, 401, "unauthorized", undefined, correlationId);
+    const { id } = request.params as { id: string };
+    try {
+      return await managedServiceStateView(db, id);
+    } catch (error) {
+      return sendError(reply, Number((error as { statusCode?: number }).statusCode ?? 500), error instanceof Error ? error.message : "operation_failed", undefined, correlationId);
+    }
+  });
+
+  app.get("/api/managed-services/:id/logs", async (request, reply) => {
+    const correlationId = randomUUID();
+    if (hostOf(request.headers.host) !== config.ADMIN_HOST) return sendError(reply, 404, "not_found", undefined, correlationId);
+    const session = await sessionAccount(db, request, config);
+    if (!session) return sendError(reply, 401, "unauthorized", undefined, correlationId);
+    const { id } = request.params as { id: string };
+    const query = request.query as { before?: string; limit?: string };
+    try {
+      return {
+        logs: await managedServiceLogs(db, {
+          managedServiceId: id,
+          before: typeof query.before === "string" ? query.before : null,
+          limit: Number(query.limit ?? 100)
+        })
+      };
+    } catch (error) {
+      return sendError(reply, Number((error as { statusCode?: number }).statusCode ?? 500), error instanceof Error ? error.message : "operation_failed", undefined, correlationId);
+    }
+  });
+
+  app.post("/api/managed-services/:id/api::disable", async (request, reply) => {
+    const correlationId = randomUUID();
+    if (hostOf(request.headers.host) !== config.ADMIN_HOST) return sendError(reply, 404, "not_found", undefined, correlationId);
+    const session = await sessionAccount(db, request, config);
+    if (!session) return sendError(reply, 401, "unauthorized", undefined, correlationId);
+    if (!requireCsrf(request)) return sendError(reply, 403, "csrf_failed", undefined, correlationId);
+    const { id } = request.params as { id: string };
+    const body = request.body as Record<string, unknown>;
+    const reason = typeof body.reason === "string" ? body.reason.trim() : "";
+    const expected = Number(String(request.headers["if-match"] ?? "").replaceAll('"', ""));
+    if (reason.length < 5 || !Number.isSafeInteger(expected)) return sendError(reply, 400, "invalid_disable_request", undefined, correlationId);
+    if (!await requireAdminReauthentication(db, config, session.accountId, body)) return sendError(reply, 403, "reauthentication_failed", undefined, correlationId);
+    try {
+      return await setManagedServiceApiState(db, {
+        managedServiceId: id,
+        actorId: session.accountId,
+        actorType: "admin",
+        nextState: "DISABLED",
+        reason,
+        expectedLockVersion: expected,
+        correlationId
+      });
+    } catch (error) {
+      return sendError(reply, Number((error as { statusCode?: number }).statusCode ?? 500), error instanceof Error ? error.message : "operation_failed", undefined, correlationId);
+    }
+  });
+
+  app.post("/api/managed-services/:id/api::enable", async (request, reply) => {
+    const correlationId = randomUUID();
+    if (hostOf(request.headers.host) !== config.ADMIN_HOST) return sendError(reply, 404, "not_found", undefined, correlationId);
+    const session = await sessionAccount(db, request, config);
+    if (!session) return sendError(reply, 401, "unauthorized", undefined, correlationId);
+    if (!requireCsrf(request)) return sendError(reply, 403, "csrf_failed", undefined, correlationId);
+    const { id } = request.params as { id: string };
+    const body = request.body as Record<string, unknown>;
+    const reason = typeof body.reason === "string" ? body.reason.trim() : "";
+    const expected = Number(String(request.headers["if-match"] ?? "").replaceAll('"', ""));
+    if (reason.length < 5 || !Number.isSafeInteger(expected)) return sendError(reply, 400, "invalid_enable_request", undefined, correlationId);
+    if (!await requireAdminReauthentication(db, config, session.accountId, body)) return sendError(reply, 403, "reauthentication_failed", undefined, correlationId);
+    try {
+      return await setManagedServiceApiState(db, {
+        managedServiceId: id,
+        actorId: session.accountId,
+        actorType: "admin",
+        nextState: "ENABLED",
+        reason,
+        expectedLockVersion: expected,
+        correlationId
+      });
+    } catch (error) {
+      return sendError(reply, Number((error as { statusCode?: number }).statusCode ?? 500), error instanceof Error ? error.message : "operation_failed", undefined, correlationId);
+    }
+  });
+
   app.post("/api/mcp-servers/:id/enabled", async (request, reply) => {
     const correlationId = randomUUID();
     if (hostOf(request.headers.host) !== config.ADMIN_HOST) return sendError(reply, 404, "not_found", undefined, correlationId);
@@ -1030,6 +1144,43 @@ export function registerAdminRoutes(app: FastifyInstance, db: Db, config: AppCon
     }
     try {
       await replaceKajaPermissions(db, session.accountId, correlationId, id, permissions as Array<{ serverId: string; accessLevel: "EXECUTE" }>);
+      return { ok: true };
+    } catch (error) {
+      return sendError(reply, Number((error as { statusCode?: number }).statusCode ?? 500), error instanceof Error ? error.message : "operation_failed", undefined, correlationId);
+    }
+  });
+
+  app.get("/api/kaja/:id/managed-service-permissions", async (request, reply) => {
+    if (hostOf(request.headers.host) !== config.ADMIN_HOST) return sendError(reply, 404, "not_found");
+    const session = await sessionAccount(db, request, config);
+    if (!session) return sendError(reply, 401, "unauthorized");
+    const { id } = request.params as { id: string };
+    try {
+      return { permissions: await listManagedServicePermissions(db, id) };
+    } catch (error) {
+      return sendError(reply, Number((error as { statusCode?: number }).statusCode ?? 500), error instanceof Error ? error.message : "operation_failed");
+    }
+  });
+
+  app.put("/api/kaja/:id/managed-service-permissions", async (request, reply) => {
+    const correlationId = randomUUID();
+    if (hostOf(request.headers.host) !== config.ADMIN_HOST) return sendError(reply, 404, "not_found", undefined, correlationId);
+    const session = await sessionAccount(db, request, config);
+    if (!session) return sendError(reply, 401, "unauthorized", undefined, correlationId);
+    if (!requireCsrf(request)) return sendError(reply, 403, "csrf_failed", undefined, correlationId);
+    const { id } = request.params as { id: string };
+    const body = request.body as { permissions?: Array<{ managedServiceId?: unknown; scopeNames?: unknown }> };
+    const permissions = Array.isArray(body.permissions)
+      ? body.permissions.map((permission) => ({
+        managedServiceId: typeof permission.managedServiceId === "string" ? permission.managedServiceId : "",
+        scopeNames: Array.isArray(permission.scopeNames) ? permission.scopeNames.filter((scopeName): scopeName is string => typeof scopeName === "string") : []
+      }))
+      : null;
+    if (!permissions || permissions.some((permission) => !permission.managedServiceId)) {
+      return sendError(reply, 400, "invalid_permissions", "permissions must include managedServiceId and scopeNames", correlationId);
+    }
+    try {
+      await replaceManagedServicePermissions(db, session.accountId, correlationId, id, permissions);
       return { ok: true };
     } catch (error) {
       return sendError(reply, Number((error as { statusCode?: number }).statusCode ?? 500), error instanceof Error ? error.message : "operation_failed", undefined, correlationId);

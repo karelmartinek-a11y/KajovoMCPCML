@@ -107,3 +107,63 @@ describe("quarantine release MFA", () => {
     expect(verifyEncryptedMfaTotp("000000", encrypted, key)).toBe(false);
   });
 });
+
+describe("machine-readable onboarding catalogs", () => {
+  let app: FastifyInstance;
+  let config: AppConfig;
+
+  beforeEach(async () => {
+    config = loadConfig({
+      NODE_ENV: "test",
+      DATABASE_URL: "postgres://unused/test",
+      ACCESS_TOKEN_HMAC_KEY_BASE64: secret(1),
+      INTEGRATION_TOKEN_HMAC_KEY_BASE64: secret(2),
+      EGRESS_CAPABILITY_HMAC_KEY_BASE64: secret(3),
+      SESSION_SECRET_BASE64: secret(4),
+      CSRF_SECRET_BASE64: secret(5),
+      MFA_ENCRYPTION_KEY_BASE64: secret(6)
+    });
+    const db = {
+      query: async (sql: string) => {
+        if (sql.includes("select it.id, it.onboarding_job_id, it.fingerprint, it.expires_at, it.max_expires_at, it.service_kind, it.allowed_pipeline")) {
+          return {
+            rowCount: 1,
+            rows: [{
+              id: "token-id",
+              onboarding_job_id: null,
+              fingerprint: "integration-token-fingerprint",
+              expires_at: new Date(Date.now() + 60_000).toISOString(),
+              max_expires_at: new Date(Date.now() + 120_000).toISOString(),
+              service_kind: "EXTERNAL_API",
+              allowed_pipeline: "EXTERNAL_API_REGISTRATION"
+            }]
+          };
+        }
+        return { rowCount: 0, rows: [] };
+      }
+    } as unknown as Db;
+    app = Fastify();
+    await app.register(cookie, { secret: config.SESSION_SECRET_BASE64.toString("base64url") });
+    await app.register(multipart);
+    registerOnboardingRoutes(app, db, config);
+    await app.ready();
+  });
+
+  afterEach(async () => app?.close());
+
+  it("serves the JSON onboarding catalog to an authenticated programmer on the register host", async () => {
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/onboarding-catalogs/external-api/1.0",
+      headers: {
+        host: config.REGISTER_HOST,
+        authorization: `Bearer kci_${"a".repeat(86)}`
+      }
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      version: "1.0",
+      serviceKind: "EXTERNAL_API"
+    });
+  });
+});

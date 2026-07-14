@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import dns from "node:dns/promises";
 import fs from "node:fs/promises";
 import http from "node:http";
@@ -10,7 +11,7 @@ import { validateEgressCapability } from "../domain/egress.js";
 
 const REQUEST_LIMIT = 1024 * 1024;
 const RESPONSE_LIMIT = 5 * 1024 * 1024;
-const METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE"]);
+const METHODS = new Set(["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"]);
 const DROP_HEADERS = new Set(["host", "connection", "proxy-authorization", "proxy-connection", "transfer-encoding", "content-length", "upgrade"]);
 
 function forbiddenIpv4(address: string): boolean {
@@ -46,17 +47,24 @@ export function isAllowedDestination(url: URL, allowlist: string[]): boolean {
   });
 }
 
-async function publicAddresses(hostname: string): Promise<Array<{ address: string; family: number }>> {
+function canUseLoopbackForTests(config: AppConfig, hostname: string): boolean {
+  return config.NODE_ENV === "test" && ["127.0.0.1", "::1"].includes(hostname);
+}
+
+async function publicAddresses(config: AppConfig, hostname: string): Promise<Array<{ address: string; family: number }>> {
   if (net.isIP(hostname)) {
-    if (isForbiddenAddress(hostname)) throw new Error("egress_private_address_blocked");
+    if (isForbiddenAddress(hostname) && !canUseLoopbackForTests(config, hostname)) throw new Error("egress_private_address_blocked");
     return [{ address: hostname, family: net.isIP(hostname) }];
   }
   const addresses = await dns.lookup(hostname, { all: true, verbatim: true });
-  if (!addresses.length || addresses.some((entry) => isForbiddenAddress(entry.address))) throw new Error("egress_private_address_blocked");
+  if (!addresses.length || addresses.some((entry) => isForbiddenAddress(entry.address) && !canUseLoopbackForTests(config, entry.address))) {
+    throw new Error("egress_private_address_blocked");
+  }
   return addresses;
 }
 
 function upstream(input: {
+  config: AppConfig;
   url: URL;
   address: { address: string; family: number };
   method: string;
@@ -76,7 +84,7 @@ function upstream(input: {
       method: input.method,
       headers,
       timeout: 30_000,
-      rejectUnauthorized: true
+      rejectUnauthorized: !(input.config.NODE_ENV === "test" && ["127.0.0.1", "::1"].includes(input.address.address))
     }, (response) => {
       const chunks: Buffer[] = [];
       let size = 0;
@@ -126,13 +134,30 @@ export async function buildEgressProxy(db: Db, config: AppConfig): Promise<http.
       if (!METHODS.has(method)) throw new Error("egress_method_not_allowed");
       const body = payload.body ? Buffer.from(payload.body, "base64") : Buffer.alloc(0);
       if (body.length > REQUEST_LIMIT) throw new Error("egress_request_too_large");
-      const addresses = await publicAddresses(url.hostname);
-      const result = await upstream({ url, address: addresses[0]!, method, headers: payload.headers ?? {}, body });
+      const addresses = await publicAddresses(config, url.hostname);
+      const result = await upstream({ config, url, address: addresses[0]!, method, headers: payload.headers ?? {}, body });
       if (capability.serverId) {
         await db.query(
           `insert into runtime_log_event(server_id,level,event_name,fields,correlation_id)
            values ($1,'info','egress.request',$2,gen_random_uuid())`,
           [capability.serverId, JSON.stringify({ hostname: url.hostname, port: url.port || "443", method, status: result.status })]
+        );
+      }
+      if (capability.managedServiceId) {
+        await db.query(
+          `insert into managed_service_runtime_log_event(managed_service_id,level,event_name,fields,correlation_id)
+           values ($1,'info','egress.request',$2,$3)`,
+          [
+            capability.managedServiceId,
+            JSON.stringify({
+              hostname: url.hostname,
+              port: url.port || "443",
+              method,
+              status: result.status,
+              purpose: capability.purpose
+            }),
+            capability.correlationId ?? payload.headers?.["x-correlation-id"] ?? randomUUID()
+          ]
         );
       }
       const response = JSON.stringify(result);

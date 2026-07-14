@@ -7,6 +7,11 @@ import type { Db } from "../db.js";
 import { tx } from "../db.js";
 import { closeAlert, deliverNextAlert, expireAlertSuppressions, raiseAlert } from "../domain/alerts.js";
 import { appendAudit } from "../domain/audit.js";
+import {
+  listExternalApiMonitoringTargets,
+  recordExternalApiMonitoringInternalError,
+  runExternalApiMonitoringTarget
+} from "../domain/external-api.js";
 import { evaluateRecertification, type RecertificationDecision } from "../domain/recertification.js";
 import { digestCanonicalJson, validateStoredOnboardingManifest, type OnboardingManifest } from "../domain/registration.js";
 import { setComputedOperationalState, transitionServerState } from "../domain/server-state.js";
@@ -213,6 +218,14 @@ export class MonitoringScheduler {
           await this.probeServer(row);
         } catch (error) {
           await this.recordInternalError(row, error);
+        }
+      }
+      const externalTargets = await listExternalApiMonitoringTargets(this.db);
+      for (const target of externalTargets) {
+        try {
+          await runExternalApiMonitoringTarget(this.db, this.config, target);
+        } catch (error) {
+          await recordExternalApiMonitoringInternalError(this.db, target, error);
         }
       }
       for (let delivered = 0; delivered < 20 && await deliverNextAlert(this.db, this.config); delivered += 1) {

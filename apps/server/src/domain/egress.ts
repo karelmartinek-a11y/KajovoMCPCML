@@ -1,7 +1,18 @@
-import { randomBytes } from "node:crypto";
+import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import type { AppConfig } from "../config.js";
 import type { Db } from "../db.js";
 import { fingerprintSecret, hmacToken } from "../security/secrets.js";
+
+const EPHEMERAL_PREFIX = "kce2_";
+
+export type ValidatedEgressCapability = {
+  jobId: string | null;
+  serverId: string | null;
+  managedServiceId: string | null;
+  allowlist: string[];
+  purpose: string;
+  correlationId: string | null;
+};
 
 export async function createEgressCapability(db: Db, config: AppConfig, jobId: string, allowlist: string[]): Promise<string | null> {
   await db.query("update egress_capability set revoked_at=coalesce(revoked_at,now()) where job_id=$1 and revoked_at is null", [jobId]);
@@ -23,7 +34,60 @@ export async function revokeEgressCapabilities(db: Db, jobId: string): Promise<v
   await db.query("update egress_capability set revoked_at=coalesce(revoked_at,now()) where job_id=$1", [jobId]);
 }
 
-export async function validateEgressCapability(db: Db, config: AppConfig, token: string): Promise<{ jobId: string; serverId: string | null; allowlist: string[] }> {
+export function createEphemeralEgressCapability(config: AppConfig, params: {
+  allowlist: string[];
+  managedServiceId?: string | null;
+  correlationId?: string | null;
+  purpose: string;
+  ttlSeconds: number;
+}): string {
+  const payload = Buffer.from(JSON.stringify({
+    v: 1,
+    allowlist: params.allowlist,
+    managedServiceId: params.managedServiceId ?? null,
+    correlationId: params.correlationId ?? null,
+    purpose: params.purpose,
+    exp: Date.now() + Math.max(5, params.ttlSeconds) * 1000
+  })).toString("base64url");
+  const signature = createHmac("sha256", config.EGRESS_CAPABILITY_HMAC_KEY_BASE64).update(payload).digest("base64url");
+  return `${EPHEMERAL_PREFIX}${payload}.${signature}`;
+}
+
+function validateEphemeralEgressCapability(config: AppConfig, token: string): ValidatedEgressCapability {
+  const encoded = token.slice(EPHEMERAL_PREFIX.length);
+  const separator = encoded.lastIndexOf(".");
+  if (separator <= 0) throw new Error("invalid_egress_capability");
+  const payload = encoded.slice(0, separator);
+  const signature = encoded.slice(separator + 1);
+  const expected = createHmac("sha256", config.EGRESS_CAPABILITY_HMAC_KEY_BASE64).update(payload).digest("base64url");
+  const actualBuffer = Buffer.from(signature);
+  const expectedBuffer = Buffer.from(expected);
+  if (actualBuffer.length !== expectedBuffer.length || !timingSafeEqual(actualBuffer, expectedBuffer)) {
+    throw new Error("invalid_egress_capability");
+  }
+  const parsed = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as {
+    v?: number;
+    allowlist?: unknown;
+    managedServiceId?: unknown;
+    correlationId?: unknown;
+    purpose?: unknown;
+    exp?: unknown;
+  };
+  if (parsed.v !== 1 || !Array.isArray(parsed.allowlist) || typeof parsed.purpose !== "string") throw new Error("invalid_egress_capability");
+  const expiresAt = Number(parsed.exp);
+  if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) throw new Error("invalid_egress_capability");
+  return {
+    jobId: null,
+    serverId: null,
+    managedServiceId: typeof parsed.managedServiceId === "string" ? parsed.managedServiceId : null,
+    allowlist: parsed.allowlist.filter((entry): entry is string => typeof entry === "string"),
+    purpose: parsed.purpose,
+    correlationId: typeof parsed.correlationId === "string" ? parsed.correlationId : null
+  };
+}
+
+export async function validateEgressCapability(db: Db, config: AppConfig, token: string): Promise<ValidatedEgressCapability> {
+  if (token.startsWith(EPHEMERAL_PREFIX)) return validateEphemeralEgressCapability(config, token);
   const digest = hmacToken(token, config.EGRESS_CAPABILITY_HMAC_KEY_BASE64);
   const result = await db.query(
     `update egress_capability ec
@@ -39,6 +103,9 @@ export async function validateEgressCapability(db: Db, config: AppConfig, token:
   return {
     jobId: String(result.rows[0].job_id),
     serverId: result.rows[0].server_id ? String(result.rows[0].server_id) : null,
-    allowlist: result.rows[0].allowlist as string[]
+    managedServiceId: null,
+    allowlist: result.rows[0].allowlist as string[],
+    purpose: "legacy.onboarding",
+    correlationId: null
   };
 }
