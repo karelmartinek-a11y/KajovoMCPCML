@@ -14,6 +14,7 @@ import { registerAuthRoutes } from "./http/auth-routes.js";
 import { registerMcpRoutes } from "./http/mcp.js";
 import { registerOnboardingRoutes } from "./http/onboarding-routes.js";
 import { hostOf, sendError } from "./http/errors.js";
+import { createPostgresRateLimitStore } from "./http/postgres-rate-limit-store.js";
 
 export async function buildApp(config: AppConfig, db: Db) {
   const app = Fastify({
@@ -38,7 +39,20 @@ export async function buildApp(config: AppConfig, db: Db) {
   await app.register(multipart, {
     limits: { files: 1, fields: 2, fileSize: 10 * 1024 * 1024, fieldSize: 512 * 1024, parts: 3 }
   });
-  await app.register(rateLimit, { max: 120, timeWindow: "1 minute" });
+  await app.register(rateLimit, {
+    max: 120,
+    timeWindow: "1 minute",
+    store: createPostgresRateLimitStore(db, config.SESSION_SECRET_BASE64),
+    skipOnError: false,
+    allowList: (request) => request.url === "/health"
+      || (hostOf(request.headers.host) === config.ADMIN_HOST && !request.url.startsWith("/api/")),
+    errorResponseBuilder: (_request, context) => ({
+      statusCode: 429,
+      error: "rate_limited",
+      message: "Too many requests",
+      retryAfterSeconds: Math.max(1, Math.ceil(context.ttl / 1000))
+    })
+  });
 
   app.addHook("onRequest", async (request, reply) => {
     const host = hostOf(request.headers.host);

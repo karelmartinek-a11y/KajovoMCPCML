@@ -24,7 +24,8 @@ const EXPECTED_MIGRATIONS = [
   "015_monitoring_alerting.sql",
   "016_audit_and_invocation.sql",
   "017_managed_services.sql",
-  "018_managed_service_backfill.sql"
+  "018_managed_service_backfill.sql",
+  "019_postgres_http_rate_limiting.sql"
 ] as const;
 
 export type ReadinessReport = {

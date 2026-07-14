@@ -169,7 +169,9 @@ export function registerOnboardingRoutes(app: FastifyInstance, db: Db, config: A
     }
   });
 
-  app.post("/api/integration-tokens", async (request, reply) => {
+  app.post("/api/integration-tokens", {
+    config: { rateLimit: { max: 10, timeWindow: "1 minute", groupId: "admin-integration-token-create" } }
+  }, async (request, reply) => {
     const correlationId = randomUUID();
     const accountId = await adminIdentity(db, config, request, reply, correlationId, true);
     if (!accountId) return;
@@ -200,7 +202,9 @@ export function registerOnboardingRoutes(app: FastifyInstance, db: Db, config: A
     }
   });
 
-  app.get("/api/onboarding-catalog", async (request, reply) => {
+  app.get("/api/onboarding-catalog", {
+    config: { rateLimit: { max: 5, timeWindow: "1 minute", groupId: "admin-onboarding-catalog" } }
+  }, async (request, reply) => {
     if (!await adminIdentity(db, config, request, reply)) return;
     try {
       const catalog = await fs.readFile(path.resolve(process.cwd(), ONBOARDING_CATALOG_FILE));
@@ -274,7 +278,9 @@ export function registerOnboardingRoutes(app: FastifyInstance, db: Db, config: A
     }
   });
 
-  app.post("/api/onboarding-jobs/:id/release-quarantine", async (request, reply) => {
+  app.post("/api/onboarding-jobs/:id/release-quarantine", {
+    config: { rateLimit: { max: 5, timeWindow: "1 minute", groupId: "admin-quarantine-release" } }
+  }, async (request, reply) => {
     const correlationId = randomUUID();
     const accountId = await adminIdentity(db, config, request, reply, correlationId, true);
     if (!accountId) return;

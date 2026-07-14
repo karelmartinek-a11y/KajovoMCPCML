@@ -623,7 +623,9 @@ export function registerAdminRoutes(app: FastifyInstance, db: Db, config: AppCon
     };
   });
 
-  app.get("/api/admin-security", async (request, reply) => {
+  app.get("/api/admin-security", {
+    config: { rateLimit: { max: 60, timeWindow: "1 minute", groupId: "admin-security-read" } }
+  }, async (request, reply) => {
     const correlationId = randomUUID();
     if (hostOf(request.headers.host) !== config.ADMIN_HOST) return sendError(reply, 404, "not_found", undefined, correlationId);
     const session = await sessionAccount(db, request, config);
@@ -676,7 +678,9 @@ export function registerAdminRoutes(app: FastifyInstance, db: Db, config: AppCon
     }
   });
 
-  app.post("/api/login", async (request, reply) => {
+  app.post("/api/login", {
+    config: { rateLimit: { max: 10, timeWindow: "1 minute", groupId: "admin-login" } }
+  }, async (request, reply) => {
     const correlationId = randomUUID();
     if (hostOf(request.headers.host) !== config.ADMIN_HOST) return sendError(reply, 404, "not_found", undefined, correlationId);
     const body = request.body as { username?: string; password?: string; totp?: string; recoveryCode?: string };
@@ -726,7 +730,9 @@ export function registerAdminRoutes(app: FastifyInstance, db: Db, config: AppCon
     return { ok: true, csrfToken: csrf };
   });
 
-  app.post("/api/logout", async (request, reply) => {
+  app.post("/api/logout", {
+    config: { rateLimit: { max: 30, timeWindow: "1 minute", groupId: "admin-session-write" } }
+  }, async (request, reply) => {
     const session = await sessionAccount(db, request, config);
     if (!requireCsrf(request)) return sendError(reply, 403, "csrf_failed");
     if (session) await db.query("update admin_session set revoked_at=now() where id=$1 and revoked_at is null", [session.sessionId]);
@@ -1030,7 +1036,9 @@ export function registerAdminRoutes(app: FastifyInstance, db: Db, config: AppCon
     }
   });
 
-  app.get("/api/audit", async (request, reply) => {
+  app.get("/api/audit", {
+    config: { rateLimit: { max: 60, timeWindow: "1 minute", groupId: "admin-audit-read" } }
+  }, async (request, reply) => {
     const session = await sessionAccount(db, request, config);
     if (!session) return sendError(reply, 401, "unauthorized");
     const query = request.query as {
@@ -1072,14 +1080,18 @@ export function registerAdminRoutes(app: FastifyInstance, db: Db, config: AppCon
     };
   });
 
-  app.get("/api/audit/integrity", async (request, reply) => {
+  app.get("/api/audit/integrity", {
+    config: { rateLimit: { max: 5, timeWindow: "1 minute", groupId: "admin-audit-integrity" } }
+  }, async (request, reply) => {
     if (hostOf(request.headers.host) !== config.ADMIN_HOST) return sendError(reply, 404, "not_found");
     const session = await sessionAccount(db, request, config);
     if (!session) return sendError(reply, 401, "unauthorized");
     return verifyAuditChain(db);
   });
 
-  app.get("/api/audit/export", async (request, reply) => {
+  app.get("/api/audit/export", {
+    config: { rateLimit: { max: 2, timeWindow: "1 minute", groupId: "admin-audit-export" } }
+  }, async (request, reply) => {
     if (hostOf(request.headers.host) !== config.ADMIN_HOST) return sendError(reply, 404, "not_found");
     const session = await sessionAccount(db, request, config);
     if (!session) return sendError(reply, 401, "unauthorized");
@@ -1095,7 +1107,9 @@ export function registerAdminRoutes(app: FastifyInstance, db: Db, config: AppCon
     return { exportedAt: new Date().toISOString(), events: result.rows };
   });
 
-  app.get("/api/monitoring-probes", async (request, reply) => {
+  app.get("/api/monitoring-probes", {
+    config: { rateLimit: { max: 60, timeWindow: "1 minute", groupId: "admin-monitoring-read" } }
+  }, async (request, reply) => {
     if (hostOf(request.headers.host) !== config.ADMIN_HOST) return sendError(reply, 404, "not_found");
     const session = await sessionAccount(db, request, config);
     if (!session) return sendError(reply, 401, "unauthorized");
@@ -1110,7 +1124,9 @@ export function registerAdminRoutes(app: FastifyInstance, db: Db, config: AppCon
     return { probes: result.rows };
   });
 
-  app.get("/api/monitoring-overview", async (request, reply) => {
+  app.get("/api/monitoring-overview", {
+    config: { rateLimit: { max: 60, timeWindow: "1 minute", groupId: "admin-monitoring-read" } }
+  }, async (request, reply) => {
     if (hostOf(request.headers.host) !== config.ADMIN_HOST) return sendError(reply, 404, "not_found");
     const session = await sessionAccount(db, request, config);
     if (!session) return sendError(reply, 401, "unauthorized");
@@ -1234,7 +1250,7 @@ export function registerAdminRoutes(app: FastifyInstance, db: Db, config: AppCon
     }
   });
 
-  app.get("/health", async (_request, reply) => {
+  app.get("/health", { config: { rateLimit: false } }, async (_request, reply) => {
     try {
       const report = await buildReadinessReport(db, config);
       return reply.code(report.ready ? 200 : 503).send({ status: report.ready ? "ok" : "unready" });

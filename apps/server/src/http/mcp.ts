@@ -249,7 +249,9 @@ export function registerMcpRoutes(app: FastifyInstance, db: Db, config: AppConfi
     };
   });
 
-  app.all("/mcp", async (request, reply) => {
+  app.all("/mcp", {
+    config: { rateLimit: { max: 120, timeWindow: "1 minute", groupId: "mcp-http" } }
+  }, async (request, reply) => {
     const correlationId = randomUUID();
     reply.header("x-correlation-id", correlationId);
     const hostname = hostOf(request.headers.host);

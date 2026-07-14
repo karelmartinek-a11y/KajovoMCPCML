@@ -13,6 +13,13 @@ KCML_APP_DB_URL_FILE="$url_file" \
 app_url="$(cat "$url_file")"
 
 test "$(psql "$app_url" --no-psqlrc --tuples-only --no-align --quiet --command 'select current_user')" = "kcml_app"
+psql "$app_url" --no-psqlrc --set ON_ERROR_STOP=1 --quiet <<'SQL'
+begin;
+insert into http_rate_bucket(bucket_key,window_started_at,request_count,updated_at)
+values (decode(repeat('09',32),'hex'),clock_timestamp(),1,clock_timestamp())
+on conflict (bucket_key) do update set request_count=http_rate_bucket.request_count+1,updated_at=clock_timestamp();
+rollback;
+SQL
 psql "$app_url" --no-psqlrc --set ON_ERROR_STOP=1 --quiet --command \
   "select append_audit_event('role.isolation.test','system',null,null,null,'null','null',gen_random_uuid())" >/dev/null
 if psql "$app_url" --no-psqlrc --set ON_ERROR_STOP=1 --quiet --command \

@@ -192,7 +192,7 @@ SQL
 
 test "$(psql "$app_database_url" --no-psqlrc --tuples-only --no-align --quiet --command 'select valid from verify_audit_chain()')" = "t"
 test "$(psql "$app_database_url" --no-psqlrc --tuples-only --no-align --quiet --command "select registration_state::text || '/' || operational_state::text from mcp_server where code='KCML0002'")" = "ACTIVE/HEALTHY"
-test "$(psql "$app_database_url" --no-psqlrc --tuples-only --no-align --quiet --command "select count(*) from schema_migration where version='018_managed_service_backfill.sql'")" = "1"
+test "$(psql "$app_database_url" --no-psqlrc --tuples-only --no-align --quiet --command "select count(*) from schema_migration where version='019_postgres_http_rate_limiting.sql'")" = "1"
 
 trap - ERR
 echo "release-installed:$release_id"

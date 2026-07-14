@@ -170,6 +170,7 @@ export class MonitoringScheduler {
     );
     try {
       await expireAlertSuppressions(this.db);
+      await this.db.query("delete from http_rate_bucket where updated_at < clock_timestamp()-interval '1 day'");
       const result = await this.db.query(`
         select ms.*,rr.id as active_revision_id,rr.manifest,rr.manifest_digest as revision_manifest_digest,
                rr.artifact_digest as revision_artifact_digest,rr.validation_state,rr.approved_at,rr.review_due_at,
