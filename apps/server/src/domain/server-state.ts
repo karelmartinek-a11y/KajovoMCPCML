@@ -102,12 +102,12 @@ export async function transitionServerState(client: pg.PoolClient, params: Trans
   await client.query(
     `update mcp_server
         set enabled=$2,
-            registration_state=$3,
+            registration_state=$3::registration_state,
             operational_state=$4,
             revocation_epoch=case when $2 then revocation_epoch else gen_random_uuid() end,
             lock_version=lock_version+1,
             updated_at=now(),
-            retired_at=case when $3='RETIRED' then now() else retired_at end
+            retired_at=case when $3::registration_state='RETIRED'::registration_state then now() else retired_at end
       where id=$1`,
     [params.serverId, enabled, params.to, operationalState]
   );

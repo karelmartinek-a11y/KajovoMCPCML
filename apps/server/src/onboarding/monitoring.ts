@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import dns from "node:dns/promises";
 import http from "node:http";
 import tls from "node:tls";
@@ -36,6 +36,14 @@ const LEGACY_INTERVALS: Record<ProbeName, number> = {
   contract_profile_drift: 300,
   dependencies: 300
 };
+
+export function expectedMonitoringProfileDigest(schemaVersion: string, profile: unknown, storedProfileText: unknown): string {
+  if (schemaVersion === "1.4") {
+    if (typeof storedProfileText !== "string") throw new Error("legacy_monitoring_profile_text_missing");
+    return `sha256:${createHash("sha256").update(storedProfileText).digest("hex")}`;
+  }
+  return digestCanonicalJson(profile);
+}
 
 function monitorPolicy(manifest: OnboardingManifest): MonitorPolicy {
   if (manifest.schemaVersion === "1.5") {
@@ -175,6 +183,7 @@ export class MonitoringScheduler {
         select ms.*,rr.id as active_revision_id,rr.manifest,rr.manifest_digest as revision_manifest_digest,
                rr.artifact_digest as revision_artifact_digest,rr.validation_state,rr.approved_at,rr.review_due_at,
                rr.review_interval_days,rr.warning_emitted_at,mp.enabled as monitoring_enabled,mp.profile_digest,
+               mp.profile::text as monitoring_profile_text,
                mp.next_probe_at,mp.consecutive_failures,job.image_digest as onboarding_image_digest
           from mcp_server ms
           left join registration_revision rr on rr.id=ms.active_revision_id and rr.server_id=ms.id and rr.active=true
@@ -363,7 +372,8 @@ export class MonitoringScheduler {
     });
     await run("contract_profile_drift", async () => {
       if (String(row.manifest_digest) !== validated.digest || String(row.revision_manifest_digest) !== validated.digest) throw new Error("manifest_digest_drift");
-      if (String(row.profile_digest) !== digestCanonicalJson(manifest.monitoringProfile)) throw new Error("monitoring_profile_digest_drift");
+      const expectedProfileDigest = expectedMonitoringProfileDigest(manifest.schemaVersion, manifest.monitoringProfile, row.monitoring_profile_text);
+      if (String(row.profile_digest) !== expectedProfileDigest) throw new Error("monitoring_profile_digest_drift");
       if (digestCanonicalJson(row.input_schema) !== digestCanonicalJson(manifest.tool.inputSchema)) throw new Error("input_contract_drift");
       if (digestCanonicalJson(row.output_schema) !== digestCanonicalJson(manifest.tool.outputSchema)) throw new Error("output_contract_drift");
       return { manifestDigest: validated.digest, profileDigest: row.profile_digest };
@@ -419,6 +429,7 @@ export class MonitoringScheduler {
         });
       }
       await this.evaluateSlo(client, serverId, code, policy, correlationId);
+      await closeAlert(client, { serverId, alertType: "monitoring.internal_error", reason: "monitor_cycle_recovered", correlationId });
     });
     if (securityDrift) await this.oci.stop(code).catch(async (error) => this.recordInternalError(row, error));
   }
