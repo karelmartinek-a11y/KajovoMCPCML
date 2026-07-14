@@ -51,6 +51,7 @@ jobs:
       - name: Deployment and alert-sink checks
         run: |
           bash -n deploy/scripts/*.sh scripts/*.sh
+          bash scripts/test-split-service-config.sh
           node --check deploy/alert-sink/receiver.mjs
           bash scripts/test-alert-sink.sh
       - name: Clean schema migrations

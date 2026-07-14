@@ -14,7 +14,7 @@ fi
 : "${BUILD_ID:?BUILD_ID is required}"
 : "${DATABASE_URL:?DATABASE_URL is required}"
 
-root="/etc/kcml"
+root="${KCML_CONFIG_ROOT:-/etc/kcml}"
 credentials="$root/credentials"
 install -d -m 0700 "$root" "$credentials"
 for service in web worker monitor egress migrator admin-sync alert-primary-sink alert-backup-sink; do
@@ -32,7 +32,9 @@ write_env() {
   shift
   : > "$target"
   for key in "$@"; do
-    printf '%s=%s\n' "$key" "${!key:-}" >> "$target"
+    if [ -n "${!key:-}" ]; then
+      printf '%s=%s\n' "$key" "${!key}" >> "$target"
+    fi
   done
   chmod 0600 "$target"
 }
