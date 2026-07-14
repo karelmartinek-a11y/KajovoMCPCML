@@ -11,7 +11,7 @@ const db = createDb(config);
 const pass = process.env.PASS;
 
 try {
-  if (!pass || pass.length < 12) throw new Error("PASS must contain at least 12 characters");
+  if (pass === undefined || pass.length === 0) throw new Error("PASS must not be empty");
   const hash = await argon2.hash(pass, { type: argon2.argon2id, memoryCost: 65536, timeCost: 3, parallelism: 1 });
   const encryptedTotpSecret = config.ADMIN_TOTP_SECRET
     ? encryptMfaSecret(config.ADMIN_TOTP_SECRET, config.MFA_ENCRYPTION_KEY_BASE64)
