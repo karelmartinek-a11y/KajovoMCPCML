@@ -2,6 +2,8 @@ alter table audit_event
   add column if not exists prev_hash bytea,
   add column if not exists event_hash bytea;
 
+alter table audit_event disable trigger audit_event_append_only_update;
+
 with recursive chain as (
   select
     first_row.id,
@@ -53,6 +55,8 @@ update audit_event audit
   from chain
  where audit.id = chain.id
    and (audit.prev_hash is null or audit.event_hash is null);
+
+alter table audit_event enable trigger audit_event_append_only_update;
 
 alter table audit_event
   alter column event_hash set not null;
