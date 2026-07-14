@@ -129,7 +129,7 @@ jobs:
         run: |
           install -m 0644 /tmp/kcml-release.spdx.json /tmp/kcml-release/SBOM.spdx.json
           tar --zstd --create --file /tmp/kcml-release.tar.zst --directory /tmp/kcml-release .
-          sha256sum /tmp/kcml-release.tar.zst > /tmp/kcml-release.tar.zst.sha256
+          (cd /tmp && sha256sum kcml-release.tar.zst > kcml-release.tar.zst.sha256)
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
         with:
           cosign-release: v3.1.1
