@@ -52,6 +52,7 @@ jobs:
         run: |
           bash -n deploy/scripts/*.sh scripts/*.sh
           bash scripts/test-split-service-config.sh
+          bash scripts/test-restore-test-permissions.sh
           node --check deploy/alert-sink/receiver.mjs
           bash scripts/test-alert-sink.sh
       - name: Clean schema migrations
