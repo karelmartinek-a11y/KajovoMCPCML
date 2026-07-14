@@ -8,11 +8,9 @@ import { hmacToken } from "../security/secrets.js";
 import { hostOf, sendError } from "./errors.js";
 
 export function registerExternalApiRoutes(app: FastifyInstance, db: Db, config: AppConfig): void {
-  app.route({
-    method: ["GET", "POST", "PUT", "PATCH", "DELETE"],
-    url: "/*",
+  app.all("/*", {
     config: { rateLimit: { max: 120, timeWindow: "1 minute", groupId: "external-api-http" } },
-    handler: async (request, reply) => {
+  }, async (request, reply) => {
       const correlationId = randomUUID();
       const hostname = hostOf(request.headers.host);
       if (!hostname.startsWith("kcml")) return sendError(reply, 404, "not_found", undefined, correlationId);
@@ -56,6 +54,5 @@ export function registerExternalApiRoutes(app: FastifyInstance, db: Db, config: 
       } catch (error) {
         return sendError(reply, 502, error instanceof Error ? error.message : "gateway_failed", undefined, correlationId);
       }
-    }
-  });
+    });
 }
