@@ -87,6 +87,11 @@ jobs:
         with:
           languages: javascript-typescript
       - uses: github/codeql-action/analyze@v3
+        with:
+          output: /tmp/codeql-results
+          upload: false
+      - name: Enforce clean CodeQL results
+        run: jq -e '[.runs[].results[]?] | length == 0' /tmp/codeql-results/javascript.sarif
 
   release:
     if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'
