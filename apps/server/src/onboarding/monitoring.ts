@@ -25,7 +25,7 @@ type MonitorPolicy = {
   legacyProfile: boolean;
 };
 
-const LEGACY_INTERVALS: Record<ProbeName, number> = {
+export const LEGACY_MONITORING_INTERVALS: Record<ProbeName, number> = {
   liveness: 60,
   readiness: 60,
   tls: 3_600,
@@ -36,6 +36,7 @@ const LEGACY_INTERVALS: Record<ProbeName, number> = {
   contract_profile_drift: 300,
   dependencies: 300
 };
+export const LEGACY_MONITORING_STALE_AFTER_SECONDS = Math.max(...Object.values(LEGACY_MONITORING_INTERVALS));
 
 export function expectedMonitoringProfileDigest(schemaVersion: string, profile: unknown, storedProfileText: unknown): string {
   if (schemaVersion === "1.4") {
@@ -67,8 +68,8 @@ function monitorPolicy(manifest: OnboardingManifest): MonitorPolicy {
     };
   }
   return {
-    intervals: LEGACY_INTERVALS,
-    staleAfterSeconds: 900,
+    intervals: LEGACY_MONITORING_INTERVALS,
+    staleAfterSeconds: LEGACY_MONITORING_STALE_AFTER_SECONDS,
     alertRules: manifest.monitoringProfile.alertRules.flatMap((rule) => {
       const candidate = rule as { probeType?: unknown; name?: unknown; severity?: unknown; consecutiveFailures?: unknown };
       const probeType = typeof candidate.probeType === "string" ? candidate.probeType
