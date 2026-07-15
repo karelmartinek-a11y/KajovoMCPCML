@@ -14,6 +14,9 @@ const handlerState: {
 } = {
   invoke: null
 };
+const runtimeState = {
+  deploy: vi.fn(async () => ({ socketPath: "/tmp/socket", containerName: "kcml-kcml0001" }))
+};
 
 vi.mock("../handlers/registry.js", () => ({
   getHandler: vi.fn(() => handlerState.invoke ? {
@@ -22,8 +25,142 @@ vi.mock("../handlers/registry.js", () => ({
     invoke: (input: unknown) => handlerState.invoke!(input)
   } : null)
 }));
+vi.mock("../onboarding/oci.js", () => ({
+  OciRuntime: vi.fn(() => ({ deploy: runtimeState.deploy }))
+}));
 
 const secret = (byte: number) => Buffer.alloc(32, byte).toString("base64");
+
+function legacyEgressManifest() {
+  return {
+    schemaVersion: "1.4",
+    registrationRevision: "rev-1",
+    environment: "production",
+    handlerKey: "mock",
+    handlerVersion: "1.0.0",
+    displayName: "Example",
+    businessPurpose: "Reference runtime manifest for admin runtime refresh tests.",
+    owners: {
+      service: "KCML Managed Services",
+      technical: "KCML Managed Services",
+      security: "KCML Security",
+      operations: "KCML Operations"
+    },
+    source: {
+      runtime: "nodejs24-typescript",
+      entrypoint: "src/index.ts",
+      testCommand: "pnpm test"
+    },
+    runtime: {
+      memoryMb: 128,
+      cpuCores: 0.5,
+      pidsLimit: 32,
+      egressAllowlist: ["ha-inventory.hcasc.cz:443"]
+    },
+    tool: {
+      title: "Example tool",
+      description: "Reference tool used by the admin runtime refresh tests.",
+      inputSchema: { type: "object", additionalProperties: false },
+      outputSchema: { type: "object", additionalProperties: true },
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+        taskSupport: "forbidden"
+      }
+    },
+    behavior: {
+      effectClass: "READ_ONLY",
+      timeoutMs: 1000,
+      maxConcurrency: 1,
+      requestMaxBytes: 1024,
+      responseMaxBytes: 1024,
+      rateLimit: { windowSeconds: 60, maxRequests: 10 },
+      shutdownPolicy: "COMPLETE_IN_FLIGHT",
+      idempotencyPolicy: "read only",
+      retryPolicy: { automaticRetry: false }
+    },
+    testContract: {
+      safeInput: { name: "Alice" },
+      expectedResult: { ok: true },
+      cleanupOrCompensation: "No cleanup required."
+    },
+    protocol: {
+      protocolVersion: "2025-11-25",
+      transport: "streamable-http",
+      capabilities: ["tools"],
+      errorCatalog: [{ code: "EXAMPLE_ERROR", description: "Example error" }]
+    },
+    monitoringProfile: {
+      sloTargets: { availability: 99.9 },
+      probeIntervals: { liveness: 60, readiness: 60 },
+      alertRules: [{ severity: "critical" }],
+      runbookRef: "docs/runbook",
+      primaryAlertChannel: "ops-primary",
+      backupAlertChannel: "ops-backup"
+    },
+    errorCatalog: [{ code: "EXAMPLE_ERROR", description: "Example error" }],
+    change: {
+      rollbackRef: "docs/rollback",
+      decommissionRef: "docs/decommission",
+      reviewDueAt: "2027-01-01T00:00:00.000Z"
+    }
+  };
+}
+
+function mockServerRow(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "server-id",
+    code: "KCML0001",
+    kcml_number: 1,
+    hostname: "kcml0001.hcasc.cz",
+    tool_name: "example_tool",
+    display_name: "Example",
+    description: "Example",
+    enabled: true,
+    registration_state: "ACTIVE",
+    operational_state: "HEALTHY",
+    input_schema: { type: "object", additionalProperties: false },
+    output_schema: { type: "object", additionalProperties: true },
+    handler_key: "mock",
+    handler_version: "1.0.0",
+    contract_version: "rev-1",
+    artifact_digest: "sha256:artifact",
+    manifest_digest: "sha256:manifest",
+    registration_revision: "rev-1",
+    active_revision_id: "revision-id",
+    registration_schema_version: "1.5",
+    registration_validation_state: "VALID",
+    review_approved_at: "2026-01-01T00:00:00.000Z",
+    review_due_at: "2027-01-01T00:00:00.000Z",
+    review_interval_days: 365,
+    monitoring_enabled: true,
+    monitoring_profile_digest: "sha256:monitoring",
+    image_reference: "ghcr.io/hcasc/kcml0001:1.0.0",
+    image_digest: "sha256:image",
+    sbom_digest: null,
+    provenance_digest: null,
+    runtime_socket: "/tmp/socket",
+    timeout_ms: 1000,
+    max_concurrency: 1,
+    request_max_bytes: 1024,
+    response_max_bytes: 1024,
+    rate_window_seconds: 60,
+    rate_max_requests: 10,
+    read_only_hint: true,
+    destructive_hint: false,
+    idempotent_hint: true,
+    open_world_hint: false,
+    effect_class: "READ_ONLY",
+    shutdown_policy: "COMPLETE_IN_FLIGHT",
+    idempotency_policy: "read only",
+    revocation_epoch: "epoch",
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+    ...overrides
+  };
+}
 
 describe("admin server actions", () => {
   let app: FastifyInstance;
@@ -43,6 +180,8 @@ describe("admin server actions", () => {
       MFA_ENCRYPTION_KEY_BASE64: secret(6)
     });
     handlerState.invoke = null;
+    runtimeState.deploy.mockReset();
+    runtimeState.deploy.mockResolvedValue({ socketPath: "/tmp/socket", containerName: "kcml-kcml0001" });
   });
 
   afterEach(async () => {
@@ -93,77 +232,138 @@ describe("admin server actions", () => {
     expect(query.mock.calls.some(([sql]) => String(sql).includes("update access_token set revoked_at"))).toBe(true);
   });
 
+  it("refreshes runtime egress capability before enabling a disabled server", async () => {
+    const sessionHash = await argon2.hash(sessionValue, { type: argon2.argon2id, memoryCost: 4096, timeCost: 2, parallelism: 1 });
+    const manifest = legacyEgressManifest();
+    const query = vi.fn(async (sql: string) => {
+      if (sql.includes("from admin_session")) {
+        return { rowCount: 1, rows: [{ id: "session-id", account_id: "account-id", session_hash: sessionHash, username: "admin" }] };
+      }
+      if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") return { rowCount: 0, rows: [] };
+      if (sql.includes("select id,enabled,registration_state,operational_state") && sql.includes("from mcp_server where id=$1")) {
+        return { rowCount: 1, rows: [{ id: "server-id", enabled: false, registration_state: "REGISTERED_DISABLED", operational_state: "DISABLED" }] };
+      }
+      if (sql.includes("select ms.code,ms.image_reference,ms.image_digest,rr.manifest")) {
+        return {
+          rowCount: 1,
+          rows: [{ code: "KCML0001", image_reference: "ghcr.io/hcasc/kcml0001:1.0.0", image_digest: "sha256:image", manifest }]
+        };
+      }
+      if (sql.includes("from egress_capability ec")) {
+        return { rowCount: 0, rows: [] };
+      }
+      if (sql.includes("from onboarding_job") && sql.includes("state in ('REGISTERED_DISABLED','TRIAL_TESTING','ACTIVE')")) {
+        return { rowCount: 1, rows: [{ id: "job-id" }] };
+      }
+      if (sql.includes("insert into egress_capability")) {
+        return { rowCount: 1, rows: [] };
+      }
+      if (sql.includes("update egress_capability") && sql.includes("set server_id=$2")) {
+        return { rowCount: 1, rows: [] };
+      }
+      if (sql.includes("from mcp_server ms") && sql.includes("review_due_at")) {
+        return { rowCount: 1, rows: [{
+          id: "server-id", code: "KCML0001", enabled: false, registration_state: "REGISTERED_DISABLED", operational_state: "DISABLED",
+          revision_id: "revision-id", validation_state: "VALID", approved_at: "2026-01-01T00:00:00.000Z",
+          review_due_at: "2027-01-01T00:00:00.000Z", review_interval_days: 365,
+          monitoring_enabled: true, profile_digest: "sha256:monitoring"
+        }] };
+      }
+      return { rowCount: 1, rows: [] };
+    });
+    const db = { query, connect: vi.fn(async () => ({ query, release: vi.fn() })) } as unknown as Db;
+    app = Fastify();
+    await app.register(cookie, { secret: config.SESSION_SECRET_BASE64.toString("base64url") });
+    registerAdminRoutes(app, db, config);
+    await app.ready();
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/mcp-servers/server-id/enabled",
+      headers: {
+        host: config.ADMIN_HOST,
+        cookie: `__Host-kcml_session=${sessionValue}; __Host-kcml_csrf=${csrfValue}`,
+        "x-csrf-token": csrfValue
+      },
+      payload: { enabled: true }
+    });
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json()).toMatchObject({ registrationState: "TRIAL", operationalState: "UNKNOWN" });
+    expect(runtimeState.deploy).toHaveBeenCalledTimes(1);
+    expect(query.mock.calls.some(([sql]) => String(sql).includes("insert into egress_capability"))).toBe(true);
+    expect(query.mock.calls.some(([sql]) => String(sql).includes("set server_id=$2"))).toBe(true);
+  });
+
   it("runs the registered safe test contract for a server", async () => {
     handlerState.invoke = async (input) => ({ ok: true, echoed: input });
     const sessionHash = await argon2.hash(sessionValue, { type: argon2.argon2id, memoryCost: 4096, timeCost: 2, parallelism: 1 });
-    const db = {
-      query: vi.fn(async (sql: string) => {
-        if (sql.includes("from admin_session")) {
-          return { rowCount: 1, rows: [{ id: "session-id", account_id: "account-id", session_hash: sessionHash, username: "admin" }] };
-        }
-        if (sql.includes("from mcp_server ms") && sql.includes("where ms.id=$1")) {
-          return {
-            rowCount: 1,
-            rows: [{
-              id: "server-id",
-              code: "KCML0001",
-              kcml_number: 1,
-              hostname: "kcml0001.hcasc.cz",
-              tool_name: "example_tool",
-              display_name: "Example",
-              description: "Example",
-              enabled: true,
-              registration_state: "ACTIVE",
-              operational_state: "HEALTHY",
-              input_schema: { type: "object", additionalProperties: false },
-              output_schema: { type: "object", additionalProperties: true },
-              handler_key: "mock",
-              handler_version: "1.0.0",
-              contract_version: "rev-1",
-              artifact_digest: "sha256:artifact",
-              manifest_digest: "sha256:manifest",
-              registration_revision: "rev-1",
-              active_revision_id: "revision-id",
-              registration_schema_version: "1.5",
-              registration_validation_state: "VALID",
-              review_approved_at: "2026-01-01T00:00:00.000Z",
-              review_due_at: "2027-01-01T00:00:00.000Z",
-              review_interval_days: 365,
-              monitoring_enabled: true,
-              monitoring_profile_digest: "sha256:monitoring",
-              image_reference: null,
-              image_digest: "sha256:image",
-              sbom_digest: null,
-              provenance_digest: null,
-              runtime_socket: "/tmp/socket",
-              timeout_ms: 1000,
-              max_concurrency: 1,
-              request_max_bytes: 1024,
-              response_max_bytes: 1024,
-              rate_window_seconds: 60,
-              rate_max_requests: 10,
-              read_only_hint: true,
-              destructive_hint: false,
-              idempotent_hint: true,
-              open_world_hint: false,
-              effect_class: "READ_ONLY",
-              shutdown_policy: "COMPLETE_IN_FLIGHT",
-              idempotency_policy: "read only",
-              revocation_epoch: "epoch",
-              created_at: new Date().toISOString(),
-              updated_at: new Date().toISOString()
-            }]
-          };
-        }
-        if (sql.includes("from registration_revision")) {
-          return {
-            rowCount: 1,
-            rows: [{ manifest: { testContract: { safeInput: { name: "Alice" }, expectedResult: { ok: true } } } }]
-          };
-        }
-        return { rowCount: 1, rows: [] };
-      })
-    } as unknown as Db;
+    const query = vi.fn(async (sql: string) => {
+      if (sql.includes("from admin_session")) {
+        return { rowCount: 1, rows: [{ id: "session-id", account_id: "account-id", session_hash: sessionHash, username: "admin" }] };
+      }
+      if (sql.includes("from mcp_server ms") && sql.includes("where ms.id=$1")) {
+        return {
+          rowCount: 1,
+          rows: [{
+            id: "server-id",
+            code: "KCML0001",
+            kcml_number: 1,
+            hostname: "kcml0001.hcasc.cz",
+            tool_name: "example_tool",
+            display_name: "Example",
+            description: "Example",
+            enabled: true,
+            registration_state: "ACTIVE",
+            operational_state: "HEALTHY",
+            input_schema: { type: "object", additionalProperties: false },
+            output_schema: { type: "object", additionalProperties: true },
+            handler_key: "mock",
+            handler_version: "1.0.0",
+            contract_version: "rev-1",
+            artifact_digest: "sha256:artifact",
+            manifest_digest: "sha256:manifest",
+            registration_revision: "rev-1",
+            active_revision_id: "revision-id",
+            registration_schema_version: "1.5",
+            registration_validation_state: "VALID",
+            review_approved_at: "2026-01-01T00:00:00.000Z",
+            review_due_at: "2027-01-01T00:00:00.000Z",
+            review_interval_days: 365,
+            monitoring_enabled: true,
+            monitoring_profile_digest: "sha256:monitoring",
+            image_reference: null,
+            image_digest: "sha256:image",
+            sbom_digest: null,
+            provenance_digest: null,
+            runtime_socket: "/tmp/socket",
+            timeout_ms: 1000,
+            max_concurrency: 1,
+            request_max_bytes: 1024,
+            response_max_bytes: 1024,
+            rate_window_seconds: 60,
+            rate_max_requests: 10,
+            read_only_hint: true,
+            destructive_hint: false,
+            idempotent_hint: true,
+            open_world_hint: false,
+            effect_class: "READ_ONLY",
+            shutdown_policy: "COMPLETE_IN_FLIGHT",
+            idempotency_policy: "read only",
+            revocation_epoch: "epoch",
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+          }]
+        };
+      }
+      if (sql.includes("from registration_revision")) {
+        return {
+          rowCount: 1,
+          rows: [{ manifest: { testContract: { safeInput: { name: "Alice" }, expectedResult: { ok: true } } } }]
+        };
+      }
+      return { rowCount: 1, rows: [] };
+    });
+    const db = { query, connect: vi.fn(async () => ({ query, release: vi.fn() })) } as unknown as Db;
     app = Fastify();
     await app.register(cookie, { secret: config.SESSION_SECRET_BASE64.toString("base64url") });
     registerAdminRoutes(app, db, config);
@@ -181,6 +381,70 @@ describe("admin server actions", () => {
     });
     expect(response.statusCode, response.body).toBe(200);
     expect(response.json()).toMatchObject({ ok: true });
+  });
+
+  it("self-heals missing runtime egress capability before testing a trial server", async () => {
+    handlerState.invoke = async () => ({ ok: true });
+    const sessionHash = await argon2.hash(sessionValue, { type: argon2.argon2id, memoryCost: 4096, timeCost: 2, parallelism: 1 });
+    const manifest = legacyEgressManifest();
+    const query = vi.fn(async (sql: string) => {
+        if (sql.includes("from admin_session")) {
+          return { rowCount: 1, rows: [{ id: "session-id", account_id: "account-id", session_hash: sessionHash, username: "admin" }] };
+        }
+        if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") return { rowCount: 0, rows: [] };
+        if (sql.includes("from mcp_server ms") && sql.includes("where ms.id=$1") && sql.includes("latency.last_latency_ms")) {
+          return { rowCount: 1, rows: [mockServerRow({ registration_state: "TRIAL", operational_state: "UNKNOWN" })] };
+        }
+        if (sql.includes("select ms.code,ms.image_reference,ms.image_digest,rr.manifest")) {
+          return {
+            rowCount: 1,
+            rows: [{ code: "KCML0001", image_reference: "ghcr.io/hcasc/kcml0001:1.0.0", image_digest: "sha256:image", manifest }]
+          };
+        }
+        if (sql.includes("from egress_capability ec")) {
+          return { rowCount: 0, rows: [] };
+        }
+        if (sql.includes("from onboarding_job") && sql.includes("state in ('REGISTERED_DISABLED','TRIAL_TESTING','ACTIVE')")) {
+          return { rowCount: 1, rows: [{ id: "job-id" }] };
+        }
+        if (sql.includes("insert into egress_capability")) {
+          return { rowCount: 1, rows: [] };
+        }
+        if (sql.includes("update egress_capability") && sql.includes("set server_id=$2")) {
+          return { rowCount: 1, rows: [] };
+        }
+        if (sql.includes("from registration_revision")) {
+          return { rowCount: 1, rows: [{ manifest }] };
+        }
+        if (sql.includes("review_due_at")) {
+          return { rowCount: 1, rows: [{
+            id: "server-id", code: "KCML0001", enabled: true, registration_state: "TRIAL", operational_state: "UNKNOWN",
+            revision_id: "revision-id", validation_state: "VALID", approved_at: "2026-01-01T00:00:00.000Z",
+            review_due_at: "2027-01-01T00:00:00.000Z", review_interval_days: 365,
+            monitoring_enabled: true, profile_digest: "sha256:monitoring"
+          }] };
+        }
+        return { rowCount: 1, rows: [] };
+      });
+    const db = { query, connect: vi.fn(async () => ({ query, release: vi.fn() })) } as unknown as Db;
+    app = Fastify();
+    await app.register(cookie, { secret: config.SESSION_SECRET_BASE64.toString("base64url") });
+    registerAdminRoutes(app, db, config);
+    await app.ready();
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/mcp-servers/server-id/test",
+      headers: {
+        host: config.ADMIN_HOST,
+        cookie: `__Host-kcml_session=${sessionValue}; __Host-kcml_csrf=${csrfValue}`,
+        "x-csrf-token": csrfValue
+      },
+      payload: {}
+    });
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json()).toMatchObject({ ok: true });
+    expect(runtimeState.deploy).toHaveBeenCalledTimes(1);
   });
 
   it("reads and updates monitoring profile for a server", async () => {

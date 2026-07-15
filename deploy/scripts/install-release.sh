@@ -238,7 +238,9 @@ test -n "$kcml0002_server_id"
 kcml0002_state="$(psql "$app_database_url" --no-psqlrc --tuples-only --no-align --quiet --command \
   "select registration_state::text || '/' || operational_state::text from mcp_server where code='KCML0002'")"
 echo "release-check:mcp_kcml0002_initial_state=$kcml0002_state"
-if [ "$kcml0002_state" != "ACTIVE/HEALTHY" ] && [ "${kcml0002_state#TRIAL/}" != "$kcml0002_state" ]; then
+  if [ "$kcml0002_state" != "ACTIVE/HEALTHY" ] && {
+    [ "${kcml0002_state#TRIAL/}" != "$kcml0002_state" ] || [ "${kcml0002_state#REGISTERED_DISABLED/}" != "$kcml0002_state" ];
+  }; then
   login_headers_file="$(mktemp)"
   login_body_file="$(mktemp)"
   login_payload="$(jq -nc --arg username "$admin_username" --arg password "$PASS" '{username:$username,password:$password}')"
@@ -254,6 +256,30 @@ if [ "$kcml0002_state" != "ACTIVE/HEALTHY" ] && [ "${kcml0002_state#TRIAL/}" != 
   test -n "$session_cookie"
   test "$csrf_cookie" = "$csrf_token"
   admin_cookie_header="__Host-kcml_session=${session_cookie}; __Host-kcml_csrf=${csrf_cookie}"
+  if [ "${kcml0002_state#REGISTERED_DISABLED/}" != "$kcml0002_state" ]; then
+    enable_response_file="$(mktemp)"
+    enable_http_status="$(
+      curl -sS -o "$enable_response_file" -w '%{http_code}' \
+        -H "Host: $admin_host" \
+        -H "cookie: $admin_cookie_header" \
+        -H "x-csrf-token: $csrf_token" \
+        -H 'content-type: application/json' \
+        --data '{"enabled":true}' \
+        -X POST \
+        "http://127.0.0.1:${PORT:-3010}/api/mcp-servers/$kcml0002_server_id/enabled" \
+        || true
+    )"
+    if [ "$enable_http_status" != "200" ]; then
+      if [ -s "$enable_response_file" ]; then
+        echo "release-check:mcp_kcml0002_enable_status=$enable_http_status body=$(jq -c . "$enable_response_file" 2>/dev/null || tr -d '\n' < "$enable_response_file")"
+      else
+        echo "release-check:mcp_kcml0002_enable_status=$enable_http_status body=<empty>"
+      fi
+    fi
+    rm -f "$enable_response_file"
+    test "$enable_http_status" = "200"
+    sleep 2
+  fi
   kcml0002_promoted=false
   for _attempt in $(seq 1 30); do
     kcml0002_state="$(psql "$app_database_url" --no-psqlrc --tuples-only --no-align --quiet --command \

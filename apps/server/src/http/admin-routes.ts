@@ -20,13 +20,15 @@ import {
   revokeKajaCredential
 } from "../domain/auth.js";
 import { getServerById, listServers } from "../domain/catalog.js";
+import { attachEgressCapabilityToServer, createEgressCapability } from "../domain/egress.js";
 import { listManagedServices, managedServiceLogs, managedServiceStateView, setManagedServiceApiState } from "../domain/managed-service.js";
 import { listOperationalConfig, updateOperationalConfig } from "../domain/operational-config.js";
 import { buildReadinessReport } from "../domain/readiness.js";
 import { evaluateRecertification } from "../domain/recertification.js";
-import { digestCanonicalJson } from "../domain/registration.js";
+import { digestCanonicalJson, validateStoredOnboardingManifest } from "../domain/registration.js";
 import { transitionServerState } from "../domain/server-state.js";
 import { matchesExpectedResult } from "../onboarding/activation.js";
+import { OciRuntime } from "../onboarding/oci.js";
 import { decryptMfaSecret, encryptMfaSecret, hmacToken } from "../security/secrets.js";
 import { getHandler } from "../handlers/registry.js";
 import { hostOf, sendError } from "./errors.js";
@@ -208,24 +210,40 @@ async function requireAdminReauthentication(
 
 async function setServerEnabled(
   db: Db,
+  config: AppConfig,
   actorId: string,
   correlationId: string,
   serverId: string,
   enabled: boolean
 ): Promise<{ registrationState: string; operationalState: string }> {
+  const current = await db.query(
+    `select id,enabled,registration_state,operational_state
+       from mcp_server where id=$1`,
+    [serverId]
+  );
+  if (!current.rowCount) throw Object.assign(new Error("not_found"), { statusCode: 404 });
+  const row = current.rows[0];
+  if (Boolean(row.enabled) === enabled) {
+    return {
+      registrationState: String(row.registration_state),
+      operationalState: String(row.operational_state)
+    };
+  }
+  if (enabled) {
+    await maybeRefreshServerRuntimeEgress(db, config, serverId, { force: true });
+  }
   return tx(db, async (client) => {
-    const current = await client.query(
+    const latest = await client.query(
       `select id,enabled,registration_state,operational_state
          from mcp_server where id=$1`,
       [serverId]
     );
-    if (!current.rowCount) throw Object.assign(new Error("not_found"), { statusCode: 404 });
-    const row = current.rows[0];
-    const currentEnabled = Boolean(row.enabled);
-    if (currentEnabled === enabled) {
+    if (!latest.rowCount) throw Object.assign(new Error("not_found"), { statusCode: 404 });
+    const currentRow = latest.rows[0];
+    if (Boolean(currentRow.enabled) === enabled) {
       return {
-        registrationState: String(row.registration_state),
-        operationalState: String(row.operational_state)
+        registrationState: String(currentRow.registration_state),
+        operationalState: String(currentRow.operational_state)
       };
     }
     const transition = await transitionServerState(client, {
@@ -243,13 +261,92 @@ async function setServerEnabled(
   });
 }
 
-async function runServerTest(db: Db, serverId: string, correlationId: string, actorId: string): Promise<{
+async function maybeRefreshServerRuntimeEgress(
+  db: Db,
+  config: AppConfig,
+  serverId: string,
+  options: { force: boolean }
+): Promise<void> {
+  const prepared = await tx(db, async (client) => {
+    const current = await client.query(
+      `select ms.code,ms.image_reference,ms.image_digest,rr.manifest
+         from mcp_server ms
+         join registration_revision rr on rr.id=ms.active_revision_id and rr.server_id=ms.id and rr.active=true
+        where ms.id=$1
+        for update of ms`,
+      [serverId]
+    );
+    if (!current.rowCount) throw Object.assign(new Error("not_found"), { statusCode: 404 });
+    const imageReference = typeof current.rows[0].image_reference === "string" ? current.rows[0].image_reference : null;
+    const imageDigest = typeof current.rows[0].image_digest === "string" ? current.rows[0].image_digest : null;
+    const { manifest } = validateStoredOnboardingManifest(current.rows[0].manifest);
+    if (manifest.runtime.egressAllowlist.length === 0) return null;
+    if (!imageReference || !imageDigest) {
+      throw Object.assign(new Error("runtime_redeploy_unavailable"), { statusCode: 409 });
+    }
+    const activeCapability = await client.query(
+      `select 1
+         from egress_capability ec
+         join onboarding_job oj on oj.id=ec.job_id
+        where ec.server_id=$1
+          and ec.revoked_at is null
+          and ec.expires_at>now()
+          and oj.state not in ('FAILED','QUARANTINED','CANCELLED')
+        limit 1`,
+      [serverId]
+    );
+    if (!options.force && activeCapability.rowCount) return null;
+    const job = await client.query(
+      `select id
+         from onboarding_job
+        where server_id=$1
+          and state in ('REGISTERED_DISABLED','TRIAL_TESTING','ACTIVE')
+        order by
+          case state
+            when 'ACTIVE' then 0
+            when 'TRIAL_TESTING' then 1
+            else 2
+          end,
+          updated_at desc
+        limit 1
+        for update`,
+      [serverId]
+    );
+    if (!job.rowCount) throw Object.assign(new Error("onboarding_job_not_found"), { statusCode: 409 });
+    const jobId = String(job.rows[0].id);
+    const token = await createEgressCapability(client, config, jobId, manifest.runtime.egressAllowlist);
+    if (!token) return null;
+    return {
+      code: String(current.rows[0].code),
+      jobId,
+      imageReference,
+      imageDigest,
+      manifest,
+      token
+    };
+  });
+  if (!prepared) return;
+  const runtime = new OciRuntime(config);
+  await runtime.deploy({
+    code: prepared.code,
+    imageReference: prepared.imageReference,
+    imageDigest: prepared.imageDigest,
+    manifest: prepared.manifest,
+    egressCapabilityToken: prepared.token
+  });
+  await attachEgressCapabilityToServer(db, prepared.jobId, serverId);
+}
+
+async function runServerTest(db: Db, config: AppConfig, serverId: string, correlationId: string, actorId: string): Promise<{
   ok: boolean;
   latencyMs: number;
   output?: unknown;
 }> {
   const server = await getServerById(db, serverId);
   if (!server) throw Object.assign(new Error("not_found"), { statusCode: 404 });
+  if (server.registrationState === "TRIAL") {
+    await maybeRefreshServerRuntimeEgress(db, config, serverId, { force: false });
+  }
   const recertification = evaluateRecertification({
     activeRevisionId: server.activeRevisionId,
     validationState: server.registrationValidationState,
@@ -994,7 +1091,7 @@ export function registerAdminRoutes(app: FastifyInstance, db: Db, config: AppCon
     const body = request.body as { enabled?: unknown };
     if (typeof body.enabled !== "boolean") return sendError(reply, 400, "invalid_enabled", undefined, correlationId);
     try {
-      return await setServerEnabled(db, session.accountId, correlationId, id, body.enabled);
+      return await setServerEnabled(db, config, session.accountId, correlationId, id, body.enabled);
     } catch (error) {
       return sendError(reply, Number((error as { statusCode?: number }).statusCode ?? 500), error instanceof Error ? error.message : "operation_failed", undefined, correlationId);
     }
@@ -1008,7 +1105,7 @@ export function registerAdminRoutes(app: FastifyInstance, db: Db, config: AppCon
     if (!requireCsrf(request)) return sendError(reply, 403, "csrf_failed", undefined, correlationId);
     const { id } = request.params as { id: string };
     try {
-      return await runServerTest(db, id, correlationId, session.accountId);
+      return await runServerTest(db, config, id, correlationId, session.accountId);
     } catch (error) {
       return sendError(reply, Number((error as { statusCode?: number }).statusCode ?? 500), error instanceof Error ? error.message : "operation_failed", undefined, correlationId);
     }
