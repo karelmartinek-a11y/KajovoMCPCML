@@ -59,6 +59,8 @@ stage_registry_auth() {
 run_kcml0002_runtime_refresh() {
   local worker_env_args=()
   local key value
+  local podman_runtime_dir="/run/user/${kcml_uid}"
+  test -S "${podman_runtime_dir}/bus"
   while IFS='=' read -r key value; do
     [ -n "$key" ] || continue
     case "$key" in \#*) continue ;; esac
@@ -74,8 +76,8 @@ run_kcml0002_runtime_refresh() {
     HOME=/var/lib/kcml/podman \
     XDG_DATA_HOME=/var/lib/kcml/podman/data \
     XDG_CONFIG_HOME=/var/lib/kcml/podman/config \
-    XDG_RUNTIME_DIR=/run/kcml-podman \
-    DBUS_SESSION_BUS_ADDRESS=unix:path=/run/kcml-podman/bus \
+    XDG_RUNTIME_DIR="$podman_runtime_dir" \
+    DBUS_SESSION_BUS_ADDRESS="unix:path=${podman_runtime_dir}/bus" \
     REGISTRY_AUTH_FILE=/var/lib/kcml/podman/auth.json \
     DOCKER_CONFIG=/var/lib/kcml/podman/.docker \
     BUILD_ID="$release_id" \
