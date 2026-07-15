@@ -3,7 +3,8 @@ import type { Db } from "../db.js";
 import { replaceKajaPermissions } from "./auth.js";
 
 function fakeDb(previous: Array<{ server_id: string; access_level: string }>) {
-  const query = vi.fn(async (sql: string, _params?: unknown[]) => {
+  const query = vi.fn(async (sql: string, params?: unknown[]) => {
+    void params;
     if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") return { rowCount: 0, rows: [] };
     if (sql.startsWith("select id, public_id from kaja_credential")) {
       return { rowCount: 1, rows: [{ id: "credential", public_id: "Kaja0001" }] };
