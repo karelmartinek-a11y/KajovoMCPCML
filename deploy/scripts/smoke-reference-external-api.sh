@@ -41,8 +41,9 @@ cleanup() {
 trap report_error ERR
 trap cleanup EXIT
 
-cookiejar="$tmpdir/cookies.txt"
 manifest_file="$tmpdir/reference-manifest.json"
+login_headers="$tmpdir/login-headers.txt"
+login_body="$tmpdir/login-body.json"
 
 curl_json() {
   curl -fsS "$@"
@@ -57,17 +58,20 @@ admin_write() {
 }
 
 step login
-csrf_token="$(
-  jq -nc --arg username "$admin_username" --arg password "$PASS" '{username:$username,password:$password}' \
-    | curl_json -c "$cookiejar" -H "Host: $admin_host" -H 'content-type: application/json' \
-        --data @- "$base_url/api/login" \
-    | jq -r '.csrfToken'
-)"
+rm -f "$login_headers" "$login_body"
+jq -nc --arg username "$admin_username" --arg password "$PASS" '{username:$username,password:$password}' \
+  | curl_json -D "$login_headers" -o "$login_body" -H "Host: $admin_host" -H 'content-type: application/json' \
+      --data @- "$base_url/api/login"
+csrf_token="$(jq -r '.csrfToken' "$login_body")"
 test -n "$csrf_token"
-session_cookie="$(awk '$6 == "__Host-kcml_session" { print $7 }' "$cookiejar" | tail -n 1)"
+test "$csrf_token" != "null"
+session_cookie="$(sed -nE 's/^[Ss]et-[Cc]ookie: __Host-kcml_session=([^;]+).*/\1/p' "$login_headers" | tr -d '\r' | tail -n 1)"
+csrf_cookie="$(sed -nE 's/^[Ss]et-[Cc]ookie: __Host-kcml_csrf=([^;]+).*/\1/p' "$login_headers" | tr -d '\r' | tail -n 1)"
 test -n "$session_cookie"
 test "$session_cookie" != "null"
-admin_cookie_header="__Host-kcml_session=${session_cookie}; __Host-kcml_csrf=${csrf_token}"
+test -n "$csrf_cookie"
+test "$csrf_cookie" = "$csrf_token"
+admin_cookie_header="__Host-kcml_session=${session_cookie}; __Host-kcml_csrf=${csrf_cookie}"
 
 jq \
   --arg domain "$public_base_domain" \
