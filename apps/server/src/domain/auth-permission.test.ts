@@ -3,13 +3,20 @@ import type { Db } from "../db.js";
 import { replaceKajaPermissions } from "./auth.js";
 
 function fakeDb(previous: Array<{ server_id: string; access_level: string }>) {
-  const query = vi.fn(async (sql: string) => {
+  const query = vi.fn(async (sql: string, _params?: unknown[]) => {
     if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") return { rowCount: 0, rows: [] };
     if (sql.startsWith("select id, public_id from kaja_credential")) {
       return { rowCount: 1, rows: [{ id: "credential", public_id: "Kaja0001" }] };
     }
     if (sql.startsWith("select server_id,access_level from kaja_permission")) {
       return { rowCount: previous.length, rows: previous };
+    }
+    if (sql.includes("from managed_service") && sql.includes("legacy_mcp_server_id = any")) {
+      const legacyIds = previous.map((row) => row.server_id);
+      return {
+        rowCount: legacyIds.length,
+        rows: legacyIds.map((id) => ({ legacy_mcp_server_id: id, id: `managed-${id}` }))
+      };
     }
     return { rowCount: 1, rows: [] };
   });
@@ -43,5 +50,9 @@ describe("Kaja permission revocation", () => {
       [{ serverId, accessLevel: "EXECUTE" }]
     );
     expect(query.mock.calls.some(([sql]) => String(sql).includes("update access_token set revoked_at"))).toBe(false);
+    const grantCall = query.mock.calls.find(([sql]) => String(sql).includes("insert into managed_service_permission"));
+    expect(grantCall?.[0]).toContain("$3::jsonb");
+    expect(grantCall?.[0]).not.toContain("$4");
+    expect(grantCall?.[1]).toHaveLength(3);
   });
 });

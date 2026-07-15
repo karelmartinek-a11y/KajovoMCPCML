@@ -285,7 +285,7 @@ export async function replaceKajaPermissions(db: Db, actorId: string, correlatio
           `insert into managed_service_permission(
               credential_id, managed_service_id, scope_id, granted_at, revoked_at, state, valid_from, valid_to, permission_version, audit_metadata
            )
-           select $1, $2, scope.id, now(), null, 'GRANTED', now(), null, 0, $4
+           select $1, $2, scope.id, now(), null, 'GRANTED', now(), null, 0, $3::jsonb
              from managed_service_scope scope
             where scope.managed_service_id = $2
               and scope.scope_name = 'mcp.invoke'
@@ -297,7 +297,7 @@ export async function replaceKajaPermissions(db: Db, actorId: string, correlatio
                  permission_version = managed_service_permission.permission_version + 1,
                  audit_metadata = excluded.audit_metadata,
                  granted_at = now()`,
-          [credentialId, managedServiceId, permission.accessLevel, JSON.stringify({ actorId, correlationId, accessLevel: permission.accessLevel })]
+          [credentialId, managedServiceId, JSON.stringify({ actorId, correlationId, accessLevel: permission.accessLevel })]
         );
       }
       await bumpManagedServicePermissionEpoch(client, [...managedByLegacy.values()], correlationId, { actorId, credentialId });
