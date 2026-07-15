@@ -126,9 +126,6 @@ function readSecretFile(env: NodeJS.ProcessEnv, key: string): string | undefined
       if (credentialsMetadata.isSymbolicLink()) throw new Error(`CREDENTIALS_DIRECTORY must not be a symlink in production`);
       const credentialsOwnerOk = credentialsMetadata.uid === process.getuid?.() || credentialsMetadata.uid === 0;
       if (!credentialsOwnerOk) throw new Error(`CREDENTIALS_DIRECTORY has an unexpected owner`);
-      if ((credentialsMetadata.mode & 0o077) !== 0) {
-        throw new Error(`CREDENTIALS_DIRECTORY must not be group/world accessible`);
-      }
       if ((target.mode & 0o007) !== 0) throw new Error(`${key}_FILE must not be world accessible`);
     } else if ((target.mode & 0o077) !== 0) {
       throw new Error(`${key}_FILE must not be group/world readable`);

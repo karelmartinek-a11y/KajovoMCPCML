@@ -226,9 +226,7 @@ describe("configuration gates", () => {
   it("rejects unsafe production secret files", async () => {
     const worldReadable = await tempFile("secret", secret, 0o644);
     const oversized = await tempFile("oversized", "A".repeat(SECRET_FILE_BYTES));
-    const { directory: systemdCredentialsDirectory, file: systemdCredentialFile } = await tempCredentialFile("secret", secret);
-    const { directory: looseCredentialsDirectory, file: looseCredentialFile } = await tempCredentialFile("secret", secret);
-    await chmod(looseCredentialsDirectory, 0o755);
+    const { directory: systemdCredentialsDirectory, file: systemdCredentialFile } = await tempCredentialFile("secret", secret, 0o755);
     const symlinkDir = await mkdtemp(path.join(tmpdir(), "kcml-config-symlink-"));
     tempDirs.push(symlinkDir);
     const symlinkPath = path.join(symlinkDir, "secret-link");
@@ -254,8 +252,7 @@ describe("configuration gates", () => {
     })).not.toThrow();
     expect(() => loadConfig({
       ...productionBase,
-      CREDENTIALS_DIRECTORY: looseCredentialsDirectory,
-      ACCESS_TOKEN_HMAC_KEY_BASE64_FILE: looseCredentialFile,
+      ACCESS_TOKEN_HMAC_KEY_BASE64_FILE: worldReadable,
       INTEGRATION_TOKEN_HMAC_KEY_BASE64: Buffer.alloc(32, 2).toString("base64"),
       EGRESS_CAPABILITY_HMAC_KEY_BASE64: Buffer.alloc(32, 3).toString("base64"),
       SESSION_SECRET_BASE64: Buffer.alloc(32, 4).toString("base64"),
@@ -264,6 +261,7 @@ describe("configuration gates", () => {
     })).toThrow();
     expect(() => loadConfig({
       ...productionBase,
+      CREDENTIALS_DIRECTORY: systemdCredentialsDirectory,
       ACCESS_TOKEN_HMAC_KEY_BASE64_FILE: worldReadable,
       INTEGRATION_TOKEN_HMAC_KEY_BASE64: Buffer.alloc(32, 2).toString("base64"),
       EGRESS_CAPABILITY_HMAC_KEY_BASE64: Buffer.alloc(32, 3).toString("base64"),
