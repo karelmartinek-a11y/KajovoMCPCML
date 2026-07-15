@@ -159,14 +159,19 @@ BUILD_ID="$release_id" \
   node "$source_dir/apps/server/dist/cli/migrate-mfa-secrets.js"
 
 step sync-admin-password
-PASS="$PASS" \
-KCML_PROCESS_ROLE=admin-sync \
-DATABASE_URL_FILE=/etc/kcml/credentials/admin-sync/database_url \
-MFA_ENCRYPTION_KEY_BASE64_FILE=/etc/kcml/credentials/admin-sync/mfa_encryption \
-ADMIN_TOTP_SECRET_FILE=/etc/kcml/credentials/admin-sync/admin_totp \
-NODE_ENV=production \
-BUILD_ID="$release_id" \
-  node "$source_dir/apps/server/dist/cli/sync-admin-password.js"
+admin_sync_totp_file=/etc/kcml/credentials/admin-sync/admin_totp
+admin_sync_env=(
+  "PASS=$PASS"
+  "KCML_PROCESS_ROLE=admin-sync"
+  "DATABASE_URL_FILE=/etc/kcml/credentials/admin-sync/database_url"
+  "MFA_ENCRYPTION_KEY_BASE64_FILE=/etc/kcml/credentials/admin-sync/mfa_encryption"
+  "NODE_ENV=production"
+  "BUILD_ID=$release_id"
+)
+if [ -s "$admin_sync_totp_file" ]; then
+  admin_sync_env+=("ADMIN_TOTP_SECRET_FILE=$admin_sync_totp_file")
+fi
+env "${admin_sync_env[@]}" node "$source_dir/apps/server/dist/cli/sync-admin-password.js"
 
 mv "$source_dir" "$release_dir"
 chown -R root:kcml "$release_dir"
