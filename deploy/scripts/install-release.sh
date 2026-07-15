@@ -237,6 +237,10 @@ done
 
 if [ "$healthy" != "true" ]; then
   systemctl status kcml kcml-egress-proxy kcml-onboarding-worker kcml-monitor kcml-alert-primary kcml-alert-backup --no-pager -l || true
+  for service in kcml kcml-egress-proxy kcml-onboarding-worker kcml-monitor; do
+    echo "==== journal:$service ====" >&2
+    journalctl -u "$service" --no-pager -n 80 || true
+  done
   false
 fi
 
