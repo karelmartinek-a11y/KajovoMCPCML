@@ -6,6 +6,7 @@ trap 'rm -rf "$tmp"' EXIT
 
 cat > "$tmp/legacy.env" <<'ENV'
 DATABASE_URL=postgres://kcml:test@127.0.0.1/kcml
+EGRESS_CAPABILITY_HMAC_KEY_BASE64=AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM=
 PORT=
 INTEGRATION_TOKEN_HMAC_KEY_ID=
 ADMIN_BOOTSTRAP_USERNAME=
@@ -23,3 +24,5 @@ grep -qx 'MONITOR_ENABLED=true' "$tmp/config/web.env"
 ! grep -q '^INTEGRATION_TOKEN_HMAC_KEY_ID=' "$tmp/config/web.env"
 ! grep -q '^ADMIN_BOOTSTRAP_USERNAME=' "$tmp/config/web.env"
 test "$(cat "$tmp/config/credentials/web/database_url")" = 'postgres://kcml:test@127.0.0.1/kcml'
+test "$(cat "$tmp/config/credentials/web/egress_capability_hmac")" = 'AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM='
+test "$(cat "$tmp/config/credentials/monitor/egress_capability_hmac")" = 'AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM='

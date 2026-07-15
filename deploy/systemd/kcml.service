@@ -12,12 +12,14 @@ Environment=KCML_PROCESS_ROLE=web
 Environment=DATABASE_URL_FILE=%d/database_url
 Environment=ACCESS_TOKEN_HMAC_KEY_BASE64_FILE=%d/access_token_hmac
 Environment=INTEGRATION_TOKEN_HMAC_KEY_BASE64_FILE=%d/integration_token_hmac
+Environment=EGRESS_CAPABILITY_HMAC_KEY_BASE64_FILE=%d/egress_capability_hmac
 Environment=SESSION_SECRET_BASE64_FILE=%d/session_secret
 Environment=CSRF_SECRET_BASE64_FILE=%d/csrf_secret
 Environment=MFA_ENCRYPTION_KEY_BASE64_FILE=%d/mfa_encryption
 LoadCredential=database_url:/etc/kcml/credentials/web/database_url
 LoadCredential=access_token_hmac:/etc/kcml/credentials/web/access_token_hmac
 LoadCredential=integration_token_hmac:/etc/kcml/credentials/web/integration_token_hmac
+LoadCredential=egress_capability_hmac:/etc/kcml/credentials/web/egress_capability_hmac
 LoadCredential=session_secret:/etc/kcml/credentials/web/session_secret
 LoadCredential=csrf_secret:/etc/kcml/credentials/web/csrf_secret
 LoadCredential=mfa_encryption:/etc/kcml/credentials/web/mfa_encryption
