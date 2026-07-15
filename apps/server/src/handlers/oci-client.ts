@@ -73,7 +73,12 @@ export function ociHandler(): KcmlHandler {
           if (frame.level === "error") await ctx.logger.error(fields, String(frame.message ?? "handler log"));
           else await ctx.logger.info(fields, String(frame.message ?? "handler log"));
         }
-        if (reply.error) throw new Error(String(reply.error.code ?? "worker_failed"));
+        if (reply.error) {
+          const message = typeof reply.error.message === "string" && reply.error.message.trim()
+            ? reply.error.message
+            : String(reply.error.code ?? "worker_failed");
+          throw new Error(message);
+        }
         return reply.output;
       } finally {
         const next = (activeByServer.get(server.id) ?? 1) - 1;
