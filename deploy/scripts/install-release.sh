@@ -67,10 +67,10 @@ run_kcml0002_runtime_refresh() {
   runuser -u kcml -- env \
     "${worker_env_args[@]}" \
     KCML_PROCESS_ROLE=worker \
+    ONBOARDING_WORKER_ENABLED=false \
+    MONITOR_ENABLED=false \
     DATABASE_URL_FILE=/etc/kcml/credentials/worker/database_url \
     EGRESS_CAPABILITY_HMAC_KEY_BASE64_FILE=/etc/kcml/credentials/worker/egress_capability_hmac \
-    GITHUB_TOKEN_FILE=/etc/kcml/credentials/worker/github_token \
-    GITHUB_APP_PRIVATE_KEY_BASE64_FILE=/etc/kcml/credentials/worker/github_app_private_key \
     HOME=/var/lib/kcml/podman \
     XDG_DATA_HOME=/var/lib/kcml/podman/data \
     XDG_CONFIG_HOME=/var/lib/kcml/podman/config \
