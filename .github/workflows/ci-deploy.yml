@@ -45,7 +45,7 @@ jobs:
         with: { version: 11.7.0 }
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - name: Deployment and alert-sink checks
@@ -74,7 +74,7 @@ jobs:
       - name: Release bundle checks
         env:
           BUILD_ID: ci-release-check
-          NODE_VERSION: "22"
+          NODE_VERSION: "24"
           PNPM_VERSION: "11.7.0"
         run: bash scripts/test-build-release.sh
 
@@ -91,10 +91,10 @@ jobs:
       - uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ github.token }}
-      - uses: github/codeql-action/init@v3
+      - uses: github/codeql-action/init@v4
         with:
           languages: javascript-typescript
-      - uses: github/codeql-action/analyze@v3
+      - uses: github/codeql-action/analyze@v4
         with:
           output: /tmp/codeql-results
           upload: false
@@ -117,14 +117,14 @@ jobs:
         with: { version: 11.7.0 }
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
       - name: Assemble immutable release
         env:
           BUILD_ID: ${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
-          NODE_VERSION: "22"
+          NODE_VERSION: "24"
           PNPM_VERSION: "11.7.0"
         run: bash scripts/build-release.sh /tmp/kcml-release
       - uses: anchore/sbom-action@v0
@@ -161,6 +161,7 @@ jobs:
     environment: production
     permissions:
       contents: read
+      packages: read
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -172,11 +173,15 @@ jobs:
       - name: Deploy verified release
         env:
           PASS: ${{ secrets.PASS }}
+          GHCR_TOKEN: ${{ github.token }}
+          GHCR_ACTOR: ${{ github.actor }}
         run: |
           set -euo pipefail
           echo "::add-mask::$PASS"
+          echo "::add-mask::$GHCR_TOKEN"
           test -n "$PASS"
-          sudo --preserve-env=PASS /usr/local/sbin/kcml-deploy-wrapper \
+          test -n "$GHCR_TOKEN"
+          sudo --preserve-env=PASS,GHCR_TOKEN,GHCR_ACTOR /usr/local/sbin/kcml-deploy-wrapper \
             "${{ runner.temp }}/kcml-release/kcml-release.tar.zst" \
             "${{ github.repository }}" \
             "${{ github.sha }}" \

@@ -34,10 +34,19 @@ install -m 0600 -o kcml -g kcml "$auth_file" "$docker_config"
 # signature verification while the bounded registry credential is available.
 systemctl is-active --quiet kcml-onboarding-worker
 for _attempt in $(seq 1 120); do
-  state="$(psql "$DATABASE_URL" -Atq \
-    -c "select state from onboarding_job where source_commit='$source_commit' order by created_at desc limit 1")"
+  IFS='|' read -r state runtime_socket < <(psql "$DATABASE_URL" -Atq \
+    -c "select job.state, coalesce(server.runtime_socket, '')
+          from onboarding_job job
+          left join mcp_server server on server.id=job.server_id
+         where job.source_commit='$source_commit'
+         order by job.created_at desc
+         limit 1")
   case "$state" in
-    DEPLOYING|REGISTERED_DISABLED|TRIAL_TESTING|ACTIVE) exit 0 ;;
+    REGISTERED_DISABLED|TRIAL_TESTING|ACTIVE)
+      if [ -n "$runtime_socket" ] && [ -S "$runtime_socket" ]; then
+        exit 0
+      fi
+      ;;
     FAILED|QUARANTINED|CANCELLED)
       echo "Onboarding reached terminal state $state while the private image credential was active." >&2
       exit 1

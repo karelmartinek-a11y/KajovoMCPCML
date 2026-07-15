@@ -29,9 +29,57 @@ else
 fi
 switched=false
 current_step="init"
+registry_auth_staged=false
 step() {
   current_step="$1"
   echo "release-step:$current_step"
+}
+cleanup_registry_auth() {
+  if [ "$registry_auth_staged" = "true" ]; then
+    rm -f /var/lib/kcml/podman/auth.json /var/lib/kcml/podman/.docker/config.json
+  fi
+}
+stage_registry_auth() {
+  if [ -z "${GHCR_TOKEN:-}" ]; then
+    return 0
+  fi
+  local ghcr_actor="${GHCR_ACTOR:-${GITHUB_ACTOR:-}}"
+  test -n "$ghcr_actor"
+  [[ "$ghcr_actor" =~ ^[A-Za-z0-9-]{1,39}$ ]]
+  install -d -m 0700 -o kcml -g kcml /var/lib/kcml/podman /var/lib/kcml/podman/.docker
+  local encoded_auth
+  encoded_auth="$(printf '%s:%s' "$ghcr_actor" "$GHCR_TOKEN" | base64 -w0)"
+  printf '{"auths":{"ghcr.io":{"auth":"%s"}}}\n' "$encoded_auth" > /var/lib/kcml/podman/auth.json
+  unset encoded_auth
+  chown kcml:kcml /var/lib/kcml/podman/auth.json
+  chmod 0600 /var/lib/kcml/podman/auth.json
+  install -m 0600 -o kcml -g kcml /var/lib/kcml/podman/auth.json /var/lib/kcml/podman/.docker/config.json
+  registry_auth_staged=true
+}
+run_kcml0002_runtime_refresh() {
+  local worker_env_args=()
+  local key value
+  while IFS='=' read -r key value; do
+    [ -n "$key" ] || continue
+    case "$key" in \#*) continue ;; esac
+    worker_env_args+=("$key=$value")
+  done < /etc/kcml/worker.env
+  runuser -u kcml -- env \
+    "${worker_env_args[@]}" \
+    KCML_PROCESS_ROLE=worker \
+    DATABASE_URL_FILE=/etc/kcml/credentials/worker/database_url \
+    EGRESS_CAPABILITY_HMAC_KEY_BASE64_FILE=/etc/kcml/credentials/worker/egress_capability_hmac \
+    GITHUB_TOKEN_FILE=/etc/kcml/credentials/worker/github_token \
+    GITHUB_APP_PRIVATE_KEY_BASE64_FILE=/etc/kcml/credentials/worker/github_app_private_key \
+    HOME=/var/lib/kcml/podman \
+    XDG_DATA_HOME=/var/lib/kcml/podman/data \
+    XDG_CONFIG_HOME=/var/lib/kcml/podman/config \
+    XDG_RUNTIME_DIR=/run/kcml-podman \
+    DBUS_SESSION_BUS_ADDRESS=unix:path=/run/kcml-podman/bus \
+    REGISTRY_AUTH_FILE=/var/lib/kcml/podman/auth.json \
+    DOCKER_CONFIG=/var/lib/kcml/podman/.docker \
+    BUILD_ID="$release_id" \
+    node "$release_dir/apps/server/dist/cli/release-kcml0002-runtime-refresh.js"
 }
 wait_for_sql_equals() {
   local label="$1" expected="$2" query="$3" attempts="${4:-1}" delay="${5:-2}"
@@ -51,6 +99,7 @@ rollback_on_error() {
   exit_code=$?
   trap - ERR
   echo "release-failed:$current_step" >&2
+  cleanup_registry_auth
   if [ "$switched" = "true" ] && [ -n "$previous_release_id" ] && [ -d "$previous_release" ]; then
     bash "$release_dir/deploy/scripts/release-config.sh" restore "$previous_release_id" "$previous_release" || true
   fi
@@ -60,6 +109,8 @@ trap rollback_on_error ERR
 
 install -m 0644 "$source_dir/deploy/nginx/kcml.conf" /etc/nginx/sites-available/kcml.conf
 ln -sfn /etc/nginx/sites-available/kcml.conf /etc/nginx/sites-enabled/kcml.conf
+install -m 0755 "$source_dir/deploy/scripts/kcml-deploy-wrapper.sh" /usr/local/sbin/kcml-deploy-wrapper
+install -m 0755 "$source_dir/deploy/scripts/kcml-handler-preload-wrapper.sh" /usr/local/sbin/kcml-handler-preload-wrapper
 for unit in kcml.service kcml-onboarding-worker.service kcml-monitor.service kcml-egress-proxy.service kcml-alert-primary.service kcml-alert-backup.service; do
   install -m 0644 "$source_dir/deploy/systemd/$unit" "/etc/systemd/system/$unit"
 done
@@ -95,6 +146,7 @@ bash "$source_dir/deploy/scripts/configure-db-roles.sh"
 export DATABASE_APP_URL="$(cat /etc/kcml/database-app.url)"
 step split-config-final
 bash "$source_dir/deploy/scripts/split-service-config.sh" "$release_id"
+stage_registry_auth
 
 step sync-admin-password
 PASS="$PASS" \
@@ -238,109 +290,29 @@ test -n "$kcml0002_server_id"
 kcml0002_state="$(psql "$app_database_url" --no-psqlrc --tuples-only --no-align --quiet --command \
   "select registration_state::text || '/' || operational_state::text from mcp_server where code='KCML0002'")"
 echo "release-check:mcp_kcml0002_initial_state=$kcml0002_state"
-  if [ "$kcml0002_state" != "ACTIVE/HEALTHY" ] && {
-    [ "${kcml0002_state#TRIAL/}" != "$kcml0002_state" ] || [ "${kcml0002_state#REGISTERED_DISABLED/}" != "$kcml0002_state" ];
-  }; then
-  login_headers_file="$(mktemp)"
-  login_body_file="$(mktemp)"
-  login_payload="$(jq -nc --arg username "$admin_username" --arg password "$PASS" '{username:$username,password:$password}')"
-  curl -fsS -D "$login_headers_file" -o "$login_body_file" \
-    -H "Host: $admin_host" \
-    -H 'content-type: application/json' \
-    --data "$login_payload" \
-    "http://127.0.0.1:${PORT:-3010}/api/login" >/dev/null
-  csrf_token="$(jq -r '.csrfToken' "$login_body_file")"
-  session_cookie="$(sed -nE 's/^[Ss]et-[Cc]ookie: __Host-kcml_session=([^;]+).*/\1/p' "$login_headers_file" | tr -d '\r' | tail -n 1)"
-  csrf_cookie="$(sed -nE 's/^[Ss]et-[Cc]ookie: __Host-kcml_csrf=([^;]+).*/\1/p' "$login_headers_file" | tr -d '\r' | tail -n 1)"
-  test -n "$csrf_token"
-  test -n "$session_cookie"
-  test "$csrf_cookie" = "$csrf_token"
-  admin_cookie_header="__Host-kcml_session=${session_cookie}; __Host-kcml_csrf=${csrf_cookie}"
-  if [ "${kcml0002_state#REGISTERED_DISABLED/}" != "$kcml0002_state" ]; then
-    enable_response_file="$(mktemp)"
-    enable_http_status="$(
-      curl -sS -o "$enable_response_file" -w '%{http_code}' \
-        -H "Host: $admin_host" \
-        -H "cookie: $admin_cookie_header" \
-        -H "x-csrf-token: $csrf_token" \
-        -H 'content-type: application/json' \
-        --data '{"enabled":true}' \
-        -X POST \
-        "http://127.0.0.1:${PORT:-3010}/api/mcp-servers/$kcml0002_server_id/enabled" \
-        || true
-    )"
-    if [ "$enable_http_status" != "200" ]; then
-      if [ -s "$enable_response_file" ]; then
-        echo "release-check:mcp_kcml0002_enable_status=$enable_http_status body=$(jq -c . "$enable_response_file" 2>/dev/null || tr -d '\n' < "$enable_response_file")"
-      else
-        echo "release-check:mcp_kcml0002_enable_status=$enable_http_status body=<empty>"
-      fi
-    fi
-    rm -f "$enable_response_file"
-    test "$enable_http_status" = "200"
-    sleep 2
-  fi
-  kcml0002_promoted=false
-  for _attempt in $(seq 1 30); do
-    kcml0002_state="$(psql "$app_database_url" --no-psqlrc --tuples-only --no-align --quiet --command \
-      "select registration_state::text || '/' || operational_state::text from mcp_server where code='KCML0002'")"
-    if [ "$kcml0002_state" = "ACTIVE/HEALTHY" ]; then
-      kcml0002_promoted=true
-      break
-    fi
-    test_response_file="$(mktemp)"
-    test_http_status="$(
-      curl -sS -o "$test_response_file" -w '%{http_code}' \
-        -H "Host: $admin_host" \
-        -H "cookie: $admin_cookie_header" \
-        -H "x-csrf-token: $csrf_token" \
-        -X POST \
-        "http://127.0.0.1:${PORT:-3010}/api/mcp-servers/$kcml0002_server_id/test" \
-        || true
-    )"
-    if [ "$test_http_status" = "200" ] && jq -e '.ok == true' "$test_response_file" >/dev/null; then
-      kcml0002_promoted=true
-      rm -f "$test_response_file"
-      break
-    fi
-    if [ -s "$test_response_file" ]; then
-      echo "release-check:mcp_kcml0002_test_status=$test_http_status body=$(jq -c . "$test_response_file" 2>/dev/null || tr -d '\n' < "$test_response_file")"
-    else
-      echo "release-check:mcp_kcml0002_test_status=$test_http_status body=<empty>"
-    fi
-    rm -f "$test_response_file"
-    sleep 2
-  done
-  if [ "$kcml0002_promoted" != "true" ]; then
-    inventory_probe_file="$(mktemp)"
-    inventory_probe_status="$(
-      curl -sS --max-time 10 -o "$inventory_probe_file" -w '%{http_code}' \
-        "https://ha-inventory.hcasc.cz/v1/catalog" \
-        || true
-    )"
-    if [ "$inventory_probe_status" = "200" ]; then
-      echo "release-check:mcp_kcml0002_inventory_status=200"
-    else
-      echo "release-check:mcp_kcml0002_inventory_status=$inventory_probe_status body=$(tr -d '\n' < "$inventory_probe_file" | head -c 256)"
-    fi
-    rm -f "$inventory_probe_file"
-    recent_kcml0002_logs="$(psql "$app_database_url" --no-psqlrc --tuples-only --no-align --quiet --command \
-      "select coalesce(json_agg(json_build_object('createdAt',created_at,'level',level,'event',event_name,'fields',fields) order by created_at desc)::text,'[]')
-         from (
-           select created_at, level, event_name, fields
-             from runtime_log_event
-            where server_id='$kcml0002_server_id'
-            order by created_at desc
-            limit 5
-         ) recent")"
-    echo "release-check:mcp_kcml0002_recent_logs=$recent_kcml0002_logs"
-  fi
-  rm -f "$login_headers_file" "$login_body_file"
-  test "$kcml0002_promoted" = "true"
+run_kcml0002_runtime_refresh
+KCML_PROCESS_ROLE=web \
+DATABASE_URL_FILE=/etc/kcml/credentials/web/database_url \
+ACCESS_TOKEN_HMAC_KEY_BASE64_FILE=/etc/kcml/credentials/web/access_token_hmac \
+INTEGRATION_TOKEN_HMAC_KEY_BASE64_FILE=/etc/kcml/credentials/web/integration_token_hmac \
+SESSION_SECRET_BASE64_FILE=/etc/kcml/credentials/web/session_secret \
+CSRF_SECRET_BASE64_FILE=/etc/kcml/credentials/web/csrf_secret \
+MFA_ENCRYPTION_KEY_BASE64_FILE=/etc/kcml/credentials/web/mfa_encryption \
+EGRESS_CAPABILITY_HMAC_KEY_BASE64_FILE=/etc/kcml/credentials/web/egress_capability_hmac \
+NODE_ENV=production \
+BUILD_ID="$release_id" \
+  node "$release_dir/apps/server/dist/cli/release-kcml0002-smoke.js"
+if [ "$kcml0002_state" != "ACTIVE/HEALTHY" ] && {
+  [ "${kcml0002_state#TRIAL/}" != "$kcml0002_state" ] || [ "${kcml0002_state#REGISTERED_DISABLED/}" != "$kcml0002_state" ];
+}; then
+  kcml0002_state="$(psql "$app_database_url" --no-psqlrc --tuples-only --no-align --quiet --command \
+    "select registration_state::text || '/' || operational_state::text from mcp_server where code='KCML0002'")"
+  echo "release-check:mcp_kcml0002_promoted_state=$kcml0002_state"
 fi
 wait_for_sql_equals "mcp_kcml0002_state" "ACTIVE/HEALTHY" "select registration_state::text || '/' || operational_state::text from mcp_server where code='KCML0002'" 90 2
 wait_for_sql_equals "migration_019" "1" "select count(*) from schema_migration where version='019_postgres_http_rate_limiting.sql'"
 wait_for_sql_equals "migration_022" "1" "select count(*) from schema_migration where version='022_runtime_egress_capability_backfill.sql'"
 
 trap - ERR
+cleanup_registry_auth
 echo "release-installed:$release_id"
