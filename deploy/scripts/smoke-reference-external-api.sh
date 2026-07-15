@@ -136,17 +136,18 @@ if [ -n "$service_id" ] && [ "$service_id" != "null" ]; then
   test "$service_code" != "null"
   jobs_json="$(admin_read "$base_url/api/onboarding-jobs")"
   job_id="$(jq -r --arg code "$service_code" '.jobs[] | select(.code == $code) | .id' <<<"$jobs_json" | head -n 1)"
-  job_lock_version="$(jq -r --arg job_id "$job_id" '.jobs[] | select(.id == $job_id) | .lockVersion' <<<"$jobs_json" | head -n 1)"
   test -n "$job_id"
   test "$job_id" != "null"
-  test -n "$job_lock_version"
-  test "$job_lock_version" != "null"
   intent_json="$(intent_body "$job_id")"
   intent_response="$(
     admin_write -H 'content-type: application/json' \
       --data "$intent_json" "$base_url/api/integration-intents"
   )"
   integration_token="$(jq -r '.integrationToken' <<<"$intent_response")"
+  resumed_job_json="$(admin_read "$base_url/api/onboarding-jobs/$job_id")"
+  job_lock_version="$(jq -r '.job.lockVersion' <<<"$resumed_job_json")"
+  test -n "$job_lock_version"
+  test "$job_lock_version" != "null"
   curl_json -X PUT \
     -H "Host: $register_host" \
     -H "authorization: Bearer $integration_token" \
