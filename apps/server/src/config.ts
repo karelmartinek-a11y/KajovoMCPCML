@@ -292,7 +292,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   }
   const config = envSchema.parse(resolved);
   if (config.NODE_ENV === "production") {
-    for (const key of ["PUBLIC_BASE_DOMAIN", "ADMIN_HOST", "AUTH_HOST", "REGISTER_HOST", "BUILD_ID"] as const) {
+    const requiredProductionKeys: Array<keyof AppConfig> = ["BUILD_ID"];
+    if (["web", "worker", "monitor", "egress"].includes(config.KCML_PROCESS_ROLE)) {
+      requiredProductionKeys.push("PUBLIC_BASE_DOMAIN");
+    }
+    if (["web", "monitor"].includes(config.KCML_PROCESS_ROLE)) {
+      requiredProductionKeys.push("ADMIN_HOST", "AUTH_HOST", "REGISTER_HOST");
+    }
+    for (const key of requiredProductionKeys) {
       if (!env[key]) throw new Error(`${key} must be explicitly set in production`);
     }
     if (env.ADMIN_TOTP_SECRET) throw new Error("ADMIN_TOTP_SECRET must not be provided directly in production");

@@ -126,6 +126,7 @@ describe("configuration gates", () => {
     expect(() => loadConfig({
       ...envBase,
       NODE_ENV: "production",
+      KCML_PROCESS_ROLE: "web",
       ACCESS_TOKEN_HMAC_KEY_BASE64: secret,
       INTEGRATION_TOKEN_HMAC_KEY_BASE64: Buffer.alloc(32, 2).toString("base64"),
       EGRESS_CAPABILITY_HMAC_KEY_BASE64: Buffer.alloc(32, 3).toString("base64"),
@@ -137,6 +138,7 @@ describe("configuration gates", () => {
     expect(() => loadConfig({
       ...envBase,
       NODE_ENV: "production",
+      KCML_PROCESS_ROLE: "web",
       PUBLIC_BASE_DOMAIN: "hcasc.cz",
       ADMIN_HOST: "https://admin.hcasc.cz",
       AUTH_HOST: "auth.hcasc.cz",
@@ -166,6 +168,7 @@ describe("configuration gates", () => {
     expect(() => loadConfig({
       ...envBase,
       NODE_ENV: "production",
+      KCML_PROCESS_ROLE: "web",
       PUBLIC_BASE_DOMAIN: "hcasc.cz",
       ADMIN_HOST: "admin.hcasc.cz",
       AUTH_HOST: "auth.hcasc.cz",
@@ -182,6 +185,7 @@ describe("configuration gates", () => {
     expect(() => loadConfig({
       ...envBase,
       NODE_ENV: "production",
+      KCML_PROCESS_ROLE: "web",
       PUBLIC_BASE_DOMAIN: "hcasc.cz",
       ADMIN_HOST: "admin.hcasc.cz",
       AUTH_HOST: "auth.hcasc.cz",
@@ -194,6 +198,18 @@ describe("configuration gates", () => {
       CSRF_SECRET_BASE64: Buffer.alloc(32, 5).toString("base64"),
       MFA_ENCRYPTION_KEY_BASE64: Buffer.alloc(32, 6).toString("base64"),
       ADMIN_TOTP_SECRET_FILE: totpFile
+    })).not.toThrow();
+    expect(() => loadConfig({
+      ...envBase,
+      NODE_ENV: "production",
+      KCML_PROCESS_ROLE: "migrate",
+      BUILD_ID: "release-1",
+      ACCESS_TOKEN_HMAC_KEY_BASE64: secret,
+      INTEGRATION_TOKEN_HMAC_KEY_BASE64: Buffer.alloc(32, 2).toString("base64"),
+      EGRESS_CAPABILITY_HMAC_KEY_BASE64: Buffer.alloc(32, 3).toString("base64"),
+      SESSION_SECRET_BASE64: Buffer.alloc(32, 4).toString("base64"),
+      CSRF_SECRET_BASE64: Buffer.alloc(32, 5).toString("base64"),
+      MFA_ENCRYPTION_KEY_BASE64: Buffer.alloc(32, 6).toString("base64")
     })).not.toThrow();
   });
 
