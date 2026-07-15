@@ -1,5 +1,6 @@
 import { timingSafeEqual } from "node:crypto";
 import { lstatSync, readFileSync, statSync } from "node:fs";
+import { isAbsolute, relative, resolve } from "node:path";
 import { z } from "zod";
 
 const LOG_LEVELS = ["fatal", "error", "warn", "info", "debug", "trace", "silent"] as const;
@@ -95,10 +96,22 @@ function validateGitHubToken(value: string): string {
   return value;
 }
 
+function isWithinDirectory(file: string, directory: string): boolean {
+  const relativePath = relative(resolve(directory), resolve(file));
+  return relativePath !== "" && !relativePath.startsWith("..") && !isAbsolute(relativePath);
+}
+
+function isSystemdCredentialFile(env: NodeJS.ProcessEnv, file: string): boolean {
+  const credentialsDirectory = env.CREDENTIALS_DIRECTORY;
+  if (!credentialsDirectory) return false;
+  return isWithinDirectory(file, credentialsDirectory);
+}
+
 function readSecretFile(env: NodeJS.ProcessEnv, key: string): string | undefined {
   const file = env[`${key}_FILE`];
   if (!file) return undefined;
   const strict = (env.NODE_ENV ?? "development") === "production";
+  const systemdCredential = strict && isSystemdCredentialFile(env, file);
   const metadata = lstatSync(file);
   if (strict && metadata.isSymbolicLink()) throw new Error(`${key}_FILE must not be a symlink in production`);
   const target = metadata.isSymbolicLink() ? statSync(file) : metadata;
@@ -106,7 +119,20 @@ function readSecretFile(env: NodeJS.ProcessEnv, key: string): string | undefined
   if (strict) {
     const ownerOk = target.uid === process.getuid?.() || target.uid === 0;
     if (!ownerOk) throw new Error(`${key}_FILE has an unexpected owner`);
-    if ((target.mode & 0o077) !== 0) throw new Error(`${key}_FILE must not be group/world readable`);
+    if (systemdCredential) {
+      const credentialsDirectory = env.CREDENTIALS_DIRECTORY!;
+      const credentialsMetadata = lstatSync(credentialsDirectory);
+      if (!credentialsMetadata.isDirectory()) throw new Error(`CREDENTIALS_DIRECTORY must be a directory`);
+      if (credentialsMetadata.isSymbolicLink()) throw new Error(`CREDENTIALS_DIRECTORY must not be a symlink in production`);
+      const credentialsOwnerOk = credentialsMetadata.uid === process.getuid?.() || credentialsMetadata.uid === 0;
+      if (!credentialsOwnerOk) throw new Error(`CREDENTIALS_DIRECTORY has an unexpected owner`);
+      if ((credentialsMetadata.mode & 0o077) !== 0) {
+        throw new Error(`CREDENTIALS_DIRECTORY must not be group/world accessible`);
+      }
+      if ((target.mode & 0o007) !== 0) throw new Error(`${key}_FILE must not be world accessible`);
+    } else if ((target.mode & 0o077) !== 0) {
+      throw new Error(`${key}_FILE must not be group/world readable`);
+    }
   }
   if (target.size > SECRET_FILE_MAX_BYTES) throw new Error(`${key}_FILE exceeds the maximum supported size`);
   const value = readFileSync(file, "utf8").trim();

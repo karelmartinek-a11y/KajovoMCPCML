@@ -19,6 +19,16 @@ async function tempFile(name: string, value: string, mode = 0o600): Promise<stri
   return file;
 }
 
+async function tempCredentialFile(name: string, value: string, directoryMode = 0o700, fileMode = 0o440): Promise<{ directory: string; file: string }> {
+  const directory = await mkdtemp(path.join(tmpdir(), "kcml-credentials-test-"));
+  tempDirs.push(directory);
+  await chmod(directory, directoryMode);
+  const file = path.join(directory, name);
+  await writeFile(file, value, "utf8");
+  await chmod(file, fileMode);
+  return { directory, file };
+}
+
 afterEach(async () => {
   await Promise.all(tempDirs.splice(0, tempDirs.length).map((dir) => rm(dir, { recursive: true, force: true })));
 });
@@ -216,6 +226,9 @@ describe("configuration gates", () => {
   it("rejects unsafe production secret files", async () => {
     const worldReadable = await tempFile("secret", secret, 0o644);
     const oversized = await tempFile("oversized", "A".repeat(SECRET_FILE_BYTES));
+    const { directory: systemdCredentialsDirectory, file: systemdCredentialFile } = await tempCredentialFile("secret", secret);
+    const { directory: looseCredentialsDirectory, file: looseCredentialFile } = await tempCredentialFile("secret", secret);
+    await chmod(looseCredentialsDirectory, 0o755);
     const symlinkDir = await mkdtemp(path.join(tmpdir(), "kcml-config-symlink-"));
     tempDirs.push(symlinkDir);
     const symlinkPath = path.join(symlinkDir, "secret-link");
@@ -229,6 +242,26 @@ describe("configuration gates", () => {
       REGISTER_HOST: "register.hcasc.cz",
       BUILD_ID: "release-1"
     };
+    expect(() => loadConfig({
+      ...productionBase,
+      CREDENTIALS_DIRECTORY: systemdCredentialsDirectory,
+      ACCESS_TOKEN_HMAC_KEY_BASE64_FILE: systemdCredentialFile,
+      INTEGRATION_TOKEN_HMAC_KEY_BASE64: Buffer.alloc(32, 2).toString("base64"),
+      EGRESS_CAPABILITY_HMAC_KEY_BASE64: Buffer.alloc(32, 3).toString("base64"),
+      SESSION_SECRET_BASE64: Buffer.alloc(32, 4).toString("base64"),
+      CSRF_SECRET_BASE64: Buffer.alloc(32, 5).toString("base64"),
+      MFA_ENCRYPTION_KEY_BASE64: Buffer.alloc(32, 6).toString("base64")
+    })).not.toThrow();
+    expect(() => loadConfig({
+      ...productionBase,
+      CREDENTIALS_DIRECTORY: looseCredentialsDirectory,
+      ACCESS_TOKEN_HMAC_KEY_BASE64_FILE: looseCredentialFile,
+      INTEGRATION_TOKEN_HMAC_KEY_BASE64: Buffer.alloc(32, 2).toString("base64"),
+      EGRESS_CAPABILITY_HMAC_KEY_BASE64: Buffer.alloc(32, 3).toString("base64"),
+      SESSION_SECRET_BASE64: Buffer.alloc(32, 4).toString("base64"),
+      CSRF_SECRET_BASE64: Buffer.alloc(32, 5).toString("base64"),
+      MFA_ENCRYPTION_KEY_BASE64: Buffer.alloc(32, 6).toString("base64")
+    })).toThrow();
     expect(() => loadConfig({
       ...productionBase,
       ACCESS_TOKEN_HMAC_KEY_BASE64_FILE: worldReadable,
