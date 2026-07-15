@@ -490,7 +490,7 @@ export async function issueAccessToken(db: Db, params: {
 
   const serviceResult = await db.query(
     `select
-        ms.id, ms.code, ms.service_kind, ms.legacy_mcp_server_id, ms.resource_uri, ms.environment, ms.service_token_epoch, ms.permission_epoch, ms.active_revision_epoch,
+        ms.id, ms.code, ms.service_kind, ms.legacy_mcp_server_id, ms.resource_uri, ms.environment, ms.active_revision_id, ms.service_token_epoch, ms.permission_epoch, ms.active_revision_epoch,
         revision.validation_state as active_revision_validation_state,
         ms.lifecycle_state as registration_state, ms.api_state, ms.monitoring_enabled, ms.monitoring_profile_digest,
         ms.review_approved_at as approved_at, ms.review_due_at, ms.review_interval_days
@@ -507,7 +507,7 @@ export async function issueAccessToken(db: Db, params: {
       registration_state: service.registration_state,
       monitoring_enabled: service.monitoring_enabled,
       monitoring_profile_digest: service.monitoring_profile_digest,
-      active_revision_id: true,
+      active_revision_id: service.active_revision_id,
       validation_state: service.active_revision_validation_state,
       approved_at: service.approved_at,
       review_due_at: service.review_due_at,
