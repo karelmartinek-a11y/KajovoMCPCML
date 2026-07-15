@@ -7,7 +7,7 @@ build_id="${BUILD_ID:-$(git rev-parse HEAD)}"
 source_commit="${GITHUB_SHA:-$(git rev-parse HEAD)}"
 
 rm -rf "$destination"
-install -d -m 0755 "$destination/apps" "$destination/deploy" "$destination/docs"
+install -d -m 0755 "$destination/apps" "$destination/deploy" "$destination/docs" "$destination/docs/onboarding-catalogs"
 pnpm_major="$(pnpm --version | cut -d. -f1)"
 if [ "$pnpm_major" -ge 10 ]; then
   pnpm --filter @kcml/server deploy --prod --legacy "$destination/apps/server"
@@ -21,6 +21,8 @@ cp apps/server/src/migrations/*.sql "$destination/apps/server/dist/migrations/"
 cp -R deploy/alert-sink deploy/nginx deploy/scripts deploy/systemd "$destination/deploy/"
 cp Connect_in_Catalog_KajovoMCPCML_v1.5.docx "$destination/"
 cp docs/onboarding-manifest-v1.5.example.json "$destination/docs/"
+cp docs/service-manifest-external-api-v1.0.example.json "$destination/docs/"
+cp docs/onboarding-catalogs/*.json "$destination/docs/onboarding-catalogs/"
 find "$destination" -type f -name '._*' -delete
 
 jq -n \
