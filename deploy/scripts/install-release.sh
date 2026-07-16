@@ -347,6 +347,7 @@ wait_for_sql_equals "migration_019" "1" "select count(*) from schema_migration w
 wait_for_sql_equals "migration_022" "1" "select count(*) from schema_migration where version='022_runtime_egress_capability_backfill.sql'"
 wait_for_sql_equals "migration_034" "1" "select count(*) from schema_migration where version='034_audit_writer_owner_privileges.sql'"
 wait_for_sql_equals "migration_035" "1" "select count(*) from schema_migration where version='035_audit_writer_returning_privilege.sql'"
+wait_for_sql_equals "migration_036" "1" "select count(*) from schema_migration where version='036_audit_writer_security_contract.sql'"
 
 trap - ERR
 cleanup_registry_auth

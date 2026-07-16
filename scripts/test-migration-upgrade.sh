@@ -172,6 +172,7 @@ begin
 end $$;
 grant usage,create on schema public to kcml_audit_writer_fixture;
 alter function append_audit_event(text,text,text,text,text,jsonb,jsonb,uuid) owner to kcml_audit_writer_fixture;
+alter function append_audit_event(text,text,text,text,text,jsonb,jsonb,uuid) security invoker;
 revoke create on schema public from kcml_audit_writer_fixture;
 revoke all on table audit_event,audit_head from kcml_audit_writer_fixture;
 revoke all on sequence audit_event_id_seq from kcml_audit_writer_fixture;
@@ -180,6 +181,7 @@ grant execute on function append_audit_event(text,text,text,text,text,jsonb,json
 SQL
 psql "$KCML_UPGRADE_DATABASE_URL" --no-psqlrc --set ON_ERROR_STOP=1 --file "$migrations/034_audit_writer_owner_privileges.sql" >/dev/null
 psql "$KCML_UPGRADE_DATABASE_URL" --no-psqlrc --set ON_ERROR_STOP=1 --file "$migrations/035_audit_writer_returning_privilege.sql" >/dev/null
+psql "$KCML_UPGRADE_DATABASE_URL" --no-psqlrc --set ON_ERROR_STOP=1 --file "$migrations/036_audit_writer_security_contract.sql" >/dev/null
 psql "$KCML_UPGRADE_DATABASE_URL" --no-psqlrc --set ON_ERROR_STOP=1 <<'SQL'
 begin;
 set local role kcml_audit_caller_fixture;
@@ -189,12 +191,13 @@ SQL
 
 psql "$KCML_UPGRADE_DATABASE_URL" --no-psqlrc --set ON_ERROR_STOP=1 --tuples-only --no-align <<'SQL' | grep -Fx 'upgrade-ok'
 select case when
-  (select count(*) from schema_migration) = 36
+  (select count(*) from schema_migration) = 37
   and (select count(*) from legacy_schema_migration) = 9
   and (select count(*) from audit_event) = 1165
   and (select valid from verify_audit_chain()) is true
   and (
     select pg_get_userbyid(proowner) <> 'kcml_app'
+       and prosecdef
        and has_table_privilege(pg_get_userbyid(proowner), 'public.audit_event', 'INSERT')
        and has_column_privilege(pg_get_userbyid(proowner), 'public.audit_event', 'id', 'SELECT')
       from pg_proc
