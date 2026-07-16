@@ -10,6 +10,7 @@ const secret = (byte: number) => Buffer.alloc(32, byte).toString("base64");
 describe("automatic-onboarding-only registration surface", () => {
   let app: FastifyInstance;
   let config: AppConfig;
+  let routeRateLimits: Map<string, unknown>;
 
   beforeEach(async () => {
     config = loadConfig({
@@ -24,6 +25,11 @@ describe("automatic-onboarding-only registration surface", () => {
     });
     const db = { query: async () => ({ rowCount: 0, rows: [] }) } as unknown as Db;
     app = Fastify();
+    routeRateLimits = new Map();
+    app.addHook("onRoute", (route) => {
+      const rateLimit = (route.config as { rateLimit?: unknown } | undefined)?.rateLimit;
+      if (rateLimit) routeRateLimits.set(`${String(route.method)} ${route.url}`, rateLimit);
+    });
     await app.register(cookie, { secret: config.SESSION_SECRET_BASE64.toString("base64url") });
     registerAdminRoutes(app, db, config);
     await app.ready();
@@ -59,5 +65,18 @@ describe("automatic-onboarding-only registration surface", () => {
       payload: { username: "bootstrap", password: "very-strong-password", mfaSecret: "" }
     });
     expect(response.statusCode).toBe(404);
+  });
+
+  it("rate limits reauthentication and individual audit-event reads", () => {
+    expect(routeRateLimits.get("POST /api/reauth")).toEqual({
+      max: 5,
+      timeWindow: "1 minute",
+      groupId: "admin-reauth"
+    });
+    expect(routeRateLimits.get("GET /api/audit/events/:id")).toEqual({
+      max: 60,
+      timeWindow: "1 minute",
+      groupId: "admin-audit-read"
+    });
   });
 });

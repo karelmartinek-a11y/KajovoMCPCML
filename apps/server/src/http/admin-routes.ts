@@ -1070,7 +1070,9 @@ export function registerAdminRoutes(app: FastifyInstance, db: Db, config: AdminR
     return { ok: true };
   });
 
-  app.post("/api/reauth", async (request, reply) => {
+  app.post("/api/reauth", {
+    config: { rateLimit: { max: 5, timeWindow: "1 minute", groupId: "admin-reauth" } }
+  }, async (request, reply) => {
     const correlationId = randomUUID();
     if (hostOf(request.headers.host) !== config.ADMIN_HOST) return sendError(reply, 404, "not_found", undefined, correlationId);
     const session = await sessionAccount(db, request, config);
@@ -1639,7 +1641,9 @@ export function registerAdminRoutes(app: FastifyInstance, db: Db, config: AdminR
     }
   });
 
-  app.get("/api/audit/events/:id", async (request, reply) => {
+  app.get("/api/audit/events/:id", {
+    config: { rateLimit: { max: 60, timeWindow: "1 minute", groupId: "admin-audit-read" } }
+  }, async (request, reply) => {
     if (hostOf(request.headers.host) !== config.ADMIN_HOST) return sendError(reply, 404, "not_found");
     const session = await sessionAccount(db, request, config);
     if (!session) return sendError(reply, 401, "unauthorized");
