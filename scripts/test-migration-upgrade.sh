@@ -162,10 +162,16 @@ run_migrations
 
 psql "$KCML_UPGRADE_DATABASE_URL" --no-psqlrc --set ON_ERROR_STOP=1 --tuples-only --no-align <<'SQL' | grep -Fx 'upgrade-ok'
 select case when
-  (select count(*) from schema_migration) = 34
+  (select count(*) from schema_migration) = 35
   and (select count(*) from legacy_schema_migration) = 9
   and (select count(*) from audit_event) = 1165
   and (select valid from verify_audit_chain()) is true
+  and (
+    select pg_get_userbyid(proowner) <> 'kcml_app'
+       and has_table_privilege(pg_get_userbyid(proowner), 'public.audit_event', 'INSERT')
+      from pg_proc
+     where oid='public.append_audit_event(text,text,text,text,text,jsonb,jsonb,uuid)'::regprocedure
+  )
   and exists (
     select 1
       from mcp_server server

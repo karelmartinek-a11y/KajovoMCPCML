@@ -55,11 +55,12 @@ Baseline requested by the implementation plan: `main` at `1fb900c3d9c3f8322b5a97
 - `031`: account session epoch for O(1) revoke-all invalidation.
 - `032`: generic KCML code/hostname constraints independent of a production domain literal.
 - `033`: enforced `NULL` or `enc:v2:*` MFA ciphertext format; release migration validates it after re-encryption.
+- `034`: restores audit-writer privileges to the trusted SECURITY DEFINER owner in split-owner production databases while rejecting application-role ownership.
 
 ## Verification record
 
 - Frozen install, lint, strict typecheck and production builds passed; the non-DB suite finished with 53 files, 218 passing tests and 21 intentionally skipped PostgreSQL cases.
-- Clean PostgreSQL migration applied all 34 migrations twice, then completed the idempotent environment-to-vault import and MFA constraint validation (`clean-import-ok`).
+- Clean PostgreSQL migration applies all 35 migrations twice, including the split-owner audit-writer invariant, then completes the idempotent environment-to-vault import and MFA constraint validation (`clean-import-ok`).
 - Production-schema fixture upgraded twice and returned `upgrade-ok` with all compatibility assertions.
 - The final serial PostgreSQL run passed all eight files and all 21 tests, covering audit serialization, transactional onboarding/permissions, server state, leases, login/HTTP rate limits, operational config and external API runtime.
 - All six deployment harnesses passed: release packaging, rendered nginx configuration, minimal systemd config split, DB role isolation, alert sink and restore permissions.

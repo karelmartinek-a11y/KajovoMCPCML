@@ -39,7 +39,8 @@ const EXPECTED_MIGRATIONS = [
   "030_audit_archive_outbox.sql",
   "031_admin_session_epoch.sql",
   "032_runtime_domain_migration.sql",
-  "033_mfa_ciphertext_constraint.sql"
+  "033_mfa_ciphertext_constraint.sql",
+  "034_audit_writer_owner_privileges.sql"
 ] as const;
 
 export type ReadinessReport = {

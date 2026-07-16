@@ -30,7 +30,7 @@
 6. Create/update the non-owner `kcml_app` role through local PostgreSQL administration and revoke direct audit-table mutation.
 7. Synchronize only the deployment-managed bootstrap admin password from `PASS` and the server-held MFA secret.
 8. Snapshot the prior nginx/systemd process contract, atomically switch `/opt/kcml/current`, and start web, onboarding, monitor, egress and both alert sinks.
-9. Require all services active, both signed webhook deliveries confirmed, admin login from `PASS`, OAuth metadata, unknown-host rejection, KCML0002 discovery, egress socket, audit chain, the complete migration ledger through `033`, and KCML0002 `ACTIVE/HEALTHY`.
+9. Require all services active, both signed webhook deliveries confirmed, admin login from `PASS`, OAuth metadata, unknown-host rejection, KCML0002 discovery, egress socket, audit chain, the complete migration ledger through `034`, and KCML0002 `ACTIVE/HEALTHY`.
 
 ## Backup and restore evidence
 

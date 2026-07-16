@@ -345,6 +345,7 @@ fi
 wait_for_sql_equals "mcp_kcml0002_state" "ACTIVE/HEALTHY" "select registration_state::text || '/' || operational_state::text from mcp_server where code='KCML0002'" 90 2
 wait_for_sql_equals "migration_019" "1" "select count(*) from schema_migration where version='019_postgres_http_rate_limiting.sql'"
 wait_for_sql_equals "migration_022" "1" "select count(*) from schema_migration where version='022_runtime_egress_capability_backfill.sql'"
+wait_for_sql_equals "migration_034" "1" "select count(*) from schema_migration where version='034_audit_writer_owner_privileges.sql'"
 
 trap - ERR
 cleanup_registry_auth
