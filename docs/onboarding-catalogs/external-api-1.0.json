@@ -174,7 +174,8 @@
         "url": "https://{registerHost}",
         "variables": {
           "registerHost": {
-            "default": "register.hcasc.cz"
+            "default": "register.example.invalid",
+            "description": "Value returned in the authenticated integration intent."
           }
         }
       }
