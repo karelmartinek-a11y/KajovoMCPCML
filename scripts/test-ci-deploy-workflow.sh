@@ -26,3 +26,11 @@ grep -Fq '"${{ github.event_name }}"' "$workflow"
 
 # Avoid indefinite production jobs on a wedged self-hosted runner.
 grep -A8 '^  deploy:' "$workflow" | grep -Fq 'timeout-minutes:'
+
+# Production deploys must be serialized without interrupting an in-flight
+# privileged install. A queued stale revision must not touch the server.
+grep -A12 '^  deploy:' "$workflow" | grep -Fq 'group: production-deploy'
+grep -A12 '^  deploy:' "$workflow" | grep -Fq 'cancel-in-progress: false'
+grep -Fq 'id: freshness' "$workflow"
+grep -Fq '"$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/git/ref/heads/main"' "$workflow"
+test "$(grep -Fc "if: steps.freshness.outputs.should_deploy == 'true'" "$workflow")" = "4"

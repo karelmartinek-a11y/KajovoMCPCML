@@ -12,10 +12,10 @@
 ## Release gate
 
 1. Pull-request CI runs lint, typecheck, unit/integration tests, clean migrations, a production-shape upgrade, database-role isolation, dependency audit, secret scan, CodeQL and build.
-2. A push to `main` or manual `workflow_dispatch` on `main` assembles the production release and drives deployment. Pull requests never deploy.
+2. A push to `main` or manual `workflow_dispatch` on `main` assembles the production release and drives deployment. Pull requests never deploy. Production deploy jobs share one non-cancelling concurrency group, so a privileged install already in progress is never interrupted.
 3. CI emits an SBOM, release checksum and transparency-logged keyless Sigstore bundle issued from GitHub OIDC.
 4. The deploy job uses the `production` environment and its sole `PASS` secret. Workflow conditions require `refs/heads/main` and allow only `push` or explicit `workflow_dispatch`.
-5. The dedicated runner verifies the checksum. The sudo wrapper verifies the Sigstore bundle's issuer, workflow identity, repository, `main` ref, exact commit SHA and exact GitHub trigger (`push` or `workflow_dispatch`) before extraction, then checks the immutable release manifest.
+5. After acquiring the production concurrency lock, the dedicated runner compares the run SHA with the current `main` ref through the authenticated GitHub API. A stale run skips every artifact and deployment step. The latest run verifies the checksum, and the sudo wrapper verifies the Sigstore bundle's issuer, workflow identity, repository, `main` ref, exact commit SHA and exact GitHub trigger (`push` or `workflow_dispatch`) before extraction, then checks the immutable release manifest.
 
 ## Server install order
 

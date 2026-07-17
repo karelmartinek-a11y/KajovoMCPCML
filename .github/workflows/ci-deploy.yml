@@ -184,19 +184,47 @@ jobs:
     needs: [ci, security, release]
     runs-on: [self-hosted, kcml-deploy]
     timeout-minutes: 30
+    concurrency:
+      group: production-deploy
+      cancel-in-progress: false
     environment: production
     permissions:
       contents: read
       packages: read
     steps:
+      - name: Select only the latest main revision for deployment
+        id: freshness
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          current_sha="$(
+            curl --fail --silent --show-error --location \
+              --proto '=https' --tlsv1.2 \
+              --header "Authorization: Bearer $GH_TOKEN" \
+              --header "Accept: application/vnd.github+json" \
+              --header "X-GitHub-Api-Version: 2022-11-28" \
+              "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/git/ref/heads/main" \
+              | jq -er '.object.sha'
+          )"
+          if [ "$current_sha" = "$EXPECTED_SHA" ]; then
+            echo "should_deploy=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_deploy=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Skipping stale production revision $EXPECTED_SHA; main is $current_sha"
+          fi
       - uses: actions/download-artifact@v4
+        if: steps.freshness.outputs.should_deploy == 'true'
         with:
           name: kcml-release-${{ github.sha }}
           path: ${{ runner.temp }}/kcml-release
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        if: steps.freshness.outputs.should_deploy == 'true'
         with:
           cosign-release: v3.1.1
       - name: Verify checksum and GitHub Actions signing identity
+        if: steps.freshness.outputs.should_deploy == 'true'
         working-directory: ${{ runner.temp }}/kcml-release
         run: |
           set -euo pipefail
@@ -206,6 +234,7 @@ jobs:
             --certificate-identity=https://github.com/${{ github.repository }}/.github/workflows/ci-deploy.yml@refs/heads/main \
             --certificate-oidc-issuer=https://token.actions.githubusercontent.com
       - name: Deploy verified release
+        if: steps.freshness.outputs.should_deploy == 'true'
         env:
           PASS: ${{ secrets.PASS }}
           GHCR_TOKEN: ${{ github.token }}
