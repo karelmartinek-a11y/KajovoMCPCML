@@ -44,6 +44,13 @@ write_credential() {
   chmod 0600 "$credentials/$service/$name"
 }
 
+write_optional_credential() {
+  local service="$1" name="$2" value="$3"
+  if [ -n "$value" ]; then
+    write_credential "$service" "$name" "$value"
+  fi
+}
+
 write_env() {
   local target="$1"
   shift
@@ -61,21 +68,21 @@ export BUILD_ID
 export ONBOARDING_WORKER_ENABLED="false"
 export MONITOR_ENABLED="true"
 write_env "$root/web.env" \
-  NODE_ENV PORT BUILD_ID CONFIG_VAULT_MASTER_KEY_ID
+  NODE_ENV PORT BUILD_ID CONFIG_VAULT_MASTER_KEY_ID PUBLIC_BASE_DOMAIN ADMIN_HOST AUTH_HOST REGISTER_HOST QUARANTINE_ROOT EGRESS_PROXY_SOCKET_PATH WILDCARD_TLS_CERT_PATH TRUSTED_PROXY_CIDRS LOG_LEVEL UI_TIME_ZONE
 
 export ONBOARDING_WORKER_ENABLED="true"
 export MONITOR_ENABLED="false"
 write_env "$root/worker.env" \
-  NODE_ENV BUILD_ID ONBOARDING_WORKER_ENABLED CONFIG_VAULT_MASTER_KEY_ID
+  NODE_ENV BUILD_ID ONBOARDING_WORKER_ENABLED ONBOARDING_WORKER_INTERVAL_MS PUBLIC_BASE_DOMAIN ADMIN_HOST AUTH_HOST REGISTER_HOST QUARANTINE_ROOT GITHUB_OWNER GITHUB_REPO GITHUB_APP_ID GITHUB_APP_INSTALLATION_ID OCI_REGISTRY OCI_IMAGE_NAMESPACE OCI_CERTIFICATE_IDENTITY OCI_CERTIFICATE_OIDC_ISSUER PODMAN_BINARY COSIGN_BINARY RUNTIME_SOCKET_ROOT EGRESS_PROXY_SOCKET_PATH LOG_LEVEL UI_TIME_ZONE CONFIG_VAULT_MASTER_KEY_ID
 
 export ONBOARDING_WORKER_ENABLED="false"
 export MONITOR_ENABLED="true"
 write_env "$root/monitor.env" \
-  NODE_ENV BUILD_ID MONITOR_ENABLED CONFIG_VAULT_MASTER_KEY_ID
+  NODE_ENV BUILD_ID MONITOR_ENABLED MONITOR_INTERVAL_MS PUBLIC_BASE_DOMAIN ADMIN_HOST AUTH_HOST REGISTER_HOST ALERT_PRIMARY_WEBHOOK_URL ALERT_BACKUP_WEBHOOK_URL OCI_REGISTRY OCI_IMAGE_NAMESPACE OCI_CERTIFICATE_IDENTITY OCI_CERTIFICATE_OIDC_ISSUER PODMAN_BINARY COSIGN_BINARY RUNTIME_SOCKET_ROOT EGRESS_PROXY_SOCKET_PATH AUDIT_ARCHIVE_PATH LOG_LEVEL UI_TIME_ZONE CONFIG_VAULT_MASTER_KEY_ID
 
 export MONITOR_ENABLED="false"
 write_env "$root/egress.env" \
-  NODE_ENV BUILD_ID CONFIG_VAULT_MASTER_KEY_ID
+  NODE_ENV BUILD_ID PUBLIC_BASE_DOMAIN EGRESS_PROXY_SOCKET_PATH RUNTIME_SOCKET_ROOT LOG_LEVEL UI_TIME_ZONE CONFIG_VAULT_MASTER_KEY_ID
 
 export PORT="3011"
 export ALERT_SINK_CHANNEL="PRIMARY"
@@ -89,12 +96,25 @@ write_env "$root/alert-backup-sink.env" PORT ALERT_SINK_CHANNEL ALERT_SINK_STATE
 database_app_url="${DATABASE_APP_URL:-$DATABASE_URL}"
 database_admin_sync_url="${DATABASE_ADMIN_SYNC_URL:-${DATABASE_MIGRATOR_URL:-$DATABASE_URL}}"
 write_credential web database_url "$database_app_url"
+write_credential web access_token_hmac "${ACCESS_TOKEN_HMAC_KEY_BASE64:-}"
+write_credential web integration_token_hmac "${INTEGRATION_TOKEN_HMAC_KEY_BASE64:-}"
+write_credential web egress_capability_hmac "${EGRESS_CAPABILITY_HMAC_KEY_BASE64:-}"
+write_credential web session_secret "${SESSION_SECRET_BASE64:-}"
+write_credential web csrf_secret "${CSRF_SECRET_BASE64:-}"
+write_credential web mfa_encryption "${MFA_ENCRYPTION_KEY_BASE64:-}"
 
 write_credential worker database_url "$database_app_url"
+write_credential worker egress_capability_hmac "${EGRESS_CAPABILITY_HMAC_KEY_BASE64:-}"
+write_optional_credential worker github_token "${GITHUB_TOKEN:-}"
+write_optional_credential worker github_app_private_key "${GITHUB_APP_PRIVATE_KEY_BASE64:-}"
 
 write_credential monitor database_url "$database_app_url"
+write_credential monitor egress_capability_hmac "${EGRESS_CAPABILITY_HMAC_KEY_BASE64:-}"
+write_credential monitor alert_primary_hmac "${ALERT_PRIMARY_HMAC_KEY_BASE64:-}"
+write_credential monitor alert_backup_hmac "${ALERT_BACKUP_HMAC_KEY_BASE64:-}"
 
 write_credential egress database_url "$database_app_url"
+write_credential egress egress_capability_hmac "${EGRESS_CAPABILITY_HMAC_KEY_BASE64:-}"
 
 write_credential migrator database_url "${DATABASE_MIGRATOR_URL:-$DATABASE_URL}"
 write_credential admin-sync database_url "$database_admin_sync_url"

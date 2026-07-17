@@ -11,9 +11,13 @@ WorkingDirectory=/opt/kcml/current
 EnvironmentFile=/etc/kcml/monitor.env
 Environment=KCML_PROCESS_ROLE=monitor
 Environment=DATABASE_URL_FILE=%d/database_url
-Environment=CONFIG_VAULT_MASTER_KEY_BASE64_FILE=%d/config_vault_master_key
+Environment=EGRESS_CAPABILITY_HMAC_KEY_BASE64_FILE=%d/egress_capability_hmac
+Environment=ALERT_PRIMARY_HMAC_KEY_BASE64_FILE=%d/alert_primary_hmac
+Environment=ALERT_BACKUP_HMAC_KEY_BASE64_FILE=%d/alert_backup_hmac
 LoadCredential=database_url:/etc/kcml/credentials/monitor/database_url
-LoadCredential=config_vault_master_key:/etc/kcml/credentials/config_vault_master_key
+LoadCredential=egress_capability_hmac:/etc/kcml/credentials/monitor/egress_capability_hmac
+LoadCredential=alert_primary_hmac:/etc/kcml/credentials/monitor/alert_primary_hmac
+LoadCredential=alert_backup_hmac:/etc/kcml/credentials/monitor/alert_backup_hmac
 Environment=HOME=/var/lib/kcml/podman
 Environment=XDG_DATA_HOME=/var/lib/kcml/podman/data
 Environment=XDG_CONFIG_HOME=/var/lib/kcml/podman/config

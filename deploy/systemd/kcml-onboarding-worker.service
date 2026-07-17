@@ -11,9 +11,13 @@ WorkingDirectory=/opt/kcml/current
 EnvironmentFile=/etc/kcml/worker.env
 Environment=KCML_PROCESS_ROLE=worker
 Environment=DATABASE_URL_FILE=%d/database_url
-Environment=CONFIG_VAULT_MASTER_KEY_BASE64_FILE=%d/config_vault_master_key
+Environment=EGRESS_CAPABILITY_HMAC_KEY_BASE64_FILE=%d/egress_capability_hmac
+Environment=GITHUB_TOKEN_FILE=%d/github_token
+Environment=GITHUB_APP_PRIVATE_KEY_BASE64_FILE=%d/github_app_private_key
 LoadCredential=database_url:/etc/kcml/credentials/worker/database_url
-LoadCredential=config_vault_master_key:/etc/kcml/credentials/config_vault_master_key
+LoadCredential=egress_capability_hmac:/etc/kcml/credentials/worker/egress_capability_hmac
+LoadCredential=github_token:/etc/kcml/credentials/worker/github_token
+LoadCredential=github_app_private_key:/etc/kcml/credentials/worker/github_app_private_key
 Environment=HOME=/var/lib/kcml/podman
 Environment=XDG_DATA_HOME=/var/lib/kcml/podman/data
 Environment=XDG_CONFIG_HOME=/var/lib/kcml/podman/config
