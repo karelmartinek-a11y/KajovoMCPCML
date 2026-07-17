@@ -87,6 +87,7 @@ export ALERT_SINK_STATE_DIR="/var/lib/kcml/alert-backup-sink"
 write_env "$root/alert-backup-sink.env" PORT ALERT_SINK_CHANNEL ALERT_SINK_STATE_DIR
 
 database_app_url="${DATABASE_APP_URL:-$DATABASE_URL}"
+database_admin_sync_url="${DATABASE_ADMIN_SYNC_URL:-${DATABASE_MIGRATOR_URL:-$DATABASE_URL}}"
 write_credential web database_url "$database_app_url"
 
 write_credential worker database_url "$database_app_url"
@@ -96,7 +97,7 @@ write_credential monitor database_url "$database_app_url"
 write_credential egress database_url "$database_app_url"
 
 write_credential migrator database_url "${DATABASE_MIGRATOR_URL:-$DATABASE_URL}"
-write_credential admin-sync database_url "$database_app_url"
+write_credential admin-sync database_url "$database_admin_sync_url"
 write_credential alert-primary-sink alert_hmac "${ALERT_PRIMARY_HMAC_KEY_BASE64:-}"
 write_credential alert-backup-sink alert_hmac "${ALERT_BACKUP_HMAC_KEY_BASE64:-}"
 
