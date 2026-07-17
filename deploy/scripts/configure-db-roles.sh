@@ -43,6 +43,7 @@ grant select,insert,update,delete on all tables in schema public to kcml_app;
 grant usage,select on all sequences in schema public to kcml_app;
 revoke all on table audit_event,audit_head from kcml_app;
 grant select on table audit_event to kcml_app;
+grant update (id) on table audit_event to kcml_app;
 grant execute on function append_audit_event(text,text,text,text,text,jsonb,jsonb,uuid) to kcml_app;
 grant execute on function verify_audit_chain() to kcml_app;
 SQL

@@ -178,6 +178,7 @@ revoke all on table audit_event,audit_head from kcml_audit_writer_fixture;
 revoke all on sequence audit_event_id_seq from kcml_audit_writer_fixture;
 grant usage on schema public to kcml_audit_caller_fixture;
 grant execute on function append_audit_event(text,text,text,text,text,jsonb,jsonb,uuid) to kcml_audit_caller_fixture;
+grant update (id) on table audit_event to kcml_audit_caller_fixture;
 SQL
 psql "$KCML_UPGRADE_DATABASE_URL" --no-psqlrc --set ON_ERROR_STOP=1 --file "$migrations/034_audit_writer_owner_privileges.sql" >/dev/null
 psql "$KCML_UPGRADE_DATABASE_URL" --no-psqlrc --set ON_ERROR_STOP=1 --file "$migrations/035_audit_writer_returning_privilege.sql" >/dev/null
@@ -191,7 +192,7 @@ SQL
 
 psql "$KCML_UPGRADE_DATABASE_URL" --no-psqlrc --set ON_ERROR_STOP=1 --tuples-only --no-align <<'SQL' | grep -Fx 'upgrade-ok'
 select case when
-  (select count(*) from schema_migration) = 37
+  (select count(*) from schema_migration) = 38
   and (select count(*) from legacy_schema_migration) = 9
   and (select count(*) from audit_event) = 1165
   and (select valid from verify_audit_chain()) is true
