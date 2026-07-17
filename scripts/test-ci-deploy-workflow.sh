@@ -22,6 +22,7 @@ grep -Fq 'needs: [ci, security, release]' "$workflow"
 grep -Fq 'name: kcml-release-${{ github.sha }}' "$workflow"
 grep -Fq 'sha256sum --check kcml-release.tar.zst.sha256' "$workflow"
 grep -Fq '/usr/local/sbin/kcml-deploy-wrapper' "$workflow"
+grep -Fq '"${{ github.event_name }}"' "$workflow"
 
 # Avoid indefinite production jobs on a wedged self-hosted runner.
 grep -A8 '^  deploy:' "$workflow" | grep -Fq 'timeout-minutes:'

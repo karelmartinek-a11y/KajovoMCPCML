@@ -7,9 +7,11 @@ repository="${2:?repository required}"
 source_commit="${3:?source commit required}"
 run_id="${4:?run id required}"
 run_attempt="${5:?run attempt required}"
+workflow_trigger="${6:?workflow trigger required}"
 case "$repository" in *[!A-Za-z0-9._/-]*) exit 2 ;; esac
 [[ "$source_commit" =~ ^[a-f0-9]{40}$ ]] || exit 2
 case "$run_id:$run_attempt" in *[!0-9:]*) exit 2 ;; esac
+case "$workflow_trigger" in push|workflow_dispatch) ;; *) exit 2 ;; esac
 test "$(id -u)" = "0"
 test -n "${PASS:-}"
 
@@ -28,7 +30,7 @@ cosign verify-blob \
   --certificate-github-workflow-repository "$repository" \
   --certificate-github-workflow-ref "refs/heads/main" \
   --certificate-github-workflow-sha "$source_commit" \
-  --certificate-github-workflow-trigger "workflow_dispatch" \
+  --certificate-github-workflow-trigger "$workflow_trigger" \
   "$artifact" >/dev/null
 
 release_id="${source_commit}-${run_id}-${run_attempt}"

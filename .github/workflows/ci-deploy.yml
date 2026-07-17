@@ -220,4 +220,5 @@ jobs:
             "${{ github.repository }}" \
             "${{ github.sha }}" \
             "${{ github.run_id }}" \
-            "${{ github.run_attempt }}"
+            "${{ github.run_attempt }}" \
+            "${{ github.event_name }}"
