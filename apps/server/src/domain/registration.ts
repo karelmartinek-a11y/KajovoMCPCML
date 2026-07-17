@@ -339,6 +339,12 @@ const registrationManifest15Schema = z.object({
   }).strict()
 }).strict();
 
+const storedRegistrationManifest15Schema = registrationManifest15Schema.extend({
+  source: registrationManifest15Schema.shape.source.extend({
+    runtime: z.enum(["nodejs22-typescript", "nodejs24-typescript"])
+  })
+});
+
 export type LegacyOnboardingManifest = z.infer<typeof legacyOnboardingManifestSchema>;
 export type RegistrationManifest15 = z.infer<typeof registrationManifest15Schema>;
 export type OnboardingManifest = LegacyOnboardingManifest | RegistrationManifest15;
@@ -440,6 +446,14 @@ export function validateOnboardingManifest(input: unknown): { manifest: Registra
 export function validateStoredOnboardingManifest(input: unknown): { manifest: OnboardingManifest; digest: string } {
   const current = registrationManifest15Schema.safeParse(input);
   if (current.success) return resultFor(current.data);
+  const storedCurrent = storedRegistrationManifest15Schema.safeParse(input);
+  if (storedCurrent.success) {
+    const normalized = {
+      ...storedCurrent.data,
+      source: { ...storedCurrent.data.source, runtime: "nodejs24-typescript" as const }
+    };
+    return resultFor(normalized);
+  }
   return resultFor(legacyOnboardingManifestSchema.parse(input));
 }
 

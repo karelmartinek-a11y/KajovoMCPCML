@@ -61,6 +61,17 @@ describe("registration manifest 1.5", () => {
   });
 });
 
+describe("stored production manifest 1.5 compatibility", () => {
+  it("normalizes the historic nodejs22 runtime label without weakening intake", () => {
+    const stored = manifest();
+    const source = stored.source as Record<string, unknown>;
+    source.runtime = "nodejs22-typescript";
+
+    expect(validateStoredOnboardingManifest(stored).manifest.source.runtime).toBe("nodejs24-typescript");
+    expect(() => validateOnboardingManifest(stored)).toThrow();
+  });
+});
+
 describe("stored production manifest 1.4 compatibility", () => {
   const legacy = {
     schemaVersion: "1.4",
