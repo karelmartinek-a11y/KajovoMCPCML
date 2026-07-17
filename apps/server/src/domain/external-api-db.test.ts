@@ -562,6 +562,20 @@ describe.skipIf(!enabled)("EXTERNAL_API PostgreSQL integration", () => {
       expectedLockVersion: Number(state.lockVersion),
       correlationId: randomUUID()
     });
+    await db.query("update managed_service set enabled=false where id=$1", [serviceId]);
+    state = await managedServiceStateView(db, serviceId);
+    expect(state).toMatchObject({ apiState: "ENABLED", enabled: false });
+    await setManagedServiceApiState(db, {
+      managedServiceId: serviceId,
+      actorId: adminId,
+      actorType: "admin",
+      nextState: "ENABLED",
+      reason: "integration_test_recover_enabled_flag",
+      expectedLockVersion: Number(state.lockVersion),
+      correlationId: randomUUID()
+    });
+    state = await managedServiceStateView(db, serviceId);
+    expect(state).toMatchObject({ apiState: "ENABLED", enabled: true });
 
     const token = await issueAccessToken(db, {
       clientId: credential.publicId,

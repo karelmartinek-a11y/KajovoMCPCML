@@ -219,8 +219,10 @@ if [ "$api_state" != "ENABLED" ]; then
   public_hostname="$(jq -r '.publicHostname' <<<"$state_json")"
   resource_uri="$(jq -r '.resourceUri' <<<"$state_json")"
   api_state="$(jq -r '.apiState' <<<"$state_json")"
+  enabled_state="$(jq -r '.enabled' <<<"$state_json")"
 fi
 test "$api_state" = "ENABLED"
+test "$enabled_state" = "true"
 
 step create-kaja-credential
 kaja_response="$(
