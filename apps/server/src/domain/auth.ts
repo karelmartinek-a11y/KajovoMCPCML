@@ -679,7 +679,11 @@ export async function validateBearer(db: Db, token: string, hostname: string, hm
       operationId: "mcp.invoke"
     });
   if (!decision.allow) {
-    throw Object.assign(new Error("invalid_token"), { statusCode: 401, fingerprint: fingerprintSecret(token) });
+    throw Object.assign(new Error("invalid_token"), {
+      statusCode: 401,
+      fingerprint: fingerprintSecret(token),
+      reasonCode: decision.reasonCode
+    });
   }
   const result = await db.query(
     `select legacy.id as server_id, legacy.code, legacy.tool_name
@@ -688,7 +692,13 @@ export async function validateBearer(db: Db, token: string, hostname: string, hm
       where ms.id = $1`,
     [decision.serviceId]
   );
-  if (!result.rowCount) throw Object.assign(new Error("invalid_token"), { statusCode: 401, fingerprint: fingerprintSecret(token) });
+  if (!result.rowCount) {
+    throw Object.assign(new Error("invalid_token"), {
+      statusCode: 401,
+      fingerprint: fingerprintSecret(token),
+      reasonCode: "legacy_mapping_missing"
+    });
+  }
   return {
     credentialId: decision.principalId ?? "",
     serverId: result.rows[0].server_id,

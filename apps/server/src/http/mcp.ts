@@ -340,9 +340,12 @@ export function registerMcpRoutes(app: FastifyInstance, db: Db, config: McpHttpC
     let principal: Awaited<ReturnType<typeof validateBearer>>;
     try {
       principal = await validateBearer(db, auth.slice("Bearer ".length), hostname, config.ACCESS_TOKEN_HMAC_KEY_BASE64);
-    } catch {
+    } catch (error) {
       await recordUnauthorized(db, server.id);
-      await appendAudit(db, { eventType: "mcp.unauthorized", actorType: "anonymous", objectType: "mcp_server", objectId: server.id, after: { reason: "invalid_bearer" }, correlationId });
+      const reasonCode = error && typeof error === "object" && "reasonCode" in error && typeof error.reasonCode === "string"
+        ? error.reasonCode
+        : "invalid_bearer";
+      await appendAudit(db, { eventType: "mcp.unauthorized", actorType: "anonymous", objectType: "mcp_server", objectId: server.id, after: { reason: reasonCode }, correlationId });
       reply.header("WWW-Authenticate", challenge);
       return sendError(reply, 401, "invalid_token", "Invalid token", correlationId);
     }
