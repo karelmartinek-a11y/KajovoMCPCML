@@ -94,7 +94,16 @@ update onboarding_job
        lock_version=lock_version+1
  where release_version='2026.07.20'
    and created_at < timestamp with time zone '2026-07-20 00:00:00+00'
-   and archived_at is null;
+   and archived_at is null
+   and not exists (
+     select 1
+       from mcp_server server
+      where server.id = onboarding_job.server_id
+        and server.enabled is true
+        and server.registration_state='ACTIVE'::registration_state
+        and server.operational_state='HEALTHY'::operational_state
+        and server.active_revision_id is not null
+   );
 
 update mcp_server
    set enabled=false,
