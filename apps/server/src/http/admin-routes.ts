@@ -1381,7 +1381,9 @@ export function registerAdminRoutes(app: FastifyInstance, db: Db, config: AdminR
     }
   });
 
-  app.post("/api/admin-mfa/enrollment/start", async (request, reply) => {
+  app.post("/api/admin-mfa/enrollment/start", {
+    config: { rateLimit: { max: 5, timeWindow: "10 minutes", groupId: "admin-mfa-enrollment-start" } }
+  }, async (request, reply) => {
     const correlationId = randomUUID();
     if (hostOf(request.headers.host) !== config.ADMIN_HOST) return sendError(reply, 404, "not_found", undefined, correlationId);
     const session = await sessionAccount(db, request, config);
@@ -1408,7 +1410,9 @@ export function registerAdminRoutes(app: FastifyInstance, db: Db, config: AdminR
     };
   });
 
-  app.post("/api/admin-mfa/enrollment/verify", async (request, reply) => {
+  app.post("/api/admin-mfa/enrollment/verify", {
+    config: { rateLimit: { max: 10, timeWindow: "10 minutes", groupId: "admin-mfa-enrollment-verify" } }
+  }, async (request, reply) => {
     const correlationId = randomUUID();
     if (hostOf(request.headers.host) !== config.ADMIN_HOST) return sendError(reply, 404, "not_found", undefined, correlationId);
     const session = await sessionAccount(db, request, config);

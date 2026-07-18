@@ -105,7 +105,13 @@ update mcp_server
        retired_at=coalesce(retired_at, now()),
        lock_version=lock_version+1
  where archived_at is null
-   and created_at < timestamp with time zone '2026-07-20 00:00:00+00';
+   and created_at < timestamp with time zone '2026-07-20 00:00:00+00'
+   and not (
+     enabled is true
+     and registration_state='ACTIVE'::registration_state
+     and operational_state='HEALTHY'::operational_state
+     and active_revision_id is not null
+   );
 
 update access_token
    set revoked_at=coalesce(revoked_at, now())
