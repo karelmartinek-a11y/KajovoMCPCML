@@ -47,15 +47,20 @@ export const KCML_BLUEPRINT_COMPONENT_IDS = [
   ...KCML_MCP_COMPONENTS.map(([componentId]) => componentId)
 ] as const;
 
+function commitFromBuildId(buildId: string | undefined): string | undefined {
+  const match = buildId?.match(/^([0-9a-f]{40})(?:[-_.]|$)/i);
+  return match?.[1]?.toLowerCase();
+}
+
 export function buildMetadata(): { buildId: string; commitSha: string } {
+  const buildId = process.env.KCML_BUILD_ID
+    ?? process.env.GITHUB_RUN_ID
+    ?? process.env.BUILD_ID;
   const commitSha = process.env.KCML_COMMIT_SHA
     ?? process.env.GITHUB_SHA
     ?? process.env.COMMIT_SHA
     ?? process.env.SOURCE_COMMIT
+    ?? commitFromBuildId(buildId)
     ?? "unknown";
-  const buildId = process.env.KCML_BUILD_ID
-    ?? process.env.GITHUB_RUN_ID
-    ?? process.env.BUILD_ID
-    ?? commitSha;
-  return { buildId, commitSha };
+  return { buildId: buildId ?? commitSha, commitSha };
 }
