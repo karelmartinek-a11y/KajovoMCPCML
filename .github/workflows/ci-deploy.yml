@@ -2,7 +2,7 @@ name: CI and production deploy
 
 on:
   push:
-    branches: [main]
+    branches: ["**"]
   pull_request:
   workflow_dispatch:
 

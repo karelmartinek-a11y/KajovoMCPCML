@@ -4,9 +4,9 @@ set -euo pipefail
 workflow=".github/workflows/ci-deploy.yml"
 test -f "$workflow"
 
-# Every push to main must enter the test/release/deploy pipeline. Excluding a
-# path here silently creates production changes which were never validated.
-grep -A3 '^  push:' "$workflow" | grep -Fq 'branches: [main]'
+# Every branch push must enter the test pipeline. Release/deploy are guarded
+# below so only main can touch production, but direct branch pushes still get CI.
+grep -A3 '^  push:' "$workflow" | grep -Fq 'branches: ["**"]'
 if grep -A5 '^  push:' "$workflow" | grep -Eq 'paths(-ignore)?:'; then
   echo "main push trigger must not filter paths" >&2
   exit 1
