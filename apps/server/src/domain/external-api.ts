@@ -887,6 +887,17 @@ async function upsertManagedServiceRevision(
         managed_service_id, revision, schema_version, service_kind, validation_state, manifest, manifest_digest,
         evidence, approved_at, review_due_at, review_interval_days, active
      ) values ($1,$2,$3,'EXTERNAL_API','VALID',$4,$5,$6,$7,$8,$9,true)
+     on conflict (managed_service_id, revision) do update
+       set schema_version = excluded.schema_version,
+           service_kind = excluded.service_kind,
+           validation_state = excluded.validation_state,
+           manifest = excluded.manifest,
+           manifest_digest = excluded.manifest_digest,
+           evidence = excluded.evidence,
+           approved_at = excluded.approved_at,
+           review_due_at = excluded.review_due_at,
+           review_interval_days = excluded.review_interval_days,
+           active = true
      returning id`,
     [
       managedServiceId,
