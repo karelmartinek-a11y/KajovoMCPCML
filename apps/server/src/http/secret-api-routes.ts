@@ -74,11 +74,6 @@ export function registerSecretApiRoutes(app: FastifyInstance, db: Db, config: Ap
     });
   });
 
-  app.get("/health", async (request, reply) => {
-    if (!isSecretApiHostname(hostOf(request.headers.host), config)) return;
-    return reply.header("cache-control", "no-store").send({ ok: true, service: "secret-api" });
-  });
-
   app.post("/v1/secrets/resolve", {
     config: { rateLimit: { max: 30, timeWindow: "1 minute", groupId: "secret-api-resolve" } }
   }, async (request, reply) => {
