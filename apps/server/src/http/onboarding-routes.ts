@@ -105,6 +105,10 @@ function errorCode(error: unknown): string {
   return error instanceof Error ? error.message.split(":")[0] ?? "operation_failed" : "operation_failed";
 }
 
+function logOnboardingError(request: FastifyRequest, error: unknown, correlationId: string, operation: string): void {
+  request.log.error({ err: error, correlationId, operation }, "onboarding.route_error");
+}
+
 async function multipartPayload(request: FastifyRequest): Promise<{ manifestInput: unknown; archive: Buffer }> {
   if (!request.isMultipart()) throw Object.assign(new Error("multipart_required"), { statusCode: 415 });
   let manifestText: string | null = null;
@@ -191,6 +195,7 @@ export function registerOnboardingRoutes(app: FastifyInstance, db: Db, config: O
       reply.code(202).header("etag", `"${receipt.lockVersion}"`).header("cache-control", "no-store");
       return { job: receipt };
     } catch (error) {
+      logOnboardingError(request, error, correlationId, "external_api.create");
       return sendError(reply, statusCode(error), errorCode(error), undefined, correlationId);
     }
   };
@@ -577,6 +582,7 @@ export function registerOnboardingRoutes(app: FastifyInstance, db: Db, config: O
         reply.code(202).header("etag", `"${job.lockVersion}"`).header("cache-control", "no-store");
         return { job };
       } catch (error) {
+        logOnboardingError(request, error, correlationId, "external_api.revision");
         return sendError(reply, statusCode(error), errorCode(error), undefined, correlationId);
       }
     }
