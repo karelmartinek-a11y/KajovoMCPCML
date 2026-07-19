@@ -6,6 +6,7 @@ import { authenticator } from "otplib";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { loadConfig, type AppConfig } from "../config.js";
 import type { Db } from "../db.js";
+import { KCML_RELEASE } from "../domain/release.js";
 import { encryptMfaSecret } from "../security/secrets.js";
 import { registerOnboardingRoutes, verifyEncryptedMfaTotp } from "./onboarding-routes.js";
 
@@ -63,7 +64,7 @@ describe("programmer onboarding API authorization", () => {
     expect(response.statusCode).toBe(404);
   });
 
-  it("serves the approved 2026.07.21 onboarding catalog to an authenticated administrator", async () => {
+  it(`serves the approved ${KCML_RELEASE.catalogVersion} onboarding catalog to an authenticated administrator`, async () => {
     const response = await app.inject({
       method: "GET",
       url: "/api/onboarding-catalog",
@@ -71,7 +72,7 @@ describe("programmer onboarding API authorization", () => {
     });
     expect(response.statusCode).toBe(200);
     expect(response.headers["content-type"]).toContain("application/vnd.openxmlformats-officedocument.wordprocessingml.document");
-    expect(response.headers["content-disposition"]).toContain("KajovoCML_Onboarding_Catalog_2026.07.21.docx");
+    expect(response.headers["content-disposition"]).toContain(`KajovoCML_Onboarding_Catalog_${KCML_RELEASE.catalogVersion}.docx`);
     expect(response.rawPayload.subarray(0, 2).toString()).toBe("PK");
   });
 
@@ -160,7 +161,7 @@ describe("machine-readable onboarding catalogs", () => {
   it("serves the JSON onboarding catalog to an authenticated programmer on the register host", async () => {
     const response = await app.inject({
       method: "GET",
-      url: "/api/onboarding-catalogs/component/2026.07.21",
+      url: `/api/onboarding-catalogs/component/${KCML_RELEASE.catalogVersion}`,
       headers: {
         host: config.REGISTER_HOST,
         authorization: `Bearer kci_${"a".repeat(86)}`
@@ -168,7 +169,7 @@ describe("machine-readable onboarding catalogs", () => {
     });
     expect(response.statusCode).toBe(200);
     expect(response.json()).toMatchObject({
-      version: "2026.07.21",
+      version: KCML_RELEASE.catalogVersion,
       serviceKind: "COMPONENT"
     });
   });

@@ -325,7 +325,7 @@ export function registerOnboardingRoutes(app: FastifyInstance, db: Db, config: O
   }, async (request, reply) => {
     if (!await adminIdentity(db, config, request, reply)) return;
     try {
-      const catalog = await fs.readFile(path.resolve(repositoryRoot, MCP_CONNECT_FILE));
+      const catalog = await fs.readFile(path.resolve(repositoryRoot, "docs/releases", MCP_CATALOG_VERSION, MCP_CONNECT_FILE));
       return reply
         .header("cache-control", "private, no-store")
         .header("content-disposition", `attachment; filename="${MCP_CONNECT_FILE}"`)

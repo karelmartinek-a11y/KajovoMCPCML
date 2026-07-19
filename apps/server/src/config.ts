@@ -366,7 +366,7 @@ export type AppConfig = ParsedEnvConfig;
 export type RuntimeDefaultsConfig = Partial<Pick<RuntimeConfig, MutableRuntimeConfigKey>>;
 export type DatabaseConfig = Pick<BootstrapConfig, "DATABASE_URL">;
 export type HostRoutingConfig = Pick<AppConfig, "PUBLIC_BASE_DOMAIN" | "ADMIN_HOST" | "AUTH_HOST" | "REGISTER_HOST">;
-export type WebAppConfig = HostRoutingConfig & Pick<AppConfig, "LOG_LEVEL" | "TRUSTED_PROXY_CIDRS" | "SESSION_SECRET_BASE64">;
+export type WebAppConfig = HostRoutingConfig & Pick<AppConfig, "NODE_ENV" | "LOG_LEVEL" | "TRUSTED_PROXY_CIDRS" | "SESSION_SECRET_BASE64">;
 export type OAuthConfig = Pick<AppConfig, "AUTH_HOST" | "ACCESS_TOKEN_HMAC_KEY_BASE64" | "ACCESS_TOKEN_HMAC_KEY_ID">;
 export type ReferenceExternalApiConfig = Pick<AppConfig, "PUBLIC_BASE_DOMAIN">;
 export type McpHttpConfig = Pick<AppConfig, "PUBLIC_BASE_DOMAIN" | "AUTH_HOST" | "ACCESS_TOKEN_HMAC_KEY_BASE64">;
@@ -381,7 +381,7 @@ export type AdminRoutesConfig = HostRoutingConfig
   & AdminSessionConfig
   & AdminReauthConfig
   & ReadinessConfig
-  & Pick<AppConfig, "ADMIN_BOOTSTRAP_USERNAME" | "ADMIN_BOOTSTRAP_SECRET" | "BUILD_ID" | "CONFIG_VAULT_MASTER_KEY_BASE64" | "CONFIG_VAULT_MASTER_KEY_ID">;
+  & Pick<AppConfig, "ADMIN_BOOTSTRAP_USERNAME" | "ADMIN_BOOTSTRAP_SECRET" | "BUILD_ID" | "CONFIG_VAULT_MASTER_KEY_BASE64" | "CONFIG_VAULT_MASTER_KEY_ID" | "ACCESS_TOKEN_HMAC_KEY_BASE64" | "INTEGRATION_TOKEN_HMAC_KEY_BASE64" | "INTEGRATION_TOKEN_HMAC_KEY_ID">;
 export type ExternalApiGatewayConfig = Pick<AppConfig, "PUBLIC_BASE_DOMAIN" | "ACCESS_TOKEN_HMAC_KEY_BASE64"> & EgressClientConfig;
 export type AlertDeliveryConfig = Pick<AppConfig, "ALERT_PRIMARY_WEBHOOK_URL" | "ALERT_PRIMARY_HMAC_KEY_BASE64" | "ALERT_BACKUP_WEBHOOK_URL" | "ALERT_BACKUP_HMAC_KEY_BASE64">;
 export type GitHubOnboardingConfig = Pick<AppConfig, "GITHUB_TOKEN" | "GITHUB_APP_ID" | "GITHUB_APP_INSTALLATION_ID" | "GITHUB_APP_PRIVATE_KEY_BASE64" | "GITHUB_OWNER" | "GITHUB_REPO">;

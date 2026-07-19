@@ -46,6 +46,7 @@ import {
 } from "./credential-pages.js";
 import { onboardingHandoffText } from "./onboarding-handoff.js";
 import { OperationalConfigPage } from "./operational-config-page.js";
+import { SecretsPage } from "./secrets-page.js";
 import { formatMinuteSecondCountdown, getIntegrationTokenLifecycle } from "./integration-token-lifecycle.js";
 import { REAUTH_REQUIRED_EVENT, SESSION_EXPIRED_EVENT } from "./session-auth.js";
 import {
@@ -80,6 +81,7 @@ import {
   type IntegrationToken,
   type KajaCredential,
   type KajaPermission,
+  type ManagedSecret,
   type MonitoringProbe,
   type MonitoringOverview,
   type MonitoringProfile,
@@ -1074,6 +1076,7 @@ function Dashboard({ accountName, role, onLogout }: { accountName: string | null
   const [adminAccounts, setAdminAccounts] = useState<AdminAccount[]>([]);
   const [operationalConfig, setOperationalConfig] = useState<OperationalConfigSetting[]>([]);
   const [integrationTokens, setIntegrationTokens] = useState<IntegrationToken[]>([]);
+  const [managedSecrets, setManagedSecrets] = useState<ManagedSecret[]>([]);
   const [onboardingJobs, setOnboardingJobs] = useState<OnboardingJob[]>([]);
   const [probes, setProbes] = useState<MonitoringProbe[]>([]);
   const [monitoringOverview, setMonitoringOverview] = useState<MonitoringOverview>({ alerts: [], deliveries: [], stateHistory: [], scheduler: null });
@@ -1093,7 +1096,7 @@ function Dashboard({ accountName, role, onLogout }: { accountName: string | null
   async function load() {
     setError("");
     try {
-      const [componentRes, serverRes, credentialRes, auditRes, integrationRes, jobsRes, probesRes, monitoringRes, securityRes, integrityRes, adminAccountsRes, configRes] = await Promise.all([
+      const [componentRes, serverRes, credentialRes, auditRes, integrationRes, jobsRes, probesRes, monitoringRes, securityRes, integrityRes, adminAccountsRes, configRes, secretsRes] = await Promise.all([
         api<{ components: Component[] }>("/api/components"),
         api<{ servers: Server[] }>("/api/mcp-servers"),
         api<{ credentials: KajaCredential[] }>("/api/kaja"),
@@ -1105,7 +1108,8 @@ function Dashboard({ accountName, role, onLogout }: { accountName: string | null
         api<AdminSecurity>("/api/admin-security"),
         api<AuditIntegrity>("/api/audit/integrity"),
         role === "OWNER" ? api<{ accounts: AdminAccount[] }>("/api/admin-accounts") : Promise.resolve({ accounts: [] }),
-        api<{ settings: OperationalConfigSetting[] }>("/api/operational-config")
+        api<{ settings: OperationalConfigSetting[] }>("/api/operational-config"),
+        role !== "AUDITOR" ? api<{ secrets: ManagedSecret[] }>("/api/secrets") : Promise.resolve({ secrets: [] })
       ]);
       setComponents(componentRes.components);
       setServers(serverRes.servers);
@@ -1116,6 +1120,7 @@ function Dashboard({ accountName, role, onLogout }: { accountName: string | null
       const configuredTimeZone = configRes.settings.find((setting) => setting.key === "uiTimeZone")?.value;
       if (typeof configuredTimeZone === "string") setUiTimeZone(configuredTimeZone);
       setIntegrationTokens(integrationRes.tokens);
+      setManagedSecrets(secretsRes.secrets);
       setOnboardingJobs(jobsRes.jobs);
       setProbes(probesRes.probes);
       setMonitoringOverview(monitoringRes);
@@ -1347,6 +1352,11 @@ function Dashboard({ accountName, role, onLogout }: { accountName: string | null
     setOperationalConfig(result.settings);
   }
 
+  async function refreshSecrets() {
+    const result = await api<{ secrets: ManagedSecret[] }>("/api/secrets");
+    setManagedSecrets(result.secrets);
+  }
+
   async function saveOperationalConfig(setting: OperationalConfigSetting, value: string | number | boolean | string[]) {
     const domainVersions = Object.fromEntries(
       operationalConfig
@@ -1475,6 +1485,7 @@ function Dashboard({ accountName, role, onLogout }: { accountName: string | null
           }} />,
         monitoring: <MonitoringPage servers={servers} accountName={accountName} probes={probes} overview={monitoringOverview} onRefresh={() => { void load(); }} onAutomatedOnboarding={() => setIntegrationCreate({})} onToggleEnabled={toggleServerEnabled} onRunTest={runServerTest} onLoadMonitoringProfile={loadMonitoringProfile} onSaveMonitoringProfile={saveMonitoringProfile} onStartRevision={startServerRevision} onDeleteServer={deleteServerRegistration} onTestWebhook={testAlertWebhooks} onAcknowledgeAlert={acknowledgeAlert} onSuppressAlert={suppressAlert} onRetryDelivery={retryAlertDelivery} />,
         integration: <IntegrationTokensPage tokens={integrationTokens} jobs={onboardingJobs} onCreate={() => setIntegrationCreate({})} onOpenJob={setSelectedJobId} onResume={(jobId) => setIntegrationCreate({ resumeJobId: jobId })} onRevoke={(token) => setIntegrationConfirm({ token, action: "revoke" })} onDelete={(token) => setIntegrationConfirm({ token, action: "delete" })} onRefresh={() => { void load(); }} />,
+        secrets: role !== "AUDITOR" ? <SecretsPage secrets={managedSecrets} accountName={accountName} onRefresh={() => { void refreshSecrets(); }} /> : null,
         tokens: <CredentialsPage credentials={credentials} onOpenCreate={() => setCreateOpen(true)} onEditPermissions={openPermissions} onRename={setRenameCredential} onConfirm={(credential, action) => setConfirm({ credential, action })} onRefresh={() => { void load(); }} />,
         permissions: <PermissionsPage credentials={credentials} servers={servers} selectedId={selectedCredentialId} permissions={permissions} saving={savingPermissions} onSelect={setSelectedCredentialId} onChange={setPermissions} onSave={() => { void savePermissions(); }} />,
         audit: <AuditPage events={events} nextCursor={auditNextCursor} integrity={auditIntegrity} onLoadMore={loadMoreAudit} onLoadDetail={loadAuditDetail} onRefresh={refreshAudit} onRefreshIntegrity={refreshAuditIntegrity} />,

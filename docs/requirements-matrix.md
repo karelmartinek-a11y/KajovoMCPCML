@@ -1,6 +1,6 @@
-# KCML SSOT 2026.07.21 Requirements Matrix
+# KCML SSOT 2026.07.22 Requirements Matrix
 
-Legacy MCP manifest schemas 1.4/1.5 and catalog `2026.07.20` remain immutable and readable for compatibility and migration paths. Every new component intake is strict against the unified component catalog `2026.07.21`, with machine-readable receipts and fail-closed runtime gates.
+Legacy MCP manifest schemas 1.4/1.5 and catalogs `2026.07.20`/`2026.07.21` remain immutable and readable for compatibility and migration paths. Every new component intake is strict against the unified component catalog `2026.07.22`, with machine-readable receipts and fail-closed runtime gates.
 
 | Requirement | Implementation | Persisted evidence | Automated gate |
 | --- | --- | --- | --- |
@@ -14,7 +14,7 @@ Legacy MCP manifest schemas 1.4/1.5 and catalog `2026.07.20` remain immutable an
 | External API gateway enforcement | controlled egress proxy plus `EXTERNAL_API` runtime matcher | templated path/method/operation binding, correlation ID, gate receipts, egress capability and redacted runtime logs | direct bypass, wrong scope, wrong route, disable existing token and gateway header enforcement tests |
 | Discovery privacy | fail-closed MCP discovery | active revision and profile reference | unavailable states expose no catalog detail |
 | Shared HTTP throttling | `@fastify/rate-limit` with a fail-closed PostgreSQL store and HMAC bucket keys | route/IP bucket counters without raw client identifiers | 100 concurrent increments serialize exactly; sensitive routes carry explicit limits |
-| Database migrations | checksum ledger and advisory-locked runner | immutable 001-040 plus forward migration 041; component identity and legacy adapter bindings preserve UUID, KCML identity, endpoint and epochs | clean, production-ledger upgrade, repeated migration, role isolation and component backfill assertions |
+| Database migrations | checksum ledger and advisory-locked runner | canonical 001-044 ledger plus hashed archive of superseded pre-ledger 007-014; 017-044 add managed services, runtime enforcement, security hardening, versioned operational configuration, audit archival, component identity compatibility and Secret Manager storage/reveal binding | clean, production-ledger upgrade, idempotency, changed/late migration rejection |
 | Tamper-evident audit | database append function, serialized `audit_head` | complete previous/event hash chain and verification result | 100 concurrent writes without branches plus tamper detection |
 | Invocation integrity | accepted/final transaction model | request/response digests, status, latency, statistics and linked audit | pre-audit failure blocks handler; finalization failure opens Critical alert without handler retry |
 | Monitoring | separate `kcml-monitor.service` plus managed-service probe persistence | per-probe samples, freshness, SLO, state history, scheduler heartbeat, deduplicated alerts and recovery events | one bad server cannot stop other probes or onboarding; stale or failed `EXTERNAL_API` probes fail closed |
@@ -22,6 +22,7 @@ Legacy MCP manifest schemas 1.4/1.5 and catalog `2026.07.20` remain immutable an
 | Runtime isolation | rootless Podman supervisor and egress proxy | image/source/build/provenance/SBOM digests | timeout, secret/path policy, egress and drift tests |
 | Keyless supply chain | GitHub OIDC and Cosign identity policy | immutable image digest and attestation | exact issuer/repository/workflow mismatch fails closed |
 | Admin security | deployment-managed bootstrap admin account, session/CSRF/MFA | login/recovery/security events | no public bootstrap route; password sync only through `PASS` |
+| Central Secret Manager | `domain/secret-manager.ts`, `http/secret-api-routes.ts`, admin Secrets UI and migrations `042`-`043` | AES-GCM version envelope, HKDF from config-vault key, stable names, immutable versions, grants, activate/deactivate/soft-delete/restore, reveal grants bound to admin session/purpose, UI reveal-event audit, lifecycle-independent `client_secret` and integration-token resolve | catalog contract, crypto AAD/auth tests, admin/API typecheck, no-store public resolve and CI |
 | Least privilege | owner/migrator and `kcml_app` roles; per-service credentials | grants and credential-file inventory | application cannot mutate audit rows/head or run migrations |
 | Immutable delivery | CI-built release, SBOM, checksum and keyless Sigstore bundle | release manifest/build ID plus GitHub OIDC certificate and transparency proof | production verifies repository/workflow/ref/SHA/trigger and does not build or download dependencies |
 | Recovery | encrypted `age` backup and isolated restore test | checksum and restore evidence | backup mode/recipient/preflight and quarterly restore gate |

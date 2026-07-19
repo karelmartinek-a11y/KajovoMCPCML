@@ -17,6 +17,7 @@ import { registerComponentRoutes } from "./http/component-routes.js";
 import { registerMcpRoutes } from "./http/mcp.js";
 import { registerOnboardingRoutes } from "./http/onboarding-routes.js";
 import { registerReferenceExternalApiRoutes } from "./http/reference-external-api-routes.js";
+import { isSecretApiHostname, registerSecretApiRoutes } from "./http/secret-api-routes.js";
 import { hostOf, sendError } from "./http/errors.js";
 import { createPostgresRateLimitStore } from "./http/postgres-rate-limit-store.js";
 import { buildMetadata, KCML_RELEASE } from "./domain/release.js";
@@ -42,7 +43,7 @@ export async function buildApp(config: AppServerConfig, db: Db) {
         styleSrc: ["'self'", "'unsafe-inline'"],
         imgSrc: ["'self'", "data:"],
         frameAncestors: ["'none'"],
-        upgradeInsecureRequests: process.env.NODE_ENV === "production" ? [] : null
+        upgradeInsecureRequests: config.NODE_ENV === "production" ? [] : null
       }
     }
   });
@@ -71,6 +72,7 @@ export async function buildApp(config: AppServerConfig, db: Db) {
     const isKnownHost = host === config.ADMIN_HOST
       || host === config.AUTH_HOST
       || host === config.REGISTER_HOST
+      || isSecretApiHostname(host, config)
       || isReferenceExternalApiHostname(host, config.PUBLIC_BASE_DOMAIN)
       || isKcmlHostname(host, config.PUBLIC_BASE_DOMAIN);
     if (!isKnownHost) return sendError(reply, 404, "not_found");
@@ -83,6 +85,9 @@ export async function buildApp(config: AppServerConfig, db: Db) {
   registerExternalApiRoutes(app, db, config);
   registerOnboardingRoutes(app, db, config);
   registerComponentRoutes(app, db, config);
+  await app.register(async (secretApi) => {
+    registerSecretApiRoutes(secretApi, db, config);
+  });
 
   app.get("/api/version", async (_request, reply) => reply
     .header("cache-control", "no-store")
@@ -94,6 +99,7 @@ export async function buildApp(config: AppServerConfig, db: Db) {
     if (host === config.ADMIN_HOST) return;
     if (host === config.AUTH_HOST && (request.url === "/oauth/token" || request.url === "/oauth/introspect" || request.url === "/.well-known/oauth-authorization-server")) return;
     if (host === config.REGISTER_HOST && (request.url.startsWith("/v1/") || request.url.startsWith("/v2/"))) return;
+    if (isSecretApiHostname(host, config) && (request.url === "/health" || request.url === "/.well-known/kcml-secret-api" || request.url === "/v1/secrets/resolve")) return;
     if (isReferenceExternalApiHostname(host, config.PUBLIC_BASE_DOMAIN)) return;
     if (isKcmlHostname(host, config.PUBLIC_BASE_DOMAIN)) return;
     return sendError(reply, 404, "not_found");

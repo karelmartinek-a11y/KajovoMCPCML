@@ -4,7 +4,7 @@ import { digestCanonicalJson, reviewMetadataForManifest, validateManifest, valid
 import { KCML_RELEASE } from "./release.js";
 
 const componentFixture = JSON.parse(
-  readFileSync(new URL("../../../../docs/onboarding-manifest-2026.07.21.example.json", import.meta.url), "utf8")
+  readFileSync(new URL(`../../../../docs/onboarding-manifest-${KCML_RELEASE.manifestSchemaVersion}.example.json`, import.meta.url), "utf8")
 ) as Record<string, unknown>;
 
 const legacy15Fixture = JSON.parse(
@@ -15,7 +15,7 @@ function manifest(): Record<string, unknown> {
   return structuredClone(componentFixture);
 }
 
-describe("component manifest 2026.07.21", () => {
+describe(`component manifest ${KCML_RELEASE.manifestSchemaVersion}`, () => {
   it("accepts the published strict component example and normalizes the MCP runtime profile", () => {
     const accepted = validateOnboardingManifest(manifest());
     expect(accepted.digest).toMatch(/^sha256:[a-f0-9]{64}$/);

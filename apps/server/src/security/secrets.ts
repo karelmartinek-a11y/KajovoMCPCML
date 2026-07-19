@@ -1,4 +1,4 @@
-import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { createCipheriv, createDecipheriv, createHash, createHmac, hkdfSync, randomBytes, timingSafeEqual } from "node:crypto";
 import argon2 from "argon2";
 
 export const SECRET_BYTES = 64;
@@ -45,6 +45,7 @@ export function safeEqual(a: Buffer, b: Buffer): boolean {
 const ENCRYPTED_MFA_V1_PREFIX = "enc:v1";
 const ENCRYPTED_MFA_V2_PREFIX = "enc:v2";
 const VAULT_ENVELOPE_PREFIX = "vault:v1";
+const MANAGED_SECRET_ENVELOPE_PREFIX = "kcml-secret:v1";
 
 type MfaSecretContext = {
   subjectId: string;
@@ -176,6 +177,71 @@ export function decryptVaultSecret(envelope: string, keyring: ReadonlyMap<string
   if (!masterKey || masterKey.length !== 32) throw new Error("config_vault_key_unavailable");
   const decipher = createDecipheriv("aes-256-gcm", masterKey, Buffer.from(nonceRaw, "base64url"));
   decipher.setAAD(vaultAad({ keyId, settingKey }));
+  decipher.setAuthTag(Buffer.from(tagRaw, "base64url"));
+  return Buffer.concat([
+    decipher.update(Buffer.from(ciphertextRaw, "base64url")),
+    decipher.final()
+  ]).toString("utf8");
+}
+
+export type ManagedSecretEncryptionContext = {
+  keyId: string;
+  secretId: string;
+  stableName: string;
+  versionId: string;
+  versionNumber: number;
+  ownerKind: string;
+  ownerId: string | null;
+};
+
+function managedSecretAad(context: ManagedSecretEncryptionContext): Buffer {
+  return Buffer.from(JSON.stringify({
+    version: 1,
+    purpose: "kcml-managed-secret",
+    keyId: context.keyId,
+    secretId: context.secretId,
+    stableName: context.stableName,
+    versionId: context.versionId,
+    versionNumber: context.versionNumber,
+    ownerKind: context.ownerKind,
+    ownerId: context.ownerId,
+    algorithm: "AES-256-GCM"
+  }), "utf8");
+}
+
+function managedSecretCipherKey(masterKey: Buffer): Buffer {
+  if (masterKey.length !== 32) throw new Error("invalid_secret_manager_master_key_length");
+  return Buffer.from(hkdfSync("sha256", masterKey, Buffer.from("kcml-secret-manager:v1", "utf8"), Buffer.from("aes-256-gcm", "utf8"), 32));
+}
+
+export function encryptManagedSecret(value: string, masterKey: Buffer, context: ManagedSecretEncryptionContext): string {
+  if (!context.keyId.trim() || !context.secretId.trim() || !context.stableName.trim() || !context.versionId.trim()) {
+    throw new Error("invalid_secret_manager_context");
+  }
+  const nonce = randomBytes(12);
+  const cipher = createCipheriv("aes-256-gcm", managedSecretCipherKey(masterKey), nonce);
+  cipher.setAAD(managedSecretAad(context));
+  const ciphertext = Buffer.concat([cipher.update(value, "utf8"), cipher.final()]);
+  return [
+    MANAGED_SECRET_ENVELOPE_PREFIX,
+    Buffer.from(context.keyId, "utf8").toString("base64url"),
+    nonce.toString("base64url"),
+    ciphertext.toString("base64url"),
+    cipher.getAuthTag().toString("base64url")
+  ].join(":");
+}
+
+export function decryptManagedSecret(envelope: string, keyring: ReadonlyMap<string, Buffer>, context: Omit<ManagedSecretEncryptionContext, "keyId">): string {
+  const [prefix, version, keyIdRaw, nonceRaw, ciphertextRaw, tagRaw] = envelope.split(":");
+  if (`${prefix}:${version}` !== MANAGED_SECRET_ENVELOPE_PREFIX || !keyIdRaw || !nonceRaw || !ciphertextRaw || !tagRaw) {
+    throw new Error("invalid_secret_manager_envelope");
+  }
+  const keyId = Buffer.from(keyIdRaw, "base64url").toString("utf8");
+  const masterKey = keyring.get(keyId);
+  if (!masterKey || masterKey.length !== 32) throw new Error("secret_manager_key_unavailable");
+  const resolved = { ...context, keyId };
+  const decipher = createDecipheriv("aes-256-gcm", managedSecretCipherKey(masterKey), Buffer.from(nonceRaw, "base64url"));
+  decipher.setAAD(managedSecretAad(resolved));
   decipher.setAuthTag(Buffer.from(tagRaw, "base64url"));
   return Buffer.concat([
     decipher.update(Buffer.from(ciphertextRaw, "base64url")),

@@ -1,0 +1,210 @@
+{
+  "schemaVersion": "2026.07.22",
+  "releaseVersion": "2026.07.22",
+  "registrationRevision": "2026-07-22.1",
+  "environment": "production",
+  "componentType": "MCP_SERVER",
+  "registrationType": "MCP_SERVER",
+  "blueprint": {
+    "componentId": "MCP-RX-WA-001",
+    "version": "2026.07.22"
+  },
+  "pulseEnvelopeVersion": "2026.07.22",
+  "displayName": "WhatsApp event ingress",
+  "businessPurpose": "Receives approved WhatsApp ingress events and maps them into strict KCML pulses.",
+  "owners": [
+    {
+      "name": "Example Service Owner",
+      "email": "service@example.com"
+    }
+  ],
+  "contacts": [
+    {
+      "name": "Example Operations",
+      "email": "ops@example.com"
+    }
+  ],
+  "criticality": "HIGH",
+  "review": {
+    "intervalDays": 180,
+    "approvedAt": "2026-07-22T00:00:00.000Z",
+    "reviewDueAt": "2027-01-17T00:00:00.000Z",
+    "recertificationEvaluator": "KCML-SEC-005"
+  },
+  "source": {
+    "runtime": "nodejs24-typescript",
+    "entrypoint": "src/index.ts",
+    "testCommand": "pnpm test"
+  },
+  "runtime": {
+    "memoryMb": 256,
+    "cpuCores": 0.5,
+    "pidsLimit": 64
+  },
+  "dependencies": [
+    {
+      "name": "node",
+      "version": "24.0.0",
+      "checksum": "sha256:61df8c17ef87f64d8bea5e68e6f19ed9bdaf904cbc70c9b2597e9293758d9944"
+    }
+  ],
+  "networkPolicy": {
+    "outboundAllowlist": [],
+    "dnsPolicy": "strict",
+    "filesystemPolicy": "isolated-runtime-only"
+  },
+  "dataGovernance": {
+    "classification": "CONFIDENTIAL",
+    "containsPersonalData": true,
+    "retentionDays": 365
+  },
+  "pulseContract": {
+    "incoming": [
+      {
+        "pulseType": "wa.message.received",
+        "direction": "INCOMING",
+        "schema": {
+          "type": "object"
+        },
+        "routeAcl": [
+          "AI-CLS-001"
+        ],
+        "scopes": [
+          "pulse:ingress"
+        ],
+        "executionMode": "ACK_THEN_EVENT",
+        "timeoutMs": 3000,
+        "resultPulseTypes": [
+          "wa.message.accepted"
+        ],
+        "deadlineMs": 60000,
+        "retry": {
+          "transportRetry": true,
+          "retryable": true,
+          "requiresIdempotencyKey": true
+        },
+        "idempotency": "REQUIRED"
+      }
+    ],
+    "outgoing": [
+      {
+        "pulseType": "wa.message.accepted",
+        "direction": "OUTGOING",
+        "schema": {
+          "type": "object"
+        },
+        "routeAcl": [
+          "AI-CLS-001"
+        ],
+        "scopes": [
+          "pulse:publish"
+        ],
+        "executionMode": "ASYNC",
+        "timeoutMs": 3000,
+        "resultPulseTypes": [],
+        "deadlineMs": 60000,
+        "retry": {
+          "transportRetry": false,
+          "retryable": false,
+          "requiresIdempotencyKey": true
+        },
+        "idempotency": "REQUIRED"
+      }
+    ]
+  },
+  "retryPolicy": {
+    "handlerRetry": false
+  },
+  "auditPolicy": {
+    "technicalAudit": "PLATFORM",
+    "businessAudit": "COMPONENT"
+  },
+  "monitoringProfile": {
+    "slo": {
+      "availabilityPercent": 99.9
+    },
+    "probes": [
+      "runtime",
+      "route_acl",
+      "artifact_drift",
+      "recertification"
+    ]
+  },
+  "maintenance": {
+    "rollbackRef": "evidence/rollback.md"
+  },
+  "autoQuarantine": {
+    "enabled": true,
+    "rules": [
+      "CROSS_HOST",
+      "ARTIFACT_DRIFT",
+      "ROUTE_ACL_DRIFT"
+    ]
+  },
+  "evidence": {
+    "architectureRef": "evidence/architecture.md",
+    "securityRef": "evidence/security.md"
+  },
+  "change": {
+    "changeClass": "INITIAL"
+  },
+  "integrity": {
+    "manifestDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "sourceDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+  },
+  "handlerKey": "whatsapp_ingress",
+  "handlerVersion": "1.0.0",
+  "facadeTools": [
+    {
+      "name": "ingress",
+      "inputSchema": {
+        "type": "object"
+      },
+      "outputSchema": {
+        "type": "object"
+      }
+    }
+  ],
+  "protocol": {
+    "protocolVersion": "2025-11-25",
+    "transport": "streamable-http",
+    "capabilities": [
+      "tools"
+    ]
+  },
+  "publicEndpoints": [
+    {
+      "endpointId": "WA_INGRESS",
+      "path": "/events/whatsapp",
+      "methods": [
+        "POST"
+      ],
+      "authMode": "SIGNED_WEBHOOK",
+      "requestSchema": {
+        "type": "object"
+      },
+      "responseSchema": {
+        "type": "object"
+      },
+      "limits": {
+        "requestBytes": 262144,
+        "responseBytes": 65536
+      },
+      "timeoutMs": 3000,
+      "rateLimit": {
+        "windowSeconds": 60,
+        "maxRequests": 600
+      },
+      "idempotency": "REQUIRED",
+      "signatureProfile": "whatsapp-hmac-v1",
+      "eventMapping": {
+        "pulseType": "wa.message.received",
+        "correlationIdSource": "header:x-correlation-id"
+      }
+    }
+  ],
+  "handlerContract": {
+    "export": "handle",
+    "listener": "forbidden"
+  }
+}

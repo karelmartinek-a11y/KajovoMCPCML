@@ -250,6 +250,57 @@ code { font-family: "SFMono-Regular", Consolas, monospace; font-size: 10.5px; }
 .badge.danger { background: #f9e1df; color: #a62a24; }
 .badge.neutral { background: #edf1f4; color: #53606d; }
 
+.secret-detail { display: grid; gap: 16px; }
+.modal.secret-detail-modal { width: min(980px, calc(100vw - 40px)); overflow-x: hidden; }
+.secret-detail-modal .modal-actions { flex-wrap: wrap; }
+.secret-summary-panel {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+.secret-summary-panel > div {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #f8fafb;
+  display: grid;
+  gap: 6px;
+}
+.secret-summary-panel small { color: var(--muted); font-size: 10px; font-weight: 700; text-transform: uppercase; }
+.secret-summary-panel strong { font-size: 20px; line-height: 1; }
+.secret-summary-panel code { overflow-wrap: anywhere; white-space: normal; }
+.secret-grant-editor { display: grid; gap: 12px; }
+.secret-grant-editor h3 { margin: 0; font-size: 13px; }
+.secret-grant-form {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.8fr) minmax(180px, 1.2fr) minmax(180px, 1.2fr) auto;
+  gap: 10px;
+  align-items: end;
+}
+.secret-reveal-form .notice { margin: 0; }
+.secret-reveal-value {
+  position: relative;
+  display: grid;
+  gap: 7px;
+  padding: 13px;
+  border: 1px solid #e5c06c;
+  border-radius: var(--radius);
+  background: #fff8e6;
+  user-select: none;
+}
+.secret-reveal-value code {
+  display: block;
+  max-height: 150px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: #2b2416;
+  font-size: 12px;
+  line-height: 1.45;
+}
+.secret-reveal-value small, .secret-reveal-value span { color: #7a5a17; font-size: 10.5px; }
+
 .integration-token-table { min-width: 900px; table-layout: fixed; }
 .integration-token-table th, .integration-token-table td { height: 112px; white-space: normal; }
 .integration-token-table th:nth-child(1) { width: 22%; }
@@ -722,7 +773,7 @@ input[type="checkbox"] { width: 17px; height: 17px; min-height: 17px; padding: 0
   .compact-search input { width: 100%; }
   .modal-backdrop { align-items: start; padding: 12px; }
   .modal { max-height: calc(100vh - 24px); }
-  .modal-server-detail, .modal-server-test-flow { width: 100%; }
+  .modal-server-detail, .modal-server-test-flow, .secret-detail-modal { width: 100%; }
   .server-detail-hero, .server-test-hero { grid-template-columns: 1fr; }
   .server-detail-layout, .server-monitoring-grid { grid-template-columns: 1fr; }
   .component-detail-grid { grid-template-columns: 1fr; }
@@ -735,6 +786,8 @@ input[type="checkbox"] { width: 17px; height: 17px; min-height: 17px; padding: 0
   .server-test-checkpoint small { grid-column: 2; }
   .mfa-enrollment { grid-template-columns: 1fr; }
   .mfa-qr-image, .mfa-qr-fallback { width: min(220px, 100%); height: auto; aspect-ratio: 1; }
+  .secret-summary-panel { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .secret-grant-form { grid-template-columns: 1fr; }
   .gate-grid, .job-cards { grid-template-columns: 1fr 1fr; }
 }
 

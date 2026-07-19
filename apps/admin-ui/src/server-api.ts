@@ -1,4 +1,4 @@
-import type { AlertDelivery, Component, MonitoringProfile, OperationalAlert, Server } from "./types.js";
+import type { AlertDelivery, Component, ManagedSecret, MonitoringProfile, OperationalAlert, SecretGrant, SecretVersion, Server } from "./types.js";
 import { api, csrf } from "./ui-helpers.js";
 
 const mutationHeaders = (): HeadersInit => ({ "x-csrf-token": csrf() });
@@ -135,4 +135,101 @@ export async function suppressOperationalAlert(alert: OperationalAlert, reason: 
 
 export async function retryAlertDelivery(delivery: AlertDelivery): Promise<void> {
   await api(`/api/alert-deliveries/${delivery.id}/retry`, { method: "POST", headers: mutationHeaders(), body: "{}" });
+}
+
+export function createManagedSecret(input: {
+  stableName: string;
+  displayName: string;
+  description: string;
+  value: string;
+}): Promise<{ secret: ManagedSecret }> {
+  return api<{ secret: ManagedSecret }>("/api/secrets", {
+    method: "POST",
+    headers: mutationHeaders(),
+    body: JSON.stringify(input)
+  });
+}
+
+export function rotateManagedSecret(secret: ManagedSecret, value: string): Promise<{ secret: ManagedSecret }> {
+  return api<{ secret: ManagedSecret }>(`/api/secrets/${secret.id}/rotate`, {
+    method: "POST",
+    headers: mutationHeaders(),
+    body: JSON.stringify({ value, expectedVersion: secret.lockVersion })
+  });
+}
+
+export async function deleteManagedSecret(secret: ManagedSecret): Promise<void> {
+  await api(`/api/secrets/${secret.id}/delete`, {
+    method: "POST",
+    headers: mutationHeaders(),
+    body: JSON.stringify({ expectedVersion: secret.lockVersion })
+  });
+}
+
+export function setManagedSecretStatus(secret: ManagedSecret, status: "ACTIVE" | "DISABLED"): Promise<{ secret: ManagedSecret }> {
+  return api<{ secret: ManagedSecret }>(`/api/secrets/${secret.id}/status`, {
+    method: "POST",
+    headers: mutationHeaders(),
+    body: JSON.stringify({ status, expectedVersion: secret.lockVersion })
+  });
+}
+
+export function restoreManagedSecret(secret: ManagedSecret): Promise<{ secret: ManagedSecret }> {
+  return api<{ secret: ManagedSecret }>(`/api/secrets/${secret.id}/restore`, {
+    method: "POST",
+    headers: mutationHeaders(),
+    body: JSON.stringify({ expectedVersion: secret.lockVersion })
+  });
+}
+
+export function listSecretVersions(secret: ManagedSecret): Promise<{ versions: SecretVersion[] }> {
+  return api<{ versions: SecretVersion[] }>(`/api/secrets/${secret.id}/versions`);
+}
+
+export function listSecretGrants(secret: ManagedSecret): Promise<{ grants: SecretGrant[] }> {
+  return api<{ grants: SecretGrant[] }>(`/api/secrets/${secret.id}/grants`);
+}
+
+export function grantManagedSecret(secret: ManagedSecret, input: {
+  principalKind: SecretGrant["principalKind"];
+  principalId?: string | null;
+  principalPublicId?: string | null;
+}): Promise<{ grants: SecretGrant[] }> {
+  return api<{ grants: SecretGrant[] }>(`/api/secrets/${secret.id}/grants`, {
+    method: "POST",
+    headers: mutationHeaders(),
+    body: JSON.stringify(input)
+  });
+}
+
+export async function revokeManagedSecretGrant(grant: SecretGrant): Promise<void> {
+  await api(`/api/secret-grants/${grant.id}/revoke`, {
+    method: "POST",
+    headers: mutationHeaders(),
+    body: "{}"
+  });
+}
+
+export function createSecretRevealGrant(secret: ManagedSecret, input: { password: string; totp: string; purpose: string }): Promise<{ revealGrantId: string; expiresAt: string }> {
+  return api<{ revealGrantId: string; expiresAt: string }>(`/api/secrets/${secret.id}/reveal-grants`, {
+    method: "POST",
+    headers: mutationHeaders(),
+    body: JSON.stringify(input)
+  });
+}
+
+export function revealManagedSecret(secret: ManagedSecret, revealGrantId: string): Promise<{ value: string; expiresAt: string; version: number; fingerprint: string }> {
+  return api<{ value: string; expiresAt: string; version: number; fingerprint: string }>(`/api/secrets/${secret.id}/reveal`, {
+    method: "POST",
+    headers: mutationHeaders(),
+    body: JSON.stringify({ revealGrantId })
+  });
+}
+
+export async function auditSecretRevealUiEvent(secret: ManagedSecret, eventType: "copy" | "cut" | "contextmenu" | "blur" | "visibility_hidden" | "expired" | "cleared", revealGrantId?: string | null): Promise<void> {
+  await api(`/api/secrets/${secret.id}/reveal-events`, {
+    method: "POST",
+    headers: mutationHeaders(),
+    body: JSON.stringify({ eventType, revealGrantId: revealGrantId ?? null })
+  });
 }

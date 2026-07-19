@@ -21,16 +21,23 @@
 
 `install-release.sh` performs the following fail-closed sequence:
 
-1. Install nginx and systemd definitions, including the separate `kcml-monitor.service`.
-   Legacy installations missing explicit control-plane host variables derive `admin`, `auth` and `register` hostnames from `PUBLIC_BASE_DOMAIN`; explicitly configured custom hostnames remain unchanged.
+1. Install nginx and systemd definitions, including the separate `kcml-monitor.service` and the Secret API virtual host `secrets.<PUBLIC_BASE_DOMAIN>`.
+   Legacy installations missing explicit control-plane host variables derive `admin`, `auth`, `register` and `secrets` hostnames from `PUBLIC_BASE_DOMAIN`; explicitly configured custom hostnames remain unchanged.
 2. Materialize per-service environment and credential files with modes `0700/0600`.
-3. Run preflight for TLS SAN, rootless Podman, Cosign identity, two separately keyed signed HTTPS alert sinks, `age`, service credentials and writable isolated paths.
+3. Run preflight for TLS SAN including `secrets.<PUBLIC_BASE_DOMAIN>`, rootless Podman, Cosign identity, two separately keyed signed HTTPS alert sinks, `age`, service credentials and writable isolated paths.
 4. Create an encrypted custom-format PostgreSQL backup plus checksum.
 5. Apply checksum-locked forward migrations under advisory lock and timeouts.
 6. Create/update the non-owner `kcml_app` role through local PostgreSQL administration and revoke direct audit-table mutation.
 7. Synchronize only the deployment-managed bootstrap admin password from `PASS` and the server-held MFA secret.
 8. Snapshot the prior nginx/systemd process contract, atomically switch `/opt/kcml/current`, and start web, onboarding, monitor, egress and both alert sinks.
-9. Require all services active, both signed webhook deliveries confirmed, admin login from `PASS`, OAuth metadata, unknown-host rejection, KCML0002 discovery, egress socket, audit chain, the complete migration ledger through `036`, and KCML0002 `ACTIVE/HEALTHY`.
+9. Require all services active, both signed webhook deliveries confirmed, admin login from `PASS`, OAuth metadata, Secret API metadata on `secrets.<PUBLIC_BASE_DOMAIN>`, unknown-host rejection, KCML0002 discovery, egress socket, audit chain, the complete migration ledger through `044`, and KCML0002 `ACTIVE/HEALTHY`.
+
+## Secret Manager Operations
+
+- Secret values are authoritative in PostgreSQL and manageable through the KCML admin Secrets page. Do not add application `.env` keys or GitHub Actions secrets for managed values.
+- Encryption uses the existing `CONFIG_VAULT_MASTER_KEY_BASE64` and `CONFIG_VAULT_MASTER_KEY_ID`; rotating that bootstrap key requires the normal config-vault key-rotation procedure and a Secret Manager re-encryption migration plan.
+- Runtime clients call `POST https://secrets.<PUBLIC_BASE_DOMAIN>/v1/secrets/resolve` with either `Authorization: Bearer <integration_token>` for a single-component integration token or `Authorization: Basic base64(client_id:client_secret)` for a registered `client_secret`.
+- The Secret API deliberately does not accept short-lived OAuth access tokens and does not apply OAuth scope/audience/component-lifecycle gates inside resolve. Valid integration tokens and long-lived `client_secret` credentials remain eligible regardless of component activation/quarantine state; resolve then requires an active secret plus an explicit grant and returns indistinguishable `secret_unavailable` errors for missing, inactive, deleted or ungranted names.
 
 ## Backup and restore evidence
 

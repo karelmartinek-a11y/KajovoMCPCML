@@ -17,11 +17,11 @@ function clone<T>(value: T): T {
   return structuredClone(value);
 }
 
-const catalog = readJson("../../../../docs/onboarding-catalogs/component-2026.07.21.json");
-const schema = readJson("../contracts/component-manifest-2026.07.21.schema.json");
-const example = readJson("../../../../docs/onboarding-manifest-2026.07.21.example.json");
+const catalog = readJson(`../../../../docs/onboarding-catalogs/component-${KCML_RELEASE.catalogVersion}.json`);
+const schema = readJson(`../contracts/component-manifest-${KCML_RELEASE.manifestSchemaVersion}.schema.json`);
+const example = readJson(`../../../../docs/onboarding-manifest-${KCML_RELEASE.manifestSchemaVersion}.example.json`);
 
-describe("component onboarding catalog 2026.07.21", () => {
+describe(`component onboarding catalog ${KCML_RELEASE.catalogVersion}`, () => {
   it("publishes one component catalog with the required release and protocol versions", () => {
     expect(catalog).toMatchObject({
       version: KCML_RELEASE.catalogVersion,

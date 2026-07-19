@@ -11,13 +11,16 @@ test -x node_modules/.bin/vitest
 BUILD_ID="test-build-release" bash scripts/build-release.sh "$tmpdir/release"
 test -x node_modules/.bin/vitest
 
-test -f "$tmpdir/release/docs/onboarding-manifest-2026.07.21.example.json"
-test -f "$tmpdir/release/docs/component-manifest-2026.07.21.schema.json"
+release="2026.07.22"
+
+test -f "$tmpdir/release/docs/onboarding-manifest-${release}.example.json"
+test -f "$tmpdir/release/docs/component-manifest-${release}.schema.json"
 test -f "$tmpdir/release/docs/service-manifest-external-api-v1.0.example.json"
-test -f "$tmpdir/release/docs/onboarding-catalogs/component-2026.07.21.json"
-test -f "$tmpdir/release/KajovoCML_Onboarding_Catalog_2026.07.21.docx"
-test -f "$tmpdir/release/KajovoCML_Onboarding_Catalog_2026.07.21.pdf"
-test -f "$tmpdir/release/docs/releases/2026.07.21/KajovoCML_Onboarding_Catalog_2026.07.21.pdf"
+test -f "$tmpdir/release/docs/onboarding-catalogs/component-${release}.json"
+test -f "$tmpdir/release/docs/releases/${release}/KajovoCML_Onboarding_Catalog_${release}.docx"
+test -f "$tmpdir/release/docs/releases/${release}/KajovoCML_Onboarding_Catalog_${release}.pdf"
+test -f "$tmpdir/release/docs/releases/${release}/README.md"
+test -f "$tmpdir/release/docs/releases/${release}/compatibility-matrix.md"
 test -f "$tmpdir/release/docs/onboarding-catalogs/external-api-1.0.json"
 test -f "$tmpdir/release/apps/server/dist/cli/release-kcml0002-smoke.js"
 test -f "$tmpdir/release/apps/server/dist/cli/release-kcml0002-runtime-refresh.js"
@@ -26,7 +29,7 @@ test -f "$tmpdir/release/apps/server/dist/cli/import-operational-config.js"
 test -f "$tmpdir/release/deploy/scripts/kcml-handler-preload-wrapper.sh"
 test -f "$tmpdir/release/deploy/scripts/render-nginx-config.mjs"
 
-mcp_manifest_path="$(jq -r '.manifestExamplePath' "$tmpdir/release/docs/onboarding-catalogs/component-2026.07.21.json")"
+mcp_manifest_path="$(jq -r '.manifestExamplePath' "$tmpdir/release/docs/onboarding-catalogs/component-${release}.json")"
 external_manifest_path="$(jq -r '.manifestExamplePath' "$tmpdir/release/docs/onboarding-catalogs/external-api-1.0.json")"
 
 test -f "$tmpdir/release/$mcp_manifest_path"

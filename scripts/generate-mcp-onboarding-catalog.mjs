@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const releaseArgument = process.argv.find((argument) => argument.startsWith("--release="));
-const release = releaseArgument?.slice("--release=".length) ?? "2026.07.21";
+const release = releaseArgument?.slice("--release=".length) ?? "2026.07.22";
 if (!/^20[0-9]{2}[.](0[1-9]|1[0-2])[.](0[1-9]|[12][0-9]|3[01])$/.test(release)) throw new Error(`Unsupported catalog release: ${release}`);
 if (release <= "2026.07.20") throw new Error(`Historical catalog is immutable: ${release}`);
 const protocol = "2025-11-25";
@@ -336,6 +336,11 @@ const catalog = {
   },
   implementationTokens: {
     tokenTypes: ["SINGLE_COMPONENT", "BLUEPRINT_RELEASE"],
+    secretApiCompatibility: {
+      acceptedTokenTypes: ["SINGLE_COMPONENT", "BLUEPRINT_RELEASE"],
+      rejectedTokenTypes: [],
+      grantIdentity: "Secret API accepts any valid integration token and requires an explicit secret grant bound to component UUID, token UUID, or token fingerprint."
+    },
     blueprintRelease: {
       releaseVersion: release,
       allowedBlueprintComponentIds: blueprintIds,
@@ -346,6 +351,40 @@ const catalog = {
       ttlHours: 24,
       maxTtlDays: 30,
       secret: { bytes: 64, prefix: "kci_", storage: "HMAC digest only" }
+    }
+  },
+  secretManager: {
+    serviceId: "KCML-SEC-005",
+    catalogVersion: release,
+    publicApi: {
+      hostPattern: "secrets.{PUBLIC_BASE_DOMAIN}",
+      resolveEndpoint: "/v1/secrets/resolve",
+      request: { method: "POST", contentType: "application/json", schema: { type: "object", required: ["name"], additionalProperties: false, properties: { name: { type: "string", pattern: "^[A-Z][A-Z0-9_]{2,127}$" } } } },
+      response: { contentType: "application/json", fields: ["name", "value", "version", "fingerprint", "correlationId"], cache: "no-store" },
+      auth: {
+        integrationToken: { header: "Authorization: Bearer <integration_token>", acceptedTokenTypes: ["SINGLE_COMPONENT", "BLUEPRINT_RELEASE"], lifecycleIndependent: true },
+        clientSecret: { header: "Authorization: Basic base64(client_id:client_secret)", tokenField: "client_secret", directCredentialVerification: true, lifecycleIndependent: true },
+        oauthAccessToken: { accepted: false, reason: "Secret API does not issue or require short-lived OAuth access tokens for resolve" },
+        scopeAudienceLifecycleEvaluation: { appliedInsideSecretApi: false, replacementGate: "credential authenticity plus explicit secret grant" },
+        componentLifecycleEvaluation: { appliedInsideSecretApi: false, blockedStatesIgnoredForCredentialValidity: ["DISABLED", "INACTIVE", "QUARANTINED", "DEREGISTERED"] }
+      },
+      errorModel: {
+        missingUngrantInactiveDeleted: "secret_unavailable",
+        ambiguity: "invalid_client",
+        correlationId: "always returned"
+      },
+      limits: { requestBytes: 4096, responseCache: "forbidden", rateLimit: { windowSeconds: 60, maxRequests: 30 } }
+    },
+    adminGui: {
+      location: "KCML admin Secrets page",
+      capabilities: ["create", "rotate", "deactivate", "activate", "soft-delete", "restore-disabled", "version-history", "grant", "revoke-grant", "two-phase-reveal", "reveal-ui-event-audit"],
+      reveal: { requiresFreshPassword: true, requiresCurrentTotp: true, oneTimeGrantSeconds: 15, boundTo: ["admin", "session", "secret", "version", "purpose"], persistentStorage: false }
+    },
+    storage: {
+      databaseAuthority: "PostgreSQL",
+      encryption: "AES-256-GCM envelope with HKDF-SHA-256 key derivation from CONFIG_VAULT_MASTER_KEY_BASE64",
+      aad: ["secretId", "stableName", "versionId", "versionNumber", "ownerKind", "ownerId", "algorithm", "keyId"],
+      operationalSecretDependencies: ["CONFIG_VAULT_MASTER_KEY_BASE64", "CONFIG_VAULT_MASTER_KEY_ID"]
     }
   },
   submittedArtifacts: [

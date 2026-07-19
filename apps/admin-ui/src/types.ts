@@ -1,4 +1,4 @@
-export type Page = "components" | "monitoring" | "integration" | "tokens" | "permissions" | "audit" | "config" | "security" | "admins";
+export type Page = "components" | "monitoring" | "integration" | "secrets" | "tokens" | "permissions" | "audit" | "config" | "security" | "admins";
 export type AdminRole = "OWNER" | "ADMIN" | "AUDITOR";
 export type Session = { authenticated: boolean; account: string | null; role: AdminRole | null; bootstrapRequired?: boolean };
 export type Server = {
@@ -101,6 +101,42 @@ export type Component = {
   updatedAt: string;
   permissions?: ComponentPermission[];
   credentials?: ComponentCredential[];
+};
+export type ManagedSecret = {
+  id: string;
+  stableName: string;
+  displayName: string;
+  description: string;
+  ownerKind: string;
+  ownerId: string | null;
+  status: string;
+  activeVersionId: string | null;
+  activeVersionNumber: number | null;
+  activeFingerprint: string | null;
+  grantCount: number;
+  lockVersion: number;
+  createdAt: string;
+  updatedAt: string;
+  deletedAt: string | null;
+};
+export type SecretGrant = {
+  id: string;
+  principalKind: "KAJA" | "COMPONENT" | "INTEGRATION_TOKEN";
+  principalId: string | null;
+  principalPublicId: string | null;
+  grantedAt: string;
+  revokedAt: string | null;
+};
+export type SecretVersion = {
+  id: string;
+  versionNumber: number;
+  fingerprint: string;
+  keyId: string;
+  algorithm: string;
+  createdAt: string;
+  activatedAt: string | null;
+  retiredAt: string | null;
+  active: boolean;
 };
 export type KajaCredential = {
   id: string;
@@ -329,6 +365,7 @@ export const pageNames: Record<Page, string> = {
   components: "Katalog komponent",
   monitoring: "Monitoring komponent",
   integration: "Implementační tokeny",
+  secrets: "Správa tajemství",
   tokens: "Klientská pověření Kaja",
   permissions: "Správa oprávnění",
   audit: "Audit",

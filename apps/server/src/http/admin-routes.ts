@@ -36,6 +36,21 @@ import { listOperationalConfig, rotateMfaEncryptionKey, updateDomainConfiguratio
 import { buildReadinessReport } from "../domain/readiness.js";
 import { evaluateRecertification } from "../domain/recertification.js";
 import { digestCanonicalJson } from "../domain/registration.js";
+import {
+  auditRevealUiEvent,
+  consumeRevealGrant,
+  createRevealGrant,
+  createSecret,
+  deleteSecret,
+  grantSecret,
+  listSecretGrants,
+  listSecrets,
+  listSecretVersions,
+  revokeSecretGrant,
+  restoreSecret,
+  rotateSecret,
+  setSecretStatus
+} from "../domain/secret-manager.js";
 import { setServerEnabled, transitionServerState } from "../domain/server-state.js";
 import { matchesExpectedResult } from "../onboarding/activation.js";
 import { decryptMfaSecret, encryptMfaSecret, hmacToken, redact } from "../security/secrets.js";
@@ -100,6 +115,42 @@ type SignedAdminTokenPayload = {
 const operationalConfigUpdateSchema = z.object({
   value: z.union([z.string(), z.number(), z.boolean(), z.array(z.string())]),
   expectedVersion: z.number().int().min(0)
+}).strict();
+const secretCreateSchema = z.object({
+  stableName: z.string().trim().min(3).max(128),
+  displayName: z.string().trim().min(1).max(160),
+  description: z.string().max(2000).optional(),
+  value: z.string().min(1).max(64 * 1024),
+  ownerKind: z.enum(["PLATFORM", "COMPONENT", "MANAGED_SERVICE", "KAJA"]).optional(),
+  ownerId: z.string().uuid().nullable().optional()
+}).strict();
+const secretRotateSchema = z.object({
+  value: z.string().min(1).max(64 * 1024),
+  expectedVersion: z.number().int().min(0)
+}).strict();
+const secretDeleteSchema = z.object({
+  expectedVersion: z.number().int().min(0)
+}).strict();
+const secretStatusSchema = z.object({
+  expectedVersion: z.number().int().min(0),
+  status: z.enum(["ACTIVE", "DISABLED"])
+}).strict();
+const secretGrantSchema = z.object({
+  principalKind: z.enum(["KAJA", "COMPONENT", "INTEGRATION_TOKEN"]),
+  principalId: z.string().uuid().nullable().optional(),
+  principalPublicId: z.string().trim().min(1).max(160).nullable().optional()
+}).strict();
+const secretRevealGrantSchema = z.object({
+  password: z.string().min(1),
+  totp: z.string().trim().min(6).max(32),
+  purpose: z.string().trim().min(3).max(240).default("admin reveal")
+}).strict();
+const secretRevealConsumeSchema = z.object({
+  revealGrantId: z.string().uuid()
+}).strict();
+const secretRevealUiEventSchema = z.object({
+  revealGrantId: z.string().uuid().nullable().optional(),
+  eventType: z.enum(["copy", "cut", "contextmenu", "blur", "visibility_hidden", "expired", "cleared"])
 }).strict();
 const domainConfigUpdateSchema = z.object({
   baseDomain: z.string(),
@@ -1207,6 +1258,7 @@ export function registerAdminRoutes(app: FastifyInstance, db: Db, config: AdminR
     if (hostOf(request.headers.host) !== config.ADMIN_HOST) return sendError(reply, 404, "not_found", undefined, correlationId);
     const session = await sessionAccount(db, request, config);
     if (!session) return sendError(reply, 401, "unauthorized", undefined, correlationId);
+    if (session.role === "AUDITOR") return sendError(reply, 403, "admin_role_forbidden", undefined, correlationId);
     if (!requireCsrf(request)) return sendError(reply, 403, "csrf_failed", undefined, correlationId);
     try {
       const parsed = domainConfigUpdateSchema.parse(request.body);
@@ -1221,6 +1273,7 @@ export function registerAdminRoutes(app: FastifyInstance, db: Db, config: AdminR
     if (hostOf(request.headers.host) !== config.ADMIN_HOST) return sendError(reply, 404, "not_found", undefined, correlationId);
     const session = await sessionAccount(db, request, config);
     if (!session) return sendError(reply, 401, "unauthorized", undefined, correlationId);
+    if (session.role === "AUDITOR") return sendError(reply, 403, "admin_role_forbidden", undefined, correlationId);
     if (!requireCsrf(request)) return sendError(reply, 403, "csrf_failed", undefined, correlationId);
     const { key } = request.params as { key: string };
     try {
@@ -1232,6 +1285,201 @@ export function registerAdminRoutes(app: FastifyInstance, db: Db, config: AdminR
       return { ok: true };
     } catch (error) {
       return sendError(reply, Number((error as { statusCode?: number }).statusCode ?? 500), error instanceof Error ? error.message : "operation_failed", undefined, correlationId);
+    }
+  });
+
+  app.get("/api/secrets", async (request, reply) => {
+    const correlationId = randomUUID();
+    if (hostOf(request.headers.host) !== config.ADMIN_HOST) return sendError(reply, 404, "not_found", undefined, correlationId);
+    const session = await sessionAccount(db, request, config);
+    if (!session) return sendError(reply, 401, "unauthorized", undefined, correlationId);
+    if (session.role === "AUDITOR") return sendError(reply, 403, "admin_role_forbidden", undefined, correlationId);
+    return { secrets: await listSecrets(db) };
+  });
+
+  app.post("/api/secrets", async (request, reply) => {
+    const correlationId = randomUUID();
+    if (hostOf(request.headers.host) !== config.ADMIN_HOST) return sendError(reply, 404, "not_found", undefined, correlationId);
+    const session = await sessionAccount(db, request, config);
+    if (!session) return sendError(reply, 401, "unauthorized", undefined, correlationId);
+    if (session.role === "AUDITOR") return sendError(reply, 403, "admin_role_forbidden", undefined, correlationId);
+    if (!requireCsrf(request)) return sendError(reply, 403, "csrf_failed", undefined, correlationId);
+    try {
+      const parsed = secretCreateSchema.parse(request.body);
+      return { secret: await createSecret(db, config, session.accountId, correlationId, parsed) };
+    } catch (error) {
+      return sendError(reply, Number((error as { statusCode?: number }).statusCode ?? 400), error instanceof Error ? error.message : "operation_failed", undefined, correlationId);
+    }
+  });
+
+  app.post("/api/secrets/:id/rotate", async (request, reply) => {
+    const correlationId = randomUUID();
+    if (hostOf(request.headers.host) !== config.ADMIN_HOST) return sendError(reply, 404, "not_found", undefined, correlationId);
+    const session = await sessionAccount(db, request, config);
+    if (!session) return sendError(reply, 401, "unauthorized", undefined, correlationId);
+    if (session.role === "AUDITOR") return sendError(reply, 403, "admin_role_forbidden", undefined, correlationId);
+    if (!requireCsrf(request)) return sendError(reply, 403, "csrf_failed", undefined, correlationId);
+    const { id } = request.params as { id: string };
+    try {
+      const parsed = secretRotateSchema.parse(request.body);
+      return { secret: await rotateSecret(db, config, session.accountId, correlationId, id, parsed) };
+    } catch (error) {
+      return sendError(reply, Number((error as { statusCode?: number }).statusCode ?? 400), error instanceof Error ? error.message : "operation_failed", undefined, correlationId);
+    }
+  });
+
+  app.post("/api/secrets/:id/delete", async (request, reply) => {
+    const correlationId = randomUUID();
+    if (hostOf(request.headers.host) !== config.ADMIN_HOST) return sendError(reply, 404, "not_found", undefined, correlationId);
+    const session = await sessionAccount(db, request, config);
+    if (!session) return sendError(reply, 401, "unauthorized", undefined, correlationId);
+    if (session.role === "AUDITOR") return sendError(reply, 403, "admin_role_forbidden", undefined, correlationId);
+    if (!requireCsrf(request)) return sendError(reply, 403, "csrf_failed", undefined, correlationId);
+    const { id } = request.params as { id: string };
+    try {
+      const parsed = secretDeleteSchema.parse(request.body);
+      await deleteSecret(db, session.accountId, correlationId, id, parsed.expectedVersion);
+      return { ok: true };
+    } catch (error) {
+      return sendError(reply, Number((error as { statusCode?: number }).statusCode ?? 400), error instanceof Error ? error.message : "operation_failed", undefined, correlationId);
+    }
+  });
+
+  app.post("/api/secrets/:id/status", async (request, reply) => {
+    const correlationId = randomUUID();
+    if (hostOf(request.headers.host) !== config.ADMIN_HOST) return sendError(reply, 404, "not_found", undefined, correlationId);
+    const session = await sessionAccount(db, request, config);
+    if (!session) return sendError(reply, 401, "unauthorized", undefined, correlationId);
+    if (session.role === "AUDITOR") return sendError(reply, 403, "admin_role_forbidden", undefined, correlationId);
+    if (!requireCsrf(request)) return sendError(reply, 403, "csrf_failed", undefined, correlationId);
+    const { id } = request.params as { id: string };
+    try {
+      const parsed = secretStatusSchema.parse(request.body);
+      return { secret: await setSecretStatus(db, session.accountId, correlationId, id, parsed.expectedVersion, parsed.status) };
+    } catch (error) {
+      return sendError(reply, Number((error as { statusCode?: number }).statusCode ?? 400), error instanceof Error ? error.message : "operation_failed", undefined, correlationId);
+    }
+  });
+
+  app.post("/api/secrets/:id/restore", async (request, reply) => {
+    const correlationId = randomUUID();
+    if (hostOf(request.headers.host) !== config.ADMIN_HOST) return sendError(reply, 404, "not_found", undefined, correlationId);
+    const session = await sessionAccount(db, request, config);
+    if (!session) return sendError(reply, 401, "unauthorized", undefined, correlationId);
+    if (session.role === "AUDITOR") return sendError(reply, 403, "admin_role_forbidden", undefined, correlationId);
+    if (!requireCsrf(request)) return sendError(reply, 403, "csrf_failed", undefined, correlationId);
+    const { id } = request.params as { id: string };
+    try {
+      const parsed = secretDeleteSchema.parse(request.body);
+      return { secret: await restoreSecret(db, session.accountId, correlationId, id, parsed.expectedVersion) };
+    } catch (error) {
+      return sendError(reply, Number((error as { statusCode?: number }).statusCode ?? 400), error instanceof Error ? error.message : "operation_failed", undefined, correlationId);
+    }
+  });
+
+  app.get("/api/secrets/:id/versions", async (request, reply) => {
+    const correlationId = randomUUID();
+    if (hostOf(request.headers.host) !== config.ADMIN_HOST) return sendError(reply, 404, "not_found", undefined, correlationId);
+    const session = await sessionAccount(db, request, config);
+    if (!session) return sendError(reply, 401, "unauthorized", undefined, correlationId);
+    if (session.role === "AUDITOR") return sendError(reply, 403, "admin_role_forbidden", undefined, correlationId);
+    const { id } = request.params as { id: string };
+    return { versions: await listSecretVersions(db, id) };
+  });
+
+  app.get("/api/secrets/:id/grants", async (request, reply) => {
+    const correlationId = randomUUID();
+    if (hostOf(request.headers.host) !== config.ADMIN_HOST) return sendError(reply, 404, "not_found", undefined, correlationId);
+    const session = await sessionAccount(db, request, config);
+    if (!session) return sendError(reply, 401, "unauthorized", undefined, correlationId);
+    if (session.role === "AUDITOR") return sendError(reply, 403, "admin_role_forbidden", undefined, correlationId);
+    const { id } = request.params as { id: string };
+    return { grants: await listSecretGrants(db, id) };
+  });
+
+  app.post("/api/secrets/:id/grants", async (request, reply) => {
+    const correlationId = randomUUID();
+    if (hostOf(request.headers.host) !== config.ADMIN_HOST) return sendError(reply, 404, "not_found", undefined, correlationId);
+    const session = await sessionAccount(db, request, config);
+    if (!session) return sendError(reply, 401, "unauthorized", undefined, correlationId);
+    if (session.role === "AUDITOR") return sendError(reply, 403, "admin_role_forbidden", undefined, correlationId);
+    if (!requireCsrf(request)) return sendError(reply, 403, "csrf_failed", undefined, correlationId);
+    const { id } = request.params as { id: string };
+    try {
+      const parsed = secretGrantSchema.parse(request.body);
+      return { grants: await grantSecret(db, session.accountId, correlationId, id, parsed) };
+    } catch (error) {
+      return sendError(reply, Number((error as { statusCode?: number }).statusCode ?? 400), error instanceof Error ? error.message : "operation_failed", undefined, correlationId);
+    }
+  });
+
+  app.post("/api/secret-grants/:id/revoke", async (request, reply) => {
+    const correlationId = randomUUID();
+    if (hostOf(request.headers.host) !== config.ADMIN_HOST) return sendError(reply, 404, "not_found", undefined, correlationId);
+    const session = await sessionAccount(db, request, config);
+    if (!session) return sendError(reply, 401, "unauthorized", undefined, correlationId);
+    if (session.role === "AUDITOR") return sendError(reply, 403, "admin_role_forbidden", undefined, correlationId);
+    if (!requireCsrf(request)) return sendError(reply, 403, "csrf_failed", undefined, correlationId);
+    const { id } = request.params as { id: string };
+    try {
+      await revokeSecretGrant(db, session.accountId, correlationId, id);
+      return { ok: true };
+    } catch (error) {
+      return sendError(reply, Number((error as { statusCode?: number }).statusCode ?? 400), error instanceof Error ? error.message : "operation_failed", undefined, correlationId);
+    }
+  });
+
+  app.post("/api/secrets/:id/reveal-grants", {
+    config: { rateLimit: { max: 5, timeWindow: "1 minute", groupId: "secret-reveal-grant" } }
+  }, async (request, reply) => {
+    const correlationId = randomUUID();
+    if (hostOf(request.headers.host) !== config.ADMIN_HOST) return sendError(reply, 404, "not_found", undefined, correlationId);
+    const session = await sessionAccount(db, request, config);
+    if (!session) return sendError(reply, 401, "unauthorized", undefined, correlationId);
+    if (session.role === "AUDITOR") return sendError(reply, 403, "admin_role_forbidden", undefined, correlationId);
+    if (!requireCsrf(request)) return sendError(reply, 403, "csrf_failed", undefined, correlationId);
+    const { id } = request.params as { id: string };
+    try {
+      const parsed = secretRevealGrantSchema.parse(request.body);
+      return await createRevealGrant(db, config, session.accountId, correlationId, id, { ...parsed, sessionId: session.sessionId });
+    } catch (error) {
+      return sendError(reply, Number((error as { statusCode?: number }).statusCode ?? 400), error instanceof Error ? error.message : "operation_failed", undefined, correlationId);
+    }
+  });
+
+  app.post("/api/secrets/:id/reveal", {
+    config: { rateLimit: { max: 10, timeWindow: "1 minute", groupId: "secret-reveal-consume" } }
+  }, async (request, reply) => {
+    const correlationId = randomUUID();
+    if (hostOf(request.headers.host) !== config.ADMIN_HOST) return sendError(reply, 404, "not_found", undefined, correlationId);
+    const session = await sessionAccount(db, request, config);
+    if (!session) return sendError(reply, 401, "unauthorized", undefined, correlationId);
+    if (session.role === "AUDITOR") return sendError(reply, 403, "admin_role_forbidden", undefined, correlationId);
+    if (!requireCsrf(request)) return sendError(reply, 403, "csrf_failed", undefined, correlationId);
+    const { id } = request.params as { id: string };
+    try {
+      const parsed = secretRevealConsumeSchema.parse(request.body);
+      const revealed = await consumeRevealGrant(db, config, session.accountId, session.sessionId, correlationId, id, parsed.revealGrantId);
+      return reply.header("cache-control", "no-store").send(revealed);
+    } catch (error) {
+      return sendError(reply, Number((error as { statusCode?: number }).statusCode ?? 400), error instanceof Error ? error.message : "operation_failed", undefined, correlationId);
+    }
+  });
+
+  app.post("/api/secrets/:id/reveal-events", async (request, reply) => {
+    const correlationId = randomUUID();
+    if (hostOf(request.headers.host) !== config.ADMIN_HOST) return sendError(reply, 404, "not_found", undefined, correlationId);
+    const session = await sessionAccount(db, request, config);
+    if (!session) return sendError(reply, 401, "unauthorized", undefined, correlationId);
+    if (session.role === "AUDITOR") return sendError(reply, 403, "admin_role_forbidden", undefined, correlationId);
+    if (!requireCsrf(request)) return sendError(reply, 403, "csrf_failed", undefined, correlationId);
+    const { id } = request.params as { id: string };
+    try {
+      const parsed = secretRevealUiEventSchema.parse(request.body);
+      await auditRevealUiEvent(db, session.accountId, session.sessionId, correlationId, id, parsed);
+      return { ok: true };
+    } catch (error) {
+      return sendError(reply, Number((error as { statusCode?: number }).statusCode ?? 400), error instanceof Error ? error.message : "operation_failed", undefined, correlationId);
     }
   });
 
