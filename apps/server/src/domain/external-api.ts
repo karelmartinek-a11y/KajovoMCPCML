@@ -876,12 +876,12 @@ async function upsertManagedServiceRevision(
   client: pg.PoolClient,
   managedServiceId: string,
   manifest: ExternalApiRegistrationManifest,
-  manifestDigest: string,
-  previousActiveRevisionId: string | null
+  manifestDigest: string
 ): Promise<{ revisionId: string; activeRevisionEpoch: number }> {
-  if (previousActiveRevisionId) {
-    await client.query("update managed_service_revision set active=false where id=$1", [previousActiveRevisionId]);
-  }
+  await client.query(
+    "update managed_service_revision set active=false where managed_service_id=$1 and active is true",
+    [managedServiceId]
+  );
   const inserted = await client.query(
     `insert into managed_service_revision(
         managed_service_id, revision, schema_version, service_kind, validation_state, manifest, manifest_digest,
@@ -1034,7 +1034,7 @@ export async function createExternalApiManagedService(
       ]
     );
     const managedServiceId = String(managed.rows[0].id);
-    const revision = await upsertManagedServiceRevision(client, managedServiceId, manifest, manifestDigest, null);
+    const revision = await upsertManagedServiceRevision(client, managedServiceId, manifest, manifestDigest);
     await client.query(
       `insert into external_api_service_profile(
           managed_service_id, base_url, healthcheck_url, readiness_url, api_style, auth_header_name, auth_header_scheme,
@@ -1203,8 +1203,7 @@ export async function updateExternalApiManagedService(
     }
     const managed = await client.query("select * from managed_service where code=$1 and service_kind='EXTERNAL_API' for update", [row.code]);
     if (!managed.rowCount) throw Object.assign(new Error("managed_service_not_found"), { statusCode: 404 });
-    const previousActiveRevisionId = managed.rows[0].active_revision_id ? String(managed.rows[0].active_revision_id) : null;
-    const revision = await upsertManagedServiceRevision(client, String(managed.rows[0].id), manifest, manifestDigest, previousActiveRevisionId);
+    const revision = await upsertManagedServiceRevision(client, String(managed.rows[0].id), manifest, manifestDigest);
     await client.query(
       `update onboarding_job
           set manifest = $3,

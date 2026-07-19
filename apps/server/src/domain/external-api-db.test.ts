@@ -964,6 +964,7 @@ describe.skipIf(!enabled)("EXTERNAL_API PostgreSQL integration", () => {
       randomUUID()
     );
     expect(receipt.finalState).toBe("REGISTERED_DISABLED");
+    await db.query("update managed_service set active_revision_id=null where id=$1", [receipt.serviceId]);
 
     const resumed = await createIntegrationToken(db, config, adminId, randomUUID(), "External API resumed integration", {
       summary: "Reference external API",
