@@ -115,6 +115,16 @@ wait_for_sql_equals() {
   echo "release-check-failed:$label expected=$expected actual=$actual" >&2
   return 1
 }
+effective_admin_username() {
+  local fallback="${ADMIN_BOOTSTRAP_USERNAME:-owner}"
+  psql "$app_database_url" --no-psqlrc --tuples-only --no-align --quiet \
+    --set fallback="$fallback" <<'SQL'
+select coalesce(
+  (select value_json #>> '{}' from operational_config_setting where key='adminBootstrapUsername' and value_json is not null),
+  :'fallback'
+)
+SQL
+}
 rollback_on_error() {
   exit_code=$?
   trap - ERR
@@ -290,7 +300,8 @@ while IFS='|' read -r channel delivery_id; do
 done < <(psql "$app_database_url" --no-psqlrc --tuples-only --no-align --quiet --command \
   "select channel,idempotency_key from alert_webhook_delivery where alert_id='$test_alert_id' order by channel")
 
-admin_username="${ADMIN_BOOTSTRAP_USERNAME:-owner}"
+admin_username="$(effective_admin_username)"
+export ADMIN_BOOTSTRAP_USERNAME="$admin_username"
 step verify-core-hosts
 login_payload="$(jq -nc --arg username "$admin_username" --arg password "$PASS" '{username:$username,password:$password}')"
 curl -fsS -H "Host: $admin_host" -H 'content-type: application/json' \
