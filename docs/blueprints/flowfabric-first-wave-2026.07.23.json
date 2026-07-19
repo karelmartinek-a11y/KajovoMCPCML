@@ -1,0 +1,80 @@
+{
+  "$schema": "urn:kcml:blueprint:flowfabric-first-wave:2026.07.23",
+  "blueprintId": "flowfabric-first-wave",
+  "displayName": "KajovoFlowFabric first AI/MCP integration wave",
+  "releaseVersion": "2026.07.23",
+  "sourceReleaseVersion": "2026.07.20",
+  "releaseWaveKey": "baseline-2026-07-23",
+  "source": {
+    "repositoryName": "KajovoFlowFabric",
+    "localAuditPath": "/Volumes/KINGSTON/KajovoFlowFabric",
+    "commit": "937fba4de2716586350ad6a1ac8dd52b9848c96a",
+    "evidencePath": "evidence/final-release",
+    "status": "READY_FOR_DRY_RUN_ONLY"
+  },
+  "scope": {
+    "aiAgents": 9,
+    "mcpServers": 11,
+    "managedServicePrerequisites": 5,
+    "implementerChildJobs": 20,
+    "managedServicesAsChildJobs": 0
+  },
+  "runtimeIdentityPolicy": {
+    "assignedBy": "KajovoCML onboarding only",
+    "forbiddenInFactoryArtifacts": [
+      "KCML code",
+      "hostname",
+      "resource",
+      "final MCP toolName",
+      "Kaja credential",
+      "credential secret",
+      "authorization snapshot"
+    ]
+  },
+  "dependencyWaves": [
+    { "wave": 0, "name": "platform prerequisites", "componentIds": ["KCML-AUTH-001", "KCML-CTL-002", "KCML-MON-003", "KCML-AUD-004", "KCML-SEC-005"] },
+    { "wave": 1, "name": "workflow foundation", "componentIds": ["MCP-WFC-011"] },
+    { "wave": 2, "name": "PMS", "componentIds": ["MCP-PMS-RO-005", "MCP-PMS-RW-006"] },
+    { "wave": 3, "name": "ingress", "componentIds": ["MCP-RX-WA-001", "MCP-RX-MS-002", "MCP-RX-EM-003", "MCP-RX-BC-004"] },
+    { "wave": 4, "name": "agents", "componentIds": ["AI-CLS-001", "AI-QRP-002", "AI-LYL-003", "AI-GRP-004", "AI-BIZ-005", "AI-IND-006", "AI-HIS-007", "AI-BRD-008", "AI-QA-009"] },
+    { "wave": 5, "name": "egress", "componentIds": ["MCP-TX-WA-007", "MCP-TX-MS-008", "MCP-TX-EM-009", "MCP-TX-BC-010"] }
+  ],
+  "readiness": {
+    "localRegressionStatus": "PASS",
+    "manifestAuditStatus": "PASS",
+    "securityAuditStatus": "PASS",
+    "releaseDryRunStatus": "PASS",
+    "actualSubmitEnabled": false,
+    "networkAttemptsInDryRun": 0,
+    "readyForOnboardingCriteriaMet": false,
+    "blockingBeforeRealOnboarding": [
+      "Missing onboarding release token.",
+      "Messenger Page and onboarding callback binding remain pending.",
+      "Booking.com provider integration remains blocked pending approval and implementation.",
+      "Reservation authorization rules and automatic-change allowlist are not approved.",
+      "GitHub secret values and IMAP/SMTP host and port runtime bindings may still be missing."
+    ]
+  },
+  "components": [
+    { "componentId": "AI-CLS-001", "componentType": "AI_AGENT", "registrationType": "KAJA_CLIENT", "executionProfile": "AGENT_ROUTER", "dependencyWave": 4, "status": "READY_FOR_ONBOARDING", "incomingPulseTypes": 2, "outgoingPulseTypes": 12, "publicEndpoints": 0, "zipSha256": "c95a8ce1b6733a2a46fa3f008f24832326adbe20c24ff3f66b27f87bdf4d0278", "manifestSha256": "7e9ff0b6a2dd8d9998d8191d275404fe5811b9d2437b264562d0b6cb85c42c4b" },
+    { "componentId": "AI-QRP-002", "componentType": "AI_AGENT", "registrationType": "KAJA_CLIENT", "executionProfile": "AGENT_WORKER", "dependencyWave": 4, "status": "READY_FOR_ONBOARDING", "incomingPulseTypes": 2, "outgoingPulseTypes": 5, "publicEndpoints": 0, "zipSha256": "b191eaccfc63e702cb463c93ddf5a91fefd12a47c202908ead3409f879e524ac", "manifestSha256": "253deda3ef6f047bd3a2166f5a8055af99004944f9b7b8a52b9db75d2d6e5cc9" },
+    { "componentId": "AI-LYL-003", "componentType": "AI_AGENT", "registrationType": "KAJA_CLIENT", "executionProfile": "AGENT_WORKER", "dependencyWave": 4, "status": "READY_FOR_ONBOARDING", "incomingPulseTypes": 4, "outgoingPulseTypes": 6, "publicEndpoints": 0, "zipSha256": "3cb419a4645faffc5ded086b0ae7224f3eb5858e3cb41a1dd74a941e8f3c53f6", "manifestSha256": "b50c0315f0c8552cc176f4f688b086cfafe386572412845e0122c4360977a42e" },
+    { "componentId": "AI-GRP-004", "componentType": "AI_AGENT", "registrationType": "KAJA_CLIENT", "executionProfile": "AGENT_WORKER", "dependencyWave": 4, "status": "READY_FOR_ONBOARDING", "incomingPulseTypes": 4, "outgoingPulseTypes": 6, "publicEndpoints": 0, "zipSha256": "8bcdd19b03710f6d1b6c066d4562c99af58f91863f922f42f820d4f8598db2c3", "manifestSha256": "bcd03734842a00565abba88e91acebac5f3620d4ab766bba1e966f86c1364ffc" },
+    { "componentId": "AI-BIZ-005", "componentType": "AI_AGENT", "registrationType": "KAJA_CLIENT", "executionProfile": "AGENT_WORKER", "dependencyWave": 4, "status": "READY_FOR_ONBOARDING", "incomingPulseTypes": 3, "outgoingPulseTypes": 4, "publicEndpoints": 0, "zipSha256": "4ff56348e6adf05b2ed087b519fd3f880c643773852aff0a05571bb4a00263c8", "manifestSha256": "b6eff1c4197c2aed4681eb91470a14a2148b94da6e0caf48121a403f3c406437" },
+    { "componentId": "AI-IND-006", "componentType": "AI_AGENT", "registrationType": "KAJA_CLIENT", "executionProfile": "AGENT_WORKER", "dependencyWave": 4, "status": "READY_FOR_ONBOARDING", "incomingPulseTypes": 4, "outgoingPulseTypes": 6, "publicEndpoints": 0, "zipSha256": "9296607b57ec570ee0af5ceac304d3ab4ed76a6ff3e6b9a5f8a4b91fb5dee5da", "manifestSha256": "b15a293b916926eb62ff73e6a4a44a22cea35eb4ac321733ead77c15b3f5d5b3" },
+    { "componentId": "AI-HIS-007", "componentType": "AI_AGENT", "registrationType": "KAJA_CLIENT", "executionProfile": "AGENT_CONTEXT", "dependencyWave": 4, "status": "READY_FOR_ONBOARDING", "incomingPulseTypes": 2, "outgoingPulseTypes": 4, "publicEndpoints": 0, "zipSha256": "373ded9517fe9072a034e361330362da0ec98844ff09d7ecb5c6bb4b2d98edb7", "manifestSha256": "08a14eaeeb2d189ed41e63ed5014cbd7f2fc3ba8776b20c051ad561f971f8d95" },
+    { "componentId": "AI-BRD-008", "componentType": "AI_AGENT", "registrationType": "KAJA_CLIENT", "executionProfile": "AGENT_REVIEW", "dependencyWave": 4, "status": "READY_FOR_ONBOARDING", "incomingPulseTypes": 2, "outgoingPulseTypes": 3, "publicEndpoints": 0, "zipSha256": "13284547c5d7ac343418b8ba63e8672b1e8d98d941405fe4ca3c3e035977dee2", "manifestSha256": "bbbede15a39adb75d18d9c14fd685d46db93d9f3decfe69df3fdb3b6f6ee92f2" },
+    { "componentId": "AI-QA-009", "componentType": "AI_AGENT", "registrationType": "KAJA_CLIENT", "executionProfile": "AGENT_QA", "dependencyWave": 4, "status": "READY_FOR_ONBOARDING", "incomingPulseTypes": 3, "outgoingPulseTypes": 11, "publicEndpoints": 0, "zipSha256": "1bd893697caa63f25c562b8d7a06c7d1b5a323f8070c10743b63be04072cfd6a", "manifestSha256": "8901bf273ce55acebd3b13be2b35ddd1f9ee79509284ef2e2c74897117c3c0bb" },
+    { "componentId": "MCP-WFC-011", "componentType": "MCP_SERVER", "registrationType": "MCP_SERVER", "executionProfile": "STATEFUL_SERVICE", "dependencyWave": 1, "status": "READY_FOR_ONBOARDING", "incomingPulseTypes": 15, "outgoingPulseTypes": 12, "publicEndpoints": 0, "zipSha256": "0d63f6eba7f68076830cafda255377903badcd18ccc5121ca89b6376f546f71a", "manifestSha256": "3ea2ee2228ab0d96bf6412348be7604e35cf7390ee7c5de57e22a46ff45ce405" },
+    { "componentId": "MCP-PMS-RO-005", "componentType": "MCP_SERVER", "registrationType": "MCP_SERVER", "executionProfile": "ISOLATED_HANDLER", "dependencyWave": 2, "status": "READY_FOR_ONBOARDING", "incomingPulseTypes": 2, "outgoingPulseTypes": 8, "publicEndpoints": 0, "zipSha256": "024d86af725724f7e4e4b6e8ed32e2ee741c80598caa1911667a6f23628ee996", "manifestSha256": "9935280a93814a6eceba27b7070d3647360abae8921d01e18a5691dcda01e740" },
+    { "componentId": "MCP-PMS-RW-006", "componentType": "MCP_SERVER", "registrationType": "MCP_SERVER", "executionProfile": "STATEFUL_HANDLER", "dependencyWave": 2, "status": "READY_FOR_ONBOARDING", "incomingPulseTypes": 4, "outgoingPulseTypes": 13, "publicEndpoints": 0, "zipSha256": "2eb928c4b1dabd44501945ac05b5deb634ffbe8e6fa205611ac9c98c832d83c7", "manifestSha256": "2cfc2f012698f202ce32114d7292ce157b1b0c095f1119db9ec76ac01f7fcb7f" },
+    { "componentId": "MCP-RX-WA-001", "componentType": "MCP_SERVER", "registrationType": "MCP_SERVER", "executionProfile": "EVENT_INGRESS", "dependencyWave": 3, "status": "READY_FOR_ONBOARDING", "incomingPulseTypes": 1, "outgoingPulseTypes": 10, "publicEndpoints": 2, "zipSha256": "5e6b9b3244f2ac1382a2997639448ca0a7cc338a52d6995c31fccc048c25b1f1", "manifestSha256": "257299ac366a0d354ed36d486802c5b77fc7cf6ee96e24bc30a7d40abb932b57" },
+    { "componentId": "MCP-RX-MS-002", "componentType": "MCP_SERVER", "registrationType": "MCP_SERVER", "executionProfile": "EVENT_INGRESS", "dependencyWave": 3, "status": "READY_FOR_ONBOARDING", "incomingPulseTypes": 1, "outgoingPulseTypes": 10, "publicEndpoints": 2, "zipSha256": "f5c3e215be3bcabd8352ebfeebf36a460a39c3dfe1a6870828697d668248d817", "manifestSha256": "f3b623d9cbd685abdc6c0bc351f5b8e0926b44e400b116669242e57edd4f2321" },
+    { "componentId": "MCP-RX-EM-003", "componentType": "MCP_SERVER", "registrationType": "MCP_SERVER", "executionProfile": "EVENT_INGRESS", "dependencyWave": 3, "status": "READY_FOR_ONBOARDING", "incomingPulseTypes": 1, "outgoingPulseTypes": 10, "publicEndpoints": 1, "zipSha256": "a46b4a668c64a3ad5f38fa15b1c61378a4b83f41bc211e86ee10732ebb7c8a3c", "manifestSha256": "4b14b5a61415ed54562b2e9dca9c2d15892a243338719f61a0930da56a8b7db1" },
+    { "componentId": "MCP-RX-BC-004", "componentType": "MCP_SERVER", "registrationType": "MCP_SERVER", "executionProfile": "EVENT_INGRESS", "dependencyWave": 3, "status": "READY_FOR_ONBOARDING", "incomingPulseTypes": 1, "outgoingPulseTypes": 10, "publicEndpoints": 1, "zipSha256": "3adc1288dd887f3216e8243f51b19a8f7107deaa25e177f29c29127dcf804d31", "manifestSha256": "09b977cc6747babd70fecde560b5894b2f7a6d461783b89c31f929d06fcd1832" },
+    { "componentId": "MCP-TX-WA-007", "componentType": "MCP_SERVER", "registrationType": "MCP_SERVER", "executionProfile": "ASYNC_EGRESS", "dependencyWave": 5, "status": "READY_FOR_ONBOARDING", "incomingPulseTypes": 2, "outgoingPulseTypes": 3, "publicEndpoints": 1, "zipSha256": "2799da04b8c54950c214fc46585a23b9f33226d520b68e48aedbdde6868ead04", "manifestSha256": "c7649ad1c4598753df2cd5c37cf9e8f0b10b5e9ae43130ac185657afc98b19a3" },
+    { "componentId": "MCP-TX-MS-008", "componentType": "MCP_SERVER", "registrationType": "MCP_SERVER", "executionProfile": "ASYNC_EGRESS", "dependencyWave": 5, "status": "READY_FOR_ONBOARDING", "incomingPulseTypes": 2, "outgoingPulseTypes": 3, "publicEndpoints": 1, "zipSha256": "b5fee7f59eef3b5cfd890e4eae5dcafe0969bbf6b6b0caf3a5ca9c5bd797fe37", "manifestSha256": "3a09bebaea96f684696f4968108fe7652f2f2475c98588824f672b18287b6366" },
+    { "componentId": "MCP-TX-EM-009", "componentType": "MCP_SERVER", "registrationType": "MCP_SERVER", "executionProfile": "ASYNC_EGRESS", "dependencyWave": 5, "status": "READY_FOR_ONBOARDING", "incomingPulseTypes": 2, "outgoingPulseTypes": 3, "publicEndpoints": 1, "zipSha256": "8739e5ff6c13b4e32687d3333bd924a7282b7f2e7faf5b9da57096670fbe8395", "manifestSha256": "5d61e18bda9bbcedad83c2bdff0853557c40b7c928c20c77d0515350d27a385b" },
+    { "componentId": "MCP-TX-BC-010", "componentType": "MCP_SERVER", "registrationType": "MCP_SERVER", "executionProfile": "ASYNC_EGRESS", "dependencyWave": 5, "status": "READY_FOR_ONBOARDING", "incomingPulseTypes": 2, "outgoingPulseTypes": 3, "publicEndpoints": 1, "zipSha256": "7329877f7dbdd3a938f196b9d73785295baa81a2cd86f681392e3af3e1d34169", "manifestSha256": "177d3314a95f6dbe3a751f4a2540903b814b83cd0d8f0b5c1d6702a9a9213d8e" }
+  ]
+}

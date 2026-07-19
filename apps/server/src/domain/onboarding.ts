@@ -9,7 +9,9 @@ import { kcmlCodeFromNumber, kcmlHostnameForCode } from "./hostnames.js";
 import type { OnboardingManifest } from "./registration.js";
 import {
   blueprintComponentContract,
-  KCML_BLUEPRINT_COMPONENT_IDS,
+  isGeneratedBlueprintComponentId,
+  KCML_BLUEPRINT_RELEASE_MAX_CHILD_JOBS,
+  KCML_GENERATED_BLUEPRINT_COMPONENT_IDS,
   KCML_RELEASE,
   KCML_RELEASE_WAVE_KEY
 } from "./release.js";
@@ -87,6 +89,12 @@ export type IntegrationTokenPrincipal = {
   releaseVersion: string;
   releaseWaveKey: string | null;
   maxChildJobs: number;
+  allowedBlueprintComponents: Array<{
+    componentId: string;
+    registrationType: string;
+    releaseVersion: string;
+    releaseWaveKey: string | null;
+  }>;
 };
 
 export type SourceEvidence = {
@@ -228,22 +236,25 @@ function normalizeTokenOptions(options?: CreateIntegrationTokenOptions): Require
   const selected = options?.allowedBlueprintComponentIds?.length
     ? [...new Set(options.allowedBlueprintComponentIds)]
     : tokenKind === "BLUEPRINT_RELEASE"
-      ? [...KCML_BLUEPRINT_COMPONENT_IDS]
+      ? [...KCML_GENERATED_BLUEPRINT_COMPONENT_IDS]
       : [];
   const maxChildJobs = options?.maxChildJobs ?? (tokenKind === "BLUEPRINT_RELEASE" ? selected.length : 1);
   if (tokenKind === "BLUEPRINT_RELEASE" && selected.length === 0) {
     throw Object.assign(new Error("blueprint_components_required"), { statusCode: 400 });
   }
-  if (maxChildJobs < 1 || maxChildJobs > 200) {
+  if (maxChildJobs < 1 || maxChildJobs > KCML_BLUEPRINT_RELEASE_MAX_CHILD_JOBS) {
     throw Object.assign(new Error("max_child_jobs_out_of_range"), { statusCode: 400 });
   }
-  if (tokenKind === "BLUEPRINT_RELEASE" && maxChildJobs < selected.length) {
-    throw Object.assign(new Error("max_child_jobs_below_allowed_components"), { statusCode: 400 });
+  if (tokenKind === "BLUEPRINT_RELEASE" && maxChildJobs > selected.length) {
+    throw Object.assign(new Error("max_child_jobs_above_allowed_components"), { statusCode: 400 });
   }
   for (const componentId of selected) {
     const contract = blueprintComponentContract(componentId);
     if (!contract || contract.releaseVersion !== releaseVersion || contract.releaseWaveKey !== releaseWaveKey) {
       throw Object.assign(new Error("unknown_blueprint_component"), { statusCode: 400 });
+    }
+    if (tokenKind === "BLUEPRINT_RELEASE" && !isGeneratedBlueprintComponentId(componentId)) {
+      throw Object.assign(new Error("platform_prerequisite_not_allowed"), { statusCode: 400 });
     }
   }
   return {
@@ -480,7 +491,17 @@ export async function authenticateIntegrationToken(db: Db, token: string, config
   const result = await db.query(
     `select it.id, it.onboarding_job_id, it.fingerprint, it.expires_at, it.max_expires_at,
             it.service_kind, it.allowed_pipeline, it.token_kind, it.release_version,
-            it.release_wave_key, it.max_child_jobs
+            it.release_wave_key, it.max_child_jobs,
+            coalesce((
+              select jsonb_agg(jsonb_build_object(
+                'componentId', allowed.blueprint_component_id,
+                'registrationType', allowed.registration_type,
+                'releaseVersion', allowed.release_version,
+                'releaseWaveKey', allowed.release_wave_key
+              ) order by allowed.blueprint_component_id)
+              from integration_token_allowed_component allowed
+              where allowed.token_id=it.id
+            ), '[]'::jsonb) as allowed_blueprint_components
        from integration_token it
        left join onboarding_job oj on oj.id=it.onboarding_job_id
       where it.lookup_digest=$1
@@ -504,7 +525,10 @@ export async function authenticateIntegrationToken(db: Db, token: string, config
     tokenKind: (optionalText(result.rows[0].token_kind) ?? "SINGLE_COMPONENT") as IntegrationTokenPrincipal["tokenKind"],
     releaseVersion: optionalText(result.rows[0].release_version) ?? KCML_RELEASE.catalogVersion,
     releaseWaveKey: optionalText(result.rows[0].release_wave_key),
-    maxChildJobs: Number(result.rows[0].max_child_jobs ?? 1)
+    maxChildJobs: Number(result.rows[0].max_child_jobs ?? 1),
+    allowedBlueprintComponents: Array.isArray(result.rows[0].allowed_blueprint_components)
+      ? result.rows[0].allowed_blueprint_components as IntegrationTokenPrincipal["allowedBlueprintComponents"]
+      : []
   };
 }
 

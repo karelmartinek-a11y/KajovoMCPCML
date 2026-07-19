@@ -131,7 +131,7 @@ describe.skipIf(!enabled)("component authorization and audit persistence", () =>
       id,label,lookup_digest,key_id,fingerprint,created_by,initial_expires_at,expires_at,max_expires_at,descriptor,
       token_kind,release_version,release_wave_key,blueprint_release_version,max_child_jobs
     ) values ($1,'Component DB test',$2,'test','component-db-test',$3,now()+interval '1 hour',now()+interval '1 hour',now()+interval '1 day',$4::jsonb,
-      'BLUEPRINT_RELEASE','2026.07.23','baseline-2026-07-23','2026.07.23',25)`,
+      'BLUEPRINT_RELEASE','2026.07.23','baseline-2026-07-23','2026.07.23',20)`,
     [integrationTokenId, hmacToken(integrationTokenId, accessHmacKey), admin.rows[0].id, JSON.stringify({ summary: "Component test", businessPurpose: "Validate component onboarding credential issuance safely.", serviceOwner: "KCML", technicalOwner: "KCML", criticality: "LOW" })]);
     await db.query(
       `insert into integration_token_allowed_component(token_id,blueprint_component_id,registration_type,release_version,release_wave_key)

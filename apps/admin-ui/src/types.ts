@@ -236,6 +236,14 @@ export type IntegrationSecret = IntegrationToken & {
   onboardingCatalogUrl: string;
   onboardingCatalogFileName: string;
   programmerApiUrl: string;
+  intakeUrls?: {
+    recommendedIntakeUrl: string;
+    nativeComponentIntakeUrl: string;
+    legacyServiceIntakeUrl: string;
+    externalApiIntakeUrl: string;
+    componentCatalogUrl: string;
+    externalApiCatalogUrl: string;
+  };
 };
 export type OnboardingGate = { gate_name: string; stage: string; status: string; evidence: Record<string, unknown>; correlation_id: string; started_at: string | null; completed_at: string | null };
 export type OnboardingEvent = { id: number; from_state: string | null; to_state: string; event_type: string; detail: Record<string, unknown>; correlation_id: string; created_at: string };

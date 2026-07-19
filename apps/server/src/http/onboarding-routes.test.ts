@@ -141,12 +141,16 @@ describe("machine-readable onboarding catalogs", () => {
               fingerprint: "integration-token-fingerprint",
               expires_at: new Date(Date.now() + 60_000).toISOString(),
               max_expires_at: new Date(Date.now() + 120_000).toISOString(),
-              service_kind: "EXTERNAL_API",
-              allowed_pipeline: "EXTERNAL_API_REGISTRATION",
+              service_kind: "MCP",
+              allowed_pipeline: "MCP_ONBOARDING",
               token_kind: "BLUEPRINT_RELEASE",
               release_version: KCML_RELEASE.catalogVersion,
               release_wave_key: "baseline-2026-07-23",
-              max_child_jobs: 25
+              max_child_jobs: 20,
+              allowed_blueprint_components: [
+                { componentId: "AI-CLS-001", registrationType: "KAJA_CLIENT", releaseVersion: KCML_RELEASE.catalogVersion, releaseWaveKey: "baseline-2026-07-23" },
+                { componentId: "MCP-RX-WA-001", registrationType: "MCP_SERVER", releaseVersion: KCML_RELEASE.catalogVersion, releaseWaveKey: "baseline-2026-07-23" }
+              ]
             }]
           };
         }
@@ -175,6 +179,33 @@ describe("machine-readable onboarding catalogs", () => {
     expect(response.json()).toMatchObject({
       version: KCML_RELEASE.catalogVersion,
       serviceKind: "COMPONENT"
+    });
+  });
+
+  it("returns the native component intake and exact blueprint scope for a release token", async () => {
+    const response = await app.inject({
+      method: "GET",
+      url: "/v1/integration-intent",
+      headers: {
+        host: config.REGISTER_HOST,
+        authorization: `Bearer kci_${"a".repeat(86)}`
+      }
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      token: {
+        tokenKind: "BLUEPRINT_RELEASE",
+        allowedPipeline: "MCP_ONBOARDING"
+      },
+      blueprintRelease: {
+        allowedBlueprintComponentIds: ["AI-CLS-001", "MCP-RX-WA-001"],
+        allowedRegistrationTypes: ["KAJA_CLIENT", "MCP_SERVER"]
+      },
+      intakeUrl: `https://${config.REGISTER_HOST}/v2/component-onboardings`,
+      intakeUrls: {
+        recommendedIntakeUrl: `https://${config.REGISTER_HOST}/v2/component-onboardings`,
+        legacyServiceIntakeUrl: `https://${config.REGISTER_HOST}/v1/service-onboardings`
+      }
     });
   });
 });

@@ -1,4 +1,6 @@
 export const KCML_RELEASE = {
+  normativeLabel: "2026.07.19-NR",
+  auditedBaselineCommit: "e2589ca4dc0b4ecb442aa8ef36141609b3b4dd76",
   applicationVersion: "2026.07.23",
   blueprintVersion: "2026.07.23",
   catalogVersion: "2026.07.23",
@@ -63,6 +65,25 @@ export const KCML_BLUEPRINT_COMPONENT_IDS = [
   ...KCML_MCP_COMPONENTS.map(([componentId]) => componentId),
   ...KCML_MANAGED_COMPONENTS.map(([componentId]) => componentId)
 ] as readonly KcmlBlueprintComponentId[];
+
+export type KcmlGeneratedBlueprintComponentId =
+  | (typeof KCML_AI_COMPONENTS)[number][0]
+  | (typeof KCML_MCP_COMPONENTS)[number][0];
+
+export const KCML_GENERATED_BLUEPRINT_COMPONENT_IDS = [
+  ...KCML_AI_COMPONENTS.map(([componentId]) => componentId),
+  ...KCML_MCP_COMPONENTS.map(([componentId]) => componentId)
+] as readonly KcmlGeneratedBlueprintComponentId[];
+
+export const KCML_PLATFORM_PREREQUISITE_COMPONENT_IDS = [
+  ...KCML_MANAGED_COMPONENTS.map(([componentId]) => componentId)
+] as readonly (typeof KCML_MANAGED_COMPONENTS)[number][0][];
+
+export const KCML_BLUEPRINT_RELEASE_MAX_CHILD_JOBS = KCML_GENERATED_BLUEPRINT_COMPONENT_IDS.length;
+
+export function isGeneratedBlueprintComponentId(componentId: string): componentId is KcmlGeneratedBlueprintComponentId {
+  return (KCML_GENERATED_BLUEPRINT_COMPONENT_IDS as readonly string[]).includes(componentId);
+}
 
 export type BlueprintComponentContract = {
   componentId: KcmlBlueprintComponentId;

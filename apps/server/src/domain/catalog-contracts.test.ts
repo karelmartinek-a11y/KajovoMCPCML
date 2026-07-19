@@ -5,7 +5,7 @@ import { MCP_ONBOARDING_GATES, nextHeartbeatExpiry, tokenDeadlines } from "./onb
 import { onboardingCatalogDigest } from "./onboarding-catalog.js";
 import { validateOnboardingManifest } from "./registration.js";
 import { REQUIRED_ONBOARDING_CHECKS } from "../onboarding/github.js";
-import { KCML_AI_COMPONENTS, KCML_MANAGED_SERVICE_IDS, KCML_MCP_COMPONENTS, KCML_RELEASE } from "./release.js";
+import { KCML_AI_COMPONENTS, KCML_GENERATED_BLUEPRINT_COMPONENT_IDS, KCML_MANAGED_SERVICE_IDS, KCML_MCP_COMPONENTS, KCML_RELEASE } from "./release.js";
 
 const ajv = new Ajv2020({ strict: false, allErrors: true, validateFormats: false });
 
@@ -25,6 +25,8 @@ describe(`component onboarding catalog ${KCML_RELEASE.catalogVersion}`, () => {
   it("publishes one component catalog with the required release and protocol versions", () => {
     expect(catalog).toMatchObject({
       version: KCML_RELEASE.catalogVersion,
+      normativeLabel: KCML_RELEASE.normativeLabel,
+      auditedBaselineCommit: KCML_RELEASE.auditedBaselineCommit,
       serviceKind: "COMPONENT",
       blueprintVersion: KCML_RELEASE.blueprintVersion,
       manifestSchemaVersion: KCML_RELEASE.manifestSchemaVersion,
@@ -64,9 +66,62 @@ describe(`component onboarding catalog ${KCML_RELEASE.catalogVersion}`, () => {
     expect(components.managedServices.map((item) => [item.componentId, item.registrationType])).toEqual(KCML_MANAGED_SERVICE_IDS.map((id) => [id, "MANAGED_PLATFORM_SERVICE"]));
   });
 
+  it("publishes the forensic FlowFabric first-wave blueprint without runtime identities", () => {
+    const blueprint = catalog.flowFabricBlueprint as {
+      source: { repositoryName: string; status: string; commit: string };
+      scope: { aiAgents: number; mcpServers: number; managedServicePrerequisites: number; implementerChildJobs: number; managedServicesAsChildJobs: number };
+      runtimeIdentityPolicy: { assignedBy: string; forbiddenInFactoryArtifacts: string[] };
+      dependencyWaves: Array<{ wave: number; componentIds: string[] }>;
+      readiness: { releaseDryRunStatus: string; actualSubmitEnabled: boolean; networkAttemptsInDryRun: number; readyForOnboardingCriteriaMet: boolean; blockingBeforeRealOnboarding: string[] };
+      components: Array<{ componentId: string; componentType: string; registrationType: string; dependencyWave: number; zipSha256: string; manifestSha256: string }>;
+    };
+
+    expect(blueprint.source).toMatchObject({
+      repositoryName: "KajovoFlowFabric",
+      status: "READY_FOR_DRY_RUN_ONLY",
+      commit: expect.stringMatching(/^[a-f0-9]{40}$/)
+    });
+    expect(blueprint.scope).toEqual({
+      aiAgents: 9,
+      mcpServers: 11,
+      managedServicePrerequisites: 5,
+      implementerChildJobs: 20,
+      managedServicesAsChildJobs: 0
+    });
+    expect(blueprint.runtimeIdentityPolicy).toMatchObject({
+      assignedBy: "KajovoCML onboarding only",
+      forbiddenInFactoryArtifacts: expect.arrayContaining(["KCML code", "hostname", "credential secret", "authorization snapshot"])
+    });
+    expect(blueprint.dependencyWaves.map((wave) => wave.wave)).toEqual([0, 1, 2, 3, 4, 5]);
+    expect(blueprint.dependencyWaves[0]?.componentIds).toEqual([...KCML_MANAGED_SERVICE_IDS]);
+    expect(blueprint.components).toHaveLength(20);
+    expect(blueprint.components.filter((item) => item.componentType === "AI_AGENT").map((item) => item.componentId)).toEqual(KCML_AI_COMPONENTS.map(([id]) => id));
+    expect(blueprint.components.filter((item) => item.componentType === "MCP_SERVER").map((item) => item.componentId).sort()).toEqual(KCML_MCP_COMPONENTS.map(([id]) => id).sort());
+    expect(blueprint.components.every((item) => item.registrationType === "KAJA_CLIENT" || item.registrationType === "MCP_SERVER")).toBe(true);
+    expect(blueprint.components.every((item) => /^([a-f0-9]{64})$/.test(item.zipSha256) && /^([a-f0-9]{64})$/.test(item.manifestSha256))).toBe(true);
+    expect(blueprint.readiness).toMatchObject({
+      releaseDryRunStatus: "PASS",
+      actualSubmitEnabled: false,
+      networkAttemptsInDryRun: 0,
+      readyForOnboardingCriteriaMet: false
+    });
+    expect(blueprint.readiness.blockingBeforeRealOnboarding).toEqual(expect.arrayContaining([
+      expect.stringContaining("onboarding release token"),
+      expect.stringContaining("Booking.com provider integration")
+    ]));
+  });
+
   it("documents release token scope and executable gates", () => {
-    expect((catalog.implementationTokens as { blueprintRelease: { maxChildJobs: number; autoActivateAfterPass: boolean; manualApprovalRequiredAfterIssuance: boolean } }).blueprintRelease).toMatchObject({
-      maxChildJobs: 200,
+    const releaseWave = (catalog.releaseWaves as Array<{ allowedBlueprintComponentIds: string[]; platformPrerequisiteComponentIds: string[] }>)[0];
+    expect(releaseWave).toBeDefined();
+    if (!releaseWave) throw new Error("release_wave_missing");
+    expect(releaseWave.allowedBlueprintComponentIds).toEqual([...KCML_GENERATED_BLUEPRINT_COMPONENT_IDS]);
+    expect(releaseWave.platformPrerequisiteComponentIds).toEqual([...KCML_MANAGED_SERVICE_IDS]);
+    expect((catalog.implementationTokens as { blueprintRelease: { maxChildJobs: number; allowedBlueprintComponentIds: string[]; platformPrerequisiteComponentIds: string[]; allowedRegistrationTypes: string[]; autoActivateAfterPass: boolean; manualApprovalRequiredAfterIssuance: boolean } }).blueprintRelease).toMatchObject({
+      maxChildJobs: 20,
+      allowedBlueprintComponentIds: [...KCML_GENERATED_BLUEPRINT_COMPONENT_IDS],
+      platformPrerequisiteComponentIds: [...KCML_MANAGED_SERVICE_IDS],
+      allowedRegistrationTypes: ["KAJA_CLIENT", "MCP_SERVER"],
       autoActivateAfterPass: true,
       manualApprovalRequiredAfterIssuance: false
     });

@@ -1,6 +1,6 @@
-# KCML SSOT 2026.07.22 Requirements Matrix
+# KCML SSOT 2026.07.23 Requirements Matrix
 
-Legacy MCP manifest schemas 1.4/1.5 and catalogs `2026.07.20`/`2026.07.21` remain immutable and readable for compatibility and migration paths. Every new component intake is strict against the unified component catalog `2026.07.22`, with machine-readable receipts and fail-closed runtime gates.
+Legacy MCP manifest schemas 1.4/1.5 and catalogs `2026.07.20`/`2026.07.21` remain immutable and readable for compatibility and migration paths. Every new component intake is strict against the unified component catalog `2026.07.23`, with machine-readable receipts and fail-closed runtime gates.
 
 | Requirement | Implementation | Persisted evidence | Automated gate |
 | --- | --- | --- | --- |
@@ -28,4 +28,5 @@ Legacy MCP manifest schemas 1.4/1.5 and catalogs `2026.07.20`/`2026.07.21` remai
 | Recovery | encrypted `age` backup and isolated restore test | checksum and restore evidence | backup mode/recipient/preflight and quarterly restore gate |
 | A22 soak readiness | `scripts/external-api-soak.mjs` and release runbook | JSONL trace, summary JSON, permission churn/disable-enable evidence and explicit harness/run status | harness is release-ready; summary distinguishes `harnessStatus=READY` from a `runStatus=SHORT_RUN` when a shorter-than-72-hour execution ends |
 | Component control plane | `domain/component*.ts`, `/v2/component-onboardings`, compatibility adapters and component catalog UI | separate lifecycle/activation/operational/monitoring/recertification states, HMAC-only credentials, current route/scope permissions and sequential audit stream | component unit/DB/contract tests, one-time credential claim, permission churn, deactivate/reactivate, audit gap/replay and stable Czech errors |
+| FlowFabric first-wave blueprint | `docs/blueprints/flowfabric-first-wave-2026.07.23.json`, generated component onboarding catalog | 20 dry-run-only implementer child jobs, 5 managed-service prerequisites, dependency waves, artifact digests, readiness blockers and runtime-identity prohibition | `catalog-contracts.test.ts` and `corepack pnpm catalog:check` |
 | UI operations | component catalog, credential and permission controls, monitoring workspace | component detail, capabilities, directions, fingerprint-only readback, audit continuity and recertification | Testing Library interaction suites, axe dialog checks, keyboard/focus and responsive desktop/mobile rendering |

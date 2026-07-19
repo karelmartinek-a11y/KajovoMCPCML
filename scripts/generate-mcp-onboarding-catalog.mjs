@@ -12,6 +12,11 @@ const protocol = "2025-11-25";
 const outputPath = path.join(root, `docs/onboarding-catalogs/component-${release}.json`);
 const schemaPath = path.join(root, `apps/server/src/contracts/component-manifest-${release}.schema.json`);
 const examplePath = path.join(root, `docs/onboarding-manifest-${release}.example.json`);
+const flowFabricBlueprintPath = path.join(root, `docs/blueprints/flowfabric-first-wave-${release}.json`);
+const flowFabricBlueprint = fs.existsSync(flowFabricBlueprintPath)
+  ? JSON.parse(fs.readFileSync(flowFabricBlueprintPath, "utf8"))
+  : null;
+if (flowFabricBlueprint && flowFabricBlueprint.releaseVersion !== release) throw new Error(`FlowFabric blueprint release mismatch: ${flowFabricBlueprint.releaseVersion}`);
 
 const aiComponents = [
   ["AI-CLS-001", "AGENT_ROUTER"],
@@ -39,7 +44,8 @@ const mcpComponents = [
 ];
 const managedServices = ["KCML-AUTH-001", "KCML-CTL-002", "KCML-MON-003", "KCML-AUD-004", "KCML-SEC-005"];
 const releaseWaveKey = "baseline-2026-07-23";
-const blueprintIds = [...aiComponents, ...mcpComponents].map(([componentId]) => componentId).concat(managedServices);
+const generatedBlueprintIds = [...aiComponents, ...mcpComponents].map(([componentId]) => componentId);
+const blueprintIds = generatedBlueprintIds.concat(managedServices);
 
 const gatesByStage = {
   intake: ["archive_policy", "manifest_schema", "token_scope", "authorization_snapshot", "secret_scan", "dependency_policy"],
@@ -282,6 +288,8 @@ const example = {
 
 const catalog = {
   version: release,
+  normativeLabel: "2026.07.19-NR",
+  auditedBaselineCommit: "e2589ca4dc0b4ecb442aa8ef36141609b3b4dd76",
   serviceKind: "COMPONENT",
   publishedAt: release.replaceAll(".", "-"),
   blueprintVersion: release,
@@ -312,7 +320,8 @@ const catalog = {
     baseline: true,
     baselineCounts: { aiAgents: aiComponents.length, mcpServers: mcpComponents.length, managedServices: managedServices.length },
     notFinalTargetScope: true,
-    allowedBlueprintComponentIds: blueprintIds
+    allowedBlueprintComponentIds: generatedBlueprintIds,
+    platformPrerequisiteComponentIds: managedServices
   }],
   compatibilityMatrix: [
     { profile: "legacy-ai-client", category: "AI_CLIENT", catalog: "2026.07.20", manifestSchemas: ["1.4", "1.5"], intake: "/v1/onboardings", authorization: "KAJA_COMPATIBILITY_ADAPTER", endpoint: "KCML_HOSTNAME", result: "SUPPORTED_ADAPTED" },
@@ -333,6 +342,7 @@ const catalog = {
     scopesAndAcl: { currentDatabaseScope: "REQUIRED_EACH_CALL", currentRouteAcl: "REQUIRED_EACH_CALL", removedPermission: "REJECTED_ROUTE_DENIED" },
     endpointAndAudience: { canonicalHostname: "REQUIRED", matchingHostSniAudience: "REQUIRED", alternateHostname: "REJECTED_INVALID_AUDIENCE", ipLocalhostDirectPortServiceName: "REJECTED_INVALID_COMPONENT_HOSTNAME" }
   },
+  ...(flowFabricBlueprint ? { flowFabricBlueprint } : {}),
   componentContracts: {
     AI_CLIENT: { manifestContract: "aiAgentManifest", requiredCapabilities: [], gates: ["AUTHORIZATION", "TECHNICAL_DISABLE", "MONITORING", "AUDIT_CONTINUITY", "RECERTIFICATION"], endpoint: "KCML_HOSTNAME", authorization: "OAUTH2_CLIENT_CREDENTIALS", deactivation: "POLICY_EPOCH", recertification: "REQUIRED" },
     AI_AGENT: { manifestContract: "aiAgentManifest", requiredCapabilities: [], gates: ["AUTHORIZATION", "TECHNICAL_DISABLE", "MONITORING", "AUDIT_CONTINUITY", "RECERTIFICATION"], endpoint: "KCML_HOSTNAME", authorization: "OAUTH2_CLIENT_CREDENTIALS", deactivation: "POLICY_EPOCH", recertification: "REQUIRED" },
@@ -365,9 +375,10 @@ const catalog = {
     blueprintRelease: {
       releaseVersion: release,
       releaseWave: releaseWaveKey,
-      allowedBlueprintComponentIds: blueprintIds,
-      allowedRegistrationTypes: ["KAJA_CLIENT", "MCP_SERVER", "MANAGED_PLATFORM_SERVICE"],
-      maxChildJobs: 200,
+      allowedBlueprintComponentIds: generatedBlueprintIds,
+      platformPrerequisiteComponentIds: managedServices,
+      allowedRegistrationTypes: ["KAJA_CLIENT", "MCP_SERVER"],
+      maxChildJobs: generatedBlueprintIds.length,
       autoActivateAfterPass: true,
       manualApprovalRequiredAfterIssuance: false,
       ttlHours: 24,
@@ -458,7 +469,59 @@ const catalog = {
       "/v1/service-onboardings/{id}": { get: { operationId: "getServiceOnboarding", responses: { "200": { description: "Current job" } } } },
       "/v1/service-onboardings/{id}/revision": { put: { operationId: "putServiceOnboardingRevision", parameters: [{ name: "Idempotency-Key", in: "header", required: true, schema: { type: "string" } }, { name: "If-Match", in: "header", required: true, schema: { type: "string" } }], responses: { "202": { description: "Accepted" } } } },
       "/v1/service-onboardings/{id}/cancel": { post: { operationId: "cancelServiceOnboarding", responses: { "200": { description: "Cancelled" } } } },
-      "/v1/integration-intent": { get: { operationId: "getIntegrationIntent", responses: { "200": { description: "Token scope and release intent" } } } }
+      "/v1/integration-intent": {
+        get: {
+          operationId: "getIntegrationIntent",
+          responses: {
+            "200": {
+              description: "Token scope and release intent",
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    required: ["release", "token", "blueprintRelease", "intakeUrl", "intakeUrls", "catalogUrl", "correlationId"],
+                    properties: {
+                      intakeUrl: { type: "string", format: "uri", description: "Recommended intake URL for this token." },
+                      intakeUrls: {
+                        type: "object",
+                        required: ["recommendedIntakeUrl", "nativeComponentIntakeUrl", "legacyServiceIntakeUrl", "externalApiIntakeUrl", "componentCatalogUrl", "externalApiCatalogUrl"],
+                        properties: {
+                          recommendedIntakeUrl: { type: "string", format: "uri" },
+                          nativeComponentIntakeUrl: { type: "string", format: "uri" },
+                          legacyServiceIntakeUrl: { type: "string", format: "uri" },
+                          externalApiIntakeUrl: { type: "string", format: "uri" },
+                          componentCatalogUrl: { type: "string", format: "uri" },
+                          externalApiCatalogUrl: { type: "string", format: "uri" }
+                        }
+                      },
+                      blueprintRelease: {
+                        type: "object",
+                        required: ["allowedBlueprintComponentIds", "allowedBlueprintComponents"],
+                        properties: {
+                          allowedBlueprintComponentIds: { type: "array", items: { type: "string" } },
+                          allowedBlueprintComponents: {
+                            type: "array",
+                            items: {
+                              type: "object",
+                              required: ["componentId", "registrationType", "releaseVersion"],
+                              properties: {
+                                componentId: { type: "string" },
+                                registrationType: { type: "string" },
+                                releaseVersion: { type: "string" },
+                                releaseWaveKey: { type: ["string", "null"] }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
     },
     components: { securitySchemes: { bearerAuth: { type: "http", scheme: "bearer", bearerFormat: "KCML implementation token" } } }
   }

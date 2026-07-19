@@ -92,7 +92,7 @@ describe("component public route protection", () => {
         token_kind: "BLUEPRINT_RELEASE",
         release_version: KCML_RELEASE.catalogVersion,
         release_wave_key: "baseline-2026-07-23",
-        max_child_jobs: 25
+        max_child_jobs: 20
       }]
     }));
     const revisionApp = Fastify();

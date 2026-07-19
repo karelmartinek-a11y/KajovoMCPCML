@@ -102,9 +102,9 @@ const integrationTokenActionLabel = "Vygenerovat Integrační token";
 const releaseWaveKey = "baseline-2026-07-23";
 const baselineBlueprintComponents = [
   ...["AI-CLS-001", "AI-QRP-002", "AI-LYL-003", "AI-GRP-004", "AI-BIZ-005", "AI-IND-006", "AI-HIS-007", "AI-BRD-008", "AI-QA-009"].map((id) => ({ id, group: "AI" })),
-  ...["MCP-RX-WA-001", "MCP-RX-MS-002", "MCP-RX-EM-003", "MCP-RX-BC-004", "MCP-PMS-RO-005", "MCP-PMS-RW-006", "MCP-TX-WA-007", "MCP-TX-MS-008", "MCP-TX-EM-009", "MCP-TX-BC-010", "MCP-WFC-011"].map((id) => ({ id, group: "MCP" })),
-  ...["KCML-AUTH-001", "KCML-CTL-002", "KCML-MON-003", "KCML-AUD-004", "KCML-SEC-005"].map((id) => ({ id, group: "Managed" }))
+  ...["MCP-RX-WA-001", "MCP-RX-MS-002", "MCP-RX-EM-003", "MCP-RX-BC-004", "MCP-PMS-RO-005", "MCP-PMS-RW-006", "MCP-TX-WA-007", "MCP-TX-MS-008", "MCP-TX-EM-009", "MCP-TX-BC-010", "MCP-WFC-011"].map((id) => ({ id, group: "MCP" }))
 ];
+const platformPrerequisiteComponents = ["KCML-AUTH-001", "KCML-CTL-002", "KCML-MON-003", "KCML-AUD-004", "KCML-SEC-005"];
 
 function recertificationTone(phase: Server["recertification"]["phase"]): "ok" | "warn" | "danger" | "neutral" {
   if (phase === "VALID") return "ok";
@@ -239,8 +239,8 @@ function CreateIntegrationTokenModal({ resumeJobId, catalogVersion, onClose, onC
       setError("Blueprint token musí mít povolenou alespoň jednu komponentu.");
       return;
     }
-    if (tokenKind === "BLUEPRINT_RELEASE" && maxChildJobs < selectedBlueprintIds.length) {
-      setError("Limit child jobů nesmí být nižší než počet povolených komponent.");
+    if (tokenKind === "BLUEPRINT_RELEASE" && maxChildJobs > selectedBlueprintIds.length) {
+      setError("Limit child jobů nesmí být vyšší než počet povolených generated komponent.");
       return;
     }
     setBusy(true);
@@ -284,8 +284,8 @@ function CreateIntegrationTokenModal({ resumeJobId, catalogVersion, onClose, onC
             <button type="button" aria-pressed={tokenKind === "BLUEPRINT_RELEASE"} onClick={() => setTokenKind("BLUEPRINT_RELEASE")}>Blueprint release</button>
           </div>
           {tokenKind === "BLUEPRINT_RELEASE" ? <>
-            <span>Release wave {releaseWaveKey}, baseline {baselineBlueprintComponents.length} komponent.</span>
-            <label>Max child jobů<input type="number" min={selectedBlueprintIds.length || 1} max={200} value={maxChildJobs} onChange={(event) => setMaxChildJobs(Number(event.target.value))} /></label>
+            <span>Release wave {releaseWaveKey}, baseline {baselineBlueprintComponents.length} generated komponent. Platform prerequisites: {platformPrerequisiteComponents.join(", ")}.</span>
+            <label>Max child jobů<input type="number" min={1} max={selectedBlueprintIds.length || baselineBlueprintComponents.length} value={maxChildJobs} onChange={(event) => setMaxChildJobs(Number(event.target.value))} /></label>
             <div className="blueprint-picker">
               {baselineBlueprintComponents.map((component) => (
                 <label key={component.id} className="checkbox-row">
@@ -324,10 +324,15 @@ function IntegrationSecretModal({ secret, catalogVersion, onClose }: { secret: I
       token: secret.token,
       initialExpiresAt: secret.initialExpiresAt,
       programmerApiUrl: secret.programmerApiUrl,
+      tokenKind: secret.tokenKind,
+      releaseWaveKey: secret.releaseWaveKey,
+      allowedBlueprintComponents: secret.allowedBlueprintComponents,
+      intakeUrls: secret.intakeUrls,
       catalogVersion
     }));
     setCopied("instructions");
   }
+  const recommendedIntakeUrl = secret.intakeUrls?.recommendedIntakeUrl ?? secret.programmerApiUrl;
   return (
     <Modal title="Podklady pro programátora jsou připravené" onClose={onClose}>
       <div className="secret-dialog">
@@ -335,7 +340,8 @@ function IntegrationSecretModal({ secret, catalogVersion, onClose }: { secret: I
         <div className="handoff-step"><span>1</span><div><strong>Onboarding katalog</strong><p>Závazný registrační kontrakt {catalogVersion}.</p><a className="button-link secondary" href={secret.onboardingCatalogUrl} download={secret.onboardingCatalogFileName}><Download size={16} /> Stáhnout onboarding katalog</a></div></div>
         <div className="handoff-step"><span>2</span><div><strong>Server descriptor</strong><p>{secret.descriptor.summary}</p><dl className="descriptor-dl"><dt>Účel</dt><dd>{secret.descriptor.businessPurpose}</dd><dt>Vlastník služby</dt><dd>{secret.descriptor.serviceOwner}</dd><dt>Technický vlastník</dt><dd>{secret.descriptor.technicalOwner}</dd><dt>Kritičnost</dt><dd>{secret.descriptor.criticality}</dd></dl></div></div>
         <div className="handoff-step"><span>3</span><div><strong>Integrační token</strong><p>Plnou hodnotu lze zobrazit i předat v tomto handoffu. První upload musí programátor provést do {formatDate(secret.initialExpiresAt)}.</p><div className="secret-once"><code>{secret.token}</code><small>Fingerprint {secret.fingerprint}</small></div><button type="button" className="secondary" onClick={() => { void copyToken(); }}><ClipboardCopy size={16} /> {copied === "token" ? "Token zkopírován" : "Zkopírovat token"}</button></div></div>
-        <div className="permission-preview"><strong>Co proběhne po uploadu</strong><span>Systém přidělí KCML identitu a vlastní HTTPS adresu a provede PR/CI, podepsaný OCI build, izolované nasazení, katalog, autorizaci, logging, audit, monitoring, veřejné testy a aktivaci. Opravitelnou chybu API vrátí programátorovi jako <code>UPLOAD_REVISION</code>; po nové revizi pipeline sama pokračuje.</span></div>
+        <div className="handoff-step"><span>4</span><div><strong>Programátorské API</strong><p>{recommendedIntakeUrl}</p>{secret.tokenKind === "BLUEPRINT_RELEASE" ? <dl className="descriptor-dl"><dt>Release wave</dt><dd>{secret.releaseWaveKey ?? releaseWaveKey}</dd><dt>Scope</dt><dd>{secret.allowedBlueprintComponents?.length ?? 0} komponent</dd><dt>Native intake</dt><dd>{secret.intakeUrls?.nativeComponentIntakeUrl ?? recommendedIntakeUrl}</dd></dl> : null}</div></div>
+        <div className="permission-preview"><strong>Co proběhne po uploadu</strong><span>{secret.tokenKind === "BLUEPRINT_RELEASE" ? "Nativní component intake ověří blueprint identitu, release wave, scope tokenu, duplicitní child joby, manifest a readiness gates. KájovoCML přidělí KCML identitu, hostname, authorization snapshot a následný credential claim." : <>Systém přidělí KCML identitu a vlastní HTTPS adresu a provede PR/CI, podepsaný OCI build, izolované nasazení, katalog, autorizaci, logging, audit, monitoring, veřejné testy a aktivaci. Opravitelnou chybu API vrátí programátorovi jako <code>UPLOAD_REVISION</code>; po nové revizi pipeline sama pokračuje.</>}</span></div>
         <footer className="modal-actions"><button className="secondary" onClick={onClose}>Zavřít</button><button onClick={() => { void copyInstructions(); }}><ClipboardCopy size={16} /> {copied === "instructions" ? "Pokyny zkopírovány" : "Zkopírovat pokyny i token"}</button></footer>
       </div>
     </Modal>

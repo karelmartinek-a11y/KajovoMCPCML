@@ -1,5 +1,16 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { buildMetadata } from "./release.js";
+import {
+  buildMetadata,
+  isGeneratedBlueprintComponentId,
+  KCML_AI_COMPONENTS,
+  KCML_BLUEPRINT_COMPONENT_IDS,
+  KCML_BLUEPRINT_RELEASE_MAX_CHILD_JOBS,
+  KCML_GENERATED_BLUEPRINT_COMPONENT_IDS,
+  KCML_MANAGED_SERVICE_IDS,
+  KCML_MCP_COMPONENTS,
+  KCML_PLATFORM_PREREQUISITE_COMPONENT_IDS,
+  KCML_RELEASE
+} from "./release.js";
 
 const originalEnv = { ...process.env };
 
@@ -28,5 +39,26 @@ describe("buildMetadata", () => {
     process.env.KCML_COMMIT_SHA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
     expect(buildMetadata().commitSha).toBe("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+  });
+});
+
+describe("release descriptor", () => {
+  it("separates normative label, technical catalog version and MCP protocol", () => {
+    expect(KCML_RELEASE.normativeLabel).toBe("2026.07.19-NR");
+    expect(KCML_RELEASE.catalogVersion).toBe("2026.07.23");
+    expect(KCML_RELEASE.mcpProtocolVersion).toBe("2025-11-25");
+    expect(KCML_RELEASE.auditedBaselineCommit).toMatch(/^[a-f0-9]{40}$/);
+  });
+
+  it("keeps blueprint release child jobs limited to generated AI and MCP components", () => {
+    expect(KCML_AI_COMPONENTS).toHaveLength(9);
+    expect(KCML_MCP_COMPONENTS).toHaveLength(11);
+    expect(KCML_MANAGED_SERVICE_IDS).toHaveLength(5);
+    expect(KCML_GENERATED_BLUEPRINT_COMPONENT_IDS).toHaveLength(20);
+    expect(KCML_PLATFORM_PREREQUISITE_COMPONENT_IDS).toEqual([...KCML_MANAGED_SERVICE_IDS]);
+    expect(KCML_BLUEPRINT_RELEASE_MAX_CHILD_JOBS).toBe(20);
+    expect(KCML_GENERATED_BLUEPRINT_COMPONENT_IDS.every(isGeneratedBlueprintComponentId)).toBe(true);
+    expect(KCML_MANAGED_SERVICE_IDS.some(isGeneratedBlueprintComponentId)).toBe(false);
+    expect(new Set(KCML_BLUEPRINT_COMPONENT_IDS)).toEqual(new Set([...KCML_GENERATED_BLUEPRINT_COMPONENT_IDS, ...KCML_PLATFORM_PREREQUISITE_COMPONENT_IDS]));
   });
 });
