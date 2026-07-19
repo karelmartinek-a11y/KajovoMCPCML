@@ -4,6 +4,20 @@ import { loadBootstrapConfig, loadConfig } from "../config.js";
 import { createDb } from "../db.js";
 import { operationalConfigDefinitions, updateOperationalConfig } from "../domain/operational-config.js";
 
+export function shouldRefreshExistingOperationalSetting(input: {
+  key: string;
+  envKey: string;
+  options: { overwrite?: boolean; refreshBuildId?: boolean };
+  env?: NodeJS.ProcessEnv;
+}): boolean {
+  if (input.options.overwrite) return true;
+  if (input.options.refreshBuildId && input.key === "buildId") return true;
+  if (input.options.refreshBuildId && input.key === "adminBootstrapUsername") {
+    return Object.prototype.hasOwnProperty.call(input.env ?? process.env, input.envKey);
+  }
+  return false;
+}
+
 export async function importOperationalConfigFromEnvironment(options: {
   overwrite?: boolean;
   refreshBuildId?: boolean;
@@ -21,7 +35,11 @@ export async function importOperationalConfigFromEnvironment(options: {
         continue;
       }
       const current = await db.query("select version from operational_config_setting where key=$1", [definition.key]);
-      const mayOverwrite = options.overwrite || (options.refreshBuildId && definition.key === "buildId");
+      const mayOverwrite = shouldRefreshExistingOperationalSetting({
+        key: definition.key,
+        envKey: definition.envKey,
+        options
+      });
       if (current.rowCount && !mayOverwrite) {
         skipped += 1;
         continue;

@@ -31,7 +31,7 @@ try {
       `update admin_account
           set password_hash=$1,password_changed_at=now(),mfa_enabled=$2,mfa_secret=$3,
               active=true,activated_at=coalesce(activated_at,now()),updated_at=now(),
-              role=case when exists(select 1 from admin_account where active=true and role='OWNER' and id<>$4) then role else 'OWNER' end
+              role='OWNER'
         where id=$4`,
       [hash, Boolean(config.ADMIN_TOTP_SECRET), encryptedTotpSecret, accountId]
     );
