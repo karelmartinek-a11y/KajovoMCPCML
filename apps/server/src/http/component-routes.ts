@@ -12,6 +12,7 @@ import {
   createComponentOnboarding,
   evaluateComponentReadiness,
   getComponent,
+  getComponentDiscovery,
   getComponentOnboarding,
   listComponents,
   revokeComponentCredential,
@@ -283,10 +284,12 @@ export function registerComponentRoutes(app: FastifyInstance, db: Db, config: Ap
   app.get("/.well-known/kcml-component", { config: { rateLimit: { max: 60, timeWindow: "1 minute" } } }, async (request, reply) => {
     const correlationId = randomUUID();
     const host = hostOf(request.headers.host);
-    const result = await db.query(`select id from component where hostname=$1`, [host]);
-    if (!result.rowCount) return sendError(reply, 404, "invalid_component_hostname", undefined, correlationId);
-    const component = await getComponent(db, String(result.rows[0].id));
-    return reply.header("cache-control", "no-store").send({ component, catalogVersion: COMPONENT_CATALOG_VERSION });
+    try {
+      const component = await getComponentDiscovery(db, host);
+      return reply.header("cache-control", "no-store").send({ component, catalogVersion: COMPONENT_CATALOG_VERSION });
+    } catch (error) {
+      return routeError(reply, error, correlationId);
+    }
   });
 
   app.post("/v2/component-pulse", { config: { rateLimit: { max: 120, timeWindow: "1 minute" } } }, async (request, reply) => {

@@ -375,6 +375,28 @@ export async function getComponent(db: Db, id: string): Promise<Record<string, u
   return { ...componentView(result.rows[0]), permissions: permissions.rows, credentials: credentials.rows };
 }
 
+export async function getComponentDiscovery(db: Db, hostname: string): Promise<Record<string, unknown>> {
+  const result = await db.query(`
+    select c.id,c.code,c.hostname,c.display_name,c.description,c.category,c.registration_type,c.component_role,
+      c.lifecycle_state,c.activation_state,c.operational_state,c.monitoring_state,c.recertification_state,
+      c.enabled,c.policy_epoch,c.release_version,c.created_at,c.updated_at,
+      r.revision,r.capabilities,r.protocols,r.transports
+    from component c
+    left join component_revision r on r.id=c.active_revision_id
+    where c.hostname=$1`, [hostname]);
+  if (!result.rowCount) throw Object.assign(new Error("invalid_component_hostname"), { statusCode: 404 });
+  const row = result.rows[0];
+  return {
+    id: String(row.id), code: String(row.code), hostname: String(row.hostname), displayName: String(row.display_name),
+    description: String(row.description), category: String(row.category), registrationType: String(row.registration_type),
+    role: String(row.component_role), lifecycleState: String(row.lifecycle_state), activationState: String(row.activation_state),
+    operationalState: String(row.operational_state), monitoringState: String(row.monitoring_state),
+    recertificationState: String(row.recertification_state), enabled: Boolean(row.enabled), policyEpoch: Number(row.policy_epoch),
+    revision: optionalText(row.revision), capabilities: row.capabilities ?? [], protocols: row.protocols ?? [], transports: row.transports ?? [],
+    releaseVersion: String(row.release_version), createdAt: String(row.created_at), updatedAt: String(row.updated_at)
+  };
+}
+
 function componentView(row: Record<string, unknown>): Record<string, unknown> {
   return {
     id: String(row.id), code: String(row.code), hostname: String(row.hostname), displayName: String(row.display_name), description: String(row.description),

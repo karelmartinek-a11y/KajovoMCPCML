@@ -1,5 +1,5 @@
 import Fastify, { type FastifyInstance } from "fastify";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { loadConfig, type AppConfig } from "../config.js";
 import type { Db } from "../db.js";
 import { registerComponentRoutes } from "./component-routes.js";
@@ -38,5 +38,42 @@ describe("component public route protection", () => {
     expect(routeRateLimits.get("GET /.well-known/kcml-component")).toEqual({ max: 60, timeWindow: "1 minute" });
     expect(routeRateLimits.get("POST /v2/component-pulse")).toEqual({ max: 120, timeWindow: "1 minute" });
     expect(routeRateLimits.get("POST /v2/component-audit-events")).toEqual({ max: 600, timeWindow: "1 minute" });
+  });
+
+  it("returns a public discovery projection without credentials, permissions, contacts or audit internals", async () => {
+    const query = vi.fn(async (sql: string, params?: unknown[]) => {
+      expect(sql).toContain("from component c");
+      expect(params).toEqual(["kcml0002.hcasc.cz"]);
+      return {
+        rowCount: 1,
+        rows: [{
+        id: "00000000-0000-0000-0000-000000000002", code: "KCML0002", hostname: "kcml0002.hcasc.cz",
+        display_name: "Referenční komponenta", description: "Veřejný popis", category: "MCP_SERVER",
+        registration_type: "MCP_SERVER", component_role: "SERVICE", lifecycle_state: "ACTIVE", activation_state: "ACTIVE",
+        operational_state: "HEALTHY", monitoring_state: "HEALTHY", recertification_state: "CURRENT", enabled: true,
+        policy_epoch: 4, release_version: "2026.07.21", created_at: "2026-07-19T00:00:00.000Z",
+        updated_at: "2026-07-19T00:00:00.000Z", revision: "1.0.0", capabilities: ["mcp.tools.list"],
+        protocols: ["MCP"], transports: ["STREAMABLE_HTTP"], owners: { secret: "internal" }, contacts: { email: "internal@example.test" },
+        secret_fingerprint: "must-not-leak", permissions: [{ scope_name: "internal" }], gap_state: "CONTIGUOUS"
+        }]
+      };
+    });
+    const discoveryApp = Fastify();
+    registerComponentRoutes(discoveryApp, { query } as unknown as Db, loadConfig({
+      NODE_ENV: "test", DATABASE_URL: "postgres://unused/test", PUBLIC_BASE_DOMAIN: "hcasc.cz",
+      ADMIN_HOST: "admin.hcasc.cz", AUTH_HOST: "auth.hcasc.cz", REGISTER_HOST: "register.hcasc.cz",
+      ACCESS_TOKEN_HMAC_KEY_BASE64: secret(1), INTEGRATION_TOKEN_HMAC_KEY_BASE64: secret(2),
+      EGRESS_CAPABILITY_HMAC_KEY_BASE64: secret(3), SESSION_SECRET_BASE64: secret(4),
+      CSRF_SECRET_BASE64: secret(5), MFA_ENCRYPTION_KEY_BASE64: secret(6)
+    }));
+    await discoveryApp.ready();
+    const response = await discoveryApp.inject({ method: "GET", url: "/.well-known/kcml-component", headers: { host: "kcml0002.hcasc.cz" } });
+    await discoveryApp.close();
+
+    expect(response.statusCode).toBe(200);
+    expect(response.headers["cache-control"]).toBe("no-store");
+    expect(response.json()).toMatchObject({ catalogVersion: "2026.07.21", component: { code: "KCML0002", revision: "1.0.0" } });
+    expect(JSON.stringify(response.json())).not.toMatch(/credential|permission|fingerprint|contact|owner|gapState|highest/i);
+    expect(String(query.mock.calls[0]?.[0])).not.toMatch(/credential|permission|audit_stream|owners|contacts/i);
   });
 });
