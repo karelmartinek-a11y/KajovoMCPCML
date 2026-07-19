@@ -31,6 +31,9 @@ report_error() {
   if [ -s "$tmpdir/onboarding-response.json" ]; then
     echo "reference-smoke:onboarding-response=$(jq -c . "$tmpdir/onboarding-response.json" 2>/dev/null || tr -d '\n' < "$tmpdir/onboarding-response.json")" >&2
   fi
+  if [ -s "$tmpdir/onboarding-http-status.txt" ]; then
+    echo "reference-smoke:onboarding-http-status=$(tr -d '\n' < "$tmpdir/onboarding-http-status.txt")" >&2
+  fi
   if [ -s "$tmpdir/direct-bypass.json" ]; then
     echo "reference-smoke:direct-bypass=$(jq -c . "$tmpdir/direct-bypass.json" 2>/dev/null || tr -d '\n' < "$tmpdir/direct-bypass.json")" >&2
   fi
@@ -161,14 +164,18 @@ if [ -n "$service_id" ] && [ "$service_id" != "null" ]; then
   job_lock_version="$(jq -r '.job.lockVersion' <<<"$resumed_job_json")"
   test -n "$job_lock_version"
   test "$job_lock_version" != "null"
-  curl_json -X PUT \
+  onboarding_status="$(
+    curl -sS -o "$tmpdir/onboarding-response.json" -w '%{http_code}' -X PUT \
     -H "Host: $register_host" \
     -H "authorization: Bearer $integration_token" \
     -H "idempotency-key: $(cat /proc/sys/kernel/random/uuid)" \
     -H "if-match: \"$job_lock_version\"" \
     -H 'content-type: application/json' \
     --data @"$manifest_file" \
-    "$base_url/v1/service-onboardings/$job_id/revision" > "$tmpdir/onboarding-response.json"
+    "$base_url/v1/service-onboardings/$job_id/revision"
+  )"
+  printf '%s' "$onboarding_status" > "$tmpdir/onboarding-http-status.txt"
+  test "$onboarding_status" = "202"
 else
   intent_json="$(intent_body)"
   intent_response="$(
@@ -176,13 +183,17 @@ else
       --data "$intent_json" "$base_url/api/integration-intents"
   )"
   integration_token="$(jq -r '.integrationToken' <<<"$intent_response")"
-  curl_json \
+  onboarding_status="$(
+    curl -sS -o "$tmpdir/onboarding-response.json" -w '%{http_code}' \
     -H "Host: $register_host" \
     -H "authorization: Bearer $integration_token" \
     -H "idempotency-key: $(cat /proc/sys/kernel/random/uuid)" \
     -H 'content-type: application/json' \
     --data @"$manifest_file" \
-    "$base_url/v1/service-onboardings" > "$tmpdir/onboarding-response.json"
+    "$base_url/v1/service-onboardings"
+  )"
+  printf '%s' "$onboarding_status" > "$tmpdir/onboarding-http-status.txt"
+  test "$onboarding_status" = "202"
   service_id="$(jq -r '.job.serviceId' "$tmpdir/onboarding-response.json")"
 fi
 test -n "$service_id"

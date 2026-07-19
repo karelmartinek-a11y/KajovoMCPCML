@@ -965,6 +965,13 @@ describe.skipIf(!enabled)("EXTERNAL_API PostgreSQL integration", () => {
     );
     expect(receipt.finalState).toBe("REGISTERED_DISABLED");
     await db.query("update managed_service set active_revision_id=null where id=$1", [receipt.serviceId]);
+    await db.query(
+      `insert into onboarding_source_revision(
+          job_id, revision, idempotency_key, request_digest, source_digest, archive_path, manifest, manifest_digest, validation_evidence
+       ) values ($1,2,'external-api-db-resume-test-existing-revision','sha256:existing','sha256:existing','external-api://manifest',$2,$3,'{}')`,
+      [receipt.jobId, initialManifest, initialDigest]
+    );
+    await db.query("update onboarding_job set source_revision=1 where id=$1", [receipt.jobId]);
 
     const resumed = await createIntegrationToken(db, config, adminId, randomUUID(), "External API resumed integration", {
       summary: "Reference external API",
@@ -1002,5 +1009,14 @@ describe.skipIf(!enabled)("EXTERNAL_API PostgreSQL integration", () => {
     expect(revisionCount.rows[0].count).toBe(2);
     const activeRevision = await db.query("select revision from managed_service_revision where managed_service_id=$1 and active is true", [receipt.serviceId]);
     expect(activeRevision.rows[0].revision).toBe("test-reference-api-2");
+    const sourceRevision = await db.query(
+      `select job.source_revision, max(source.revision)::int as max_revision
+         from onboarding_job job
+         join onboarding_source_revision source on source.job_id=job.id
+        where job.id=$1
+        group by job.source_revision`,
+      [receipt.jobId]
+    );
+    expect(sourceRevision.rows[0]).toMatchObject({ source_revision: 3, max_revision: 3 });
   });
 });

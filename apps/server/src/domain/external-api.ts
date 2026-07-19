@@ -1204,23 +1204,29 @@ export async function updateExternalApiManagedService(
     const managed = await client.query("select * from managed_service where code=$1 and service_kind='EXTERNAL_API' for update", [row.code]);
     if (!managed.rowCount) throw Object.assign(new Error("managed_service_not_found"), { statusCode: 404 });
     const revision = await upsertManagedServiceRevision(client, String(managed.rows[0].id), manifest, manifestDigest);
-    await client.query(
+    const sourceRevision = await client.query(
+      "select coalesce(max(revision), 0)::int as max_revision from onboarding_source_revision where job_id=$1",
+      [jobId]
+    );
+    const nextSourceRevision = Math.max(Number(row.source_revision), Number(sourceRevision.rows[0]?.max_revision ?? 0)) + 1;
+    const updatedJob = await client.query(
       `update onboarding_job
           set manifest = $3,
               manifest_digest = $4,
               source_digest = $4,
-              source_revision = source_revision + 1,
+              source_revision = $5,
               lock_version = lock_version + 1,
               completed_at = now(),
               state = 'REGISTERED_DISABLED'
         where id = $1 and lock_version = $2`,
-      [jobId, lockVersion, manifest, manifestDigest]
+      [jobId, lockVersion, manifest, manifestDigest, nextSourceRevision]
     );
+    if (!updatedJob.rowCount) throw Object.assign(new Error("lock_version_conflict"), { statusCode: 412 });
     await client.query(
       `insert into onboarding_source_revision(
           job_id, revision, idempotency_key, request_digest, source_digest, archive_path, manifest, manifest_digest, validation_evidence
        ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-      [jobId, Number(row.source_revision) + 1, idempotencyKey, requestDigest, manifestDigest, "external-api://manifest", manifest, manifestDigest, JSON.stringify({ kind: "EXTERNAL_API" })]
+      [jobId, nextSourceRevision, idempotencyKey, requestDigest, manifestDigest, "external-api://manifest", manifest, manifestDigest, JSON.stringify({ kind: "EXTERNAL_API" })]
     );
     await client.query(
       `update managed_service
@@ -1302,7 +1308,7 @@ export async function updateExternalApiManagedService(
       `insert into service_pipeline_run(managed_service_id, integration_token_id, pipeline_kind, state, source_revision, request_digest, correlation_id, completed_at)
        values ($1,$2,'EXTERNAL_API_REGISTRATION','REGISTERED_DISABLED',$3,$4,$5,now())
        returning id`,
-      [String(managed.rows[0].id), principal.id, Number(row.source_revision) + 1, requestDigest, correlationId]
+      [String(managed.rows[0].id), principal.id, nextSourceRevision, requestDigest, correlationId]
     );
     await client.query(
       `insert into service_pipeline_event(pipeline_run_id, from_state, to_state, event_type, detail, correlation_id)
