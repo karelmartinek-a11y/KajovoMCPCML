@@ -1,12 +1,15 @@
 export const KCML_RELEASE = {
-  applicationVersion: "2026.07.22",
-  blueprintVersion: "2026.07.22",
-  catalogVersion: "2026.07.22",
-  manifestSchemaVersion: "2026.07.22",
-  pulseEnvelopeVersion: "2026.07.22",
-  policyBaseline: "2026-07-22",
+  applicationVersion: "2026.07.23",
+  blueprintVersion: "2026.07.23",
+  catalogVersion: "2026.07.23",
+  manifestSchemaVersion: "2026.07.23",
+  pulseEnvelopeVersion: "2026.07.23",
+  policyBaseline: "2026-07-23",
   mcpProtocolVersion: "2025-11-25"
 } as const;
+
+export const KCML_RELEASE_WAVE_KEY = "baseline-2026-07-23";
+export const KCML_RELEASE_WAVE_LABEL = "Prvni release vlna 9 AI / 11 MCP / 5 managed";
 
 export const KCML_MANAGED_SERVICE_IDS = [
   "KCML-AUTH-001",
@@ -42,10 +45,64 @@ export const KCML_MCP_COMPONENTS = [
   ["MCP-WFC-011", "STATEFUL_SERVICE"]
 ] as const;
 
+export const KCML_MANAGED_COMPONENTS = [
+  ["KCML-AUTH-001", "PLATFORM_AUTH"],
+  ["KCML-CTL-002", "CONTROL_PLANE"],
+  ["KCML-MON-003", "MONITORING"],
+  ["KCML-AUD-004", "AUDIT_ARCHIVE"],
+  ["KCML-SEC-005", "SECRET_MANAGER"]
+] as const;
+
+export type KcmlBlueprintComponentId =
+  | (typeof KCML_AI_COMPONENTS)[number][0]
+  | (typeof KCML_MCP_COMPONENTS)[number][0]
+  | (typeof KCML_MANAGED_COMPONENTS)[number][0];
+
 export const KCML_BLUEPRINT_COMPONENT_IDS = [
   ...KCML_AI_COMPONENTS.map(([componentId]) => componentId),
-  ...KCML_MCP_COMPONENTS.map(([componentId]) => componentId)
-] as const;
+  ...KCML_MCP_COMPONENTS.map(([componentId]) => componentId),
+  ...KCML_MANAGED_COMPONENTS.map(([componentId]) => componentId)
+] as readonly KcmlBlueprintComponentId[];
+
+export type BlueprintComponentContract = {
+  componentId: KcmlBlueprintComponentId;
+  category: "AI_AGENT" | "MCP_SERVER" | "PLATFORM_SERVICE";
+  registrationType: "KAJA_CLIENT" | "MCP_SERVER" | "MANAGED_PLATFORM_SERVICE";
+  role: "AGENT" | "SERVICE" | "PLATFORM";
+  releaseVersion: typeof KCML_RELEASE.catalogVersion;
+  releaseWaveKey: typeof KCML_RELEASE_WAVE_KEY;
+};
+
+export const KCML_BLUEPRINT_COMPONENT_CONTRACTS: Record<KcmlBlueprintComponentId, BlueprintComponentContract> = Object.fromEntries([
+  ...KCML_AI_COMPONENTS.map(([componentId]) => [componentId, {
+    componentId,
+    category: "AI_AGENT",
+    registrationType: "KAJA_CLIENT",
+    role: "AGENT",
+    releaseVersion: KCML_RELEASE.catalogVersion,
+    releaseWaveKey: KCML_RELEASE_WAVE_KEY
+  }]),
+  ...KCML_MCP_COMPONENTS.map(([componentId]) => [componentId, {
+    componentId,
+    category: "MCP_SERVER",
+    registrationType: "MCP_SERVER",
+    role: "SERVICE",
+    releaseVersion: KCML_RELEASE.catalogVersion,
+    releaseWaveKey: KCML_RELEASE_WAVE_KEY
+  }]),
+  ...KCML_MANAGED_COMPONENTS.map(([componentId]) => [componentId, {
+    componentId,
+    category: "PLATFORM_SERVICE",
+    registrationType: "MANAGED_PLATFORM_SERVICE",
+    role: "PLATFORM",
+    releaseVersion: KCML_RELEASE.catalogVersion,
+    releaseWaveKey: KCML_RELEASE_WAVE_KEY
+  }])
+]) as Record<KcmlBlueprintComponentId, BlueprintComponentContract>;
+
+export function blueprintComponentContract(componentId: string): BlueprintComponentContract | null {
+  return KCML_BLUEPRINT_COMPONENT_CONTRACTS[componentId as KcmlBlueprintComponentId] ?? null;
+}
 
 function commitFromBuildId(buildId: string | undefined): string | undefined {
   const match = buildId?.match(/^([0-9a-f]{40})(?:[-_.]|$)/i);

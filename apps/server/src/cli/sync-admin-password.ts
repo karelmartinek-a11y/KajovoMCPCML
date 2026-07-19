@@ -15,7 +15,7 @@ const pass = process.env.PASS;
 try {
   if (pass === undefined || pass.length === 0) throw new Error("PASS must not be empty");
   const hash = await argon2.hash(pass, { type: argon2.argon2id, memoryCost: 65536, timeCost: 3, parallelism: 1 });
-  await tx(db, async (client) => {
+  const accountId = await tx(db, async (client) => {
     const account = await client.query(
       `insert into admin_account(username, mfa_enabled)
        values ($1,false)
@@ -37,6 +37,20 @@ try {
     );
     await client.query("update admin_session set revoked_at=now() where account_id=$1 and revoked_at is null", [accountId]);
     await appendAudit(client, { eventType: "admin.password.synced", actorType: "deployment", objectType: "admin_account", objectId: accountId, correlationId: randomUUID() });
+    return accountId;
+  });
+  await tx(db, async (client) => {
+    const smoke = await client.query("select password_hash from admin_account where id=$1 and active=true", [accountId]);
+    if (!smoke.rowCount || !await argon2.verify(String(smoke.rows[0].password_hash), pass)) {
+      throw new Error("admin_password_sync_smoke_failed");
+    }
+    await appendAudit(client, {
+      eventType: "admin.password.sync_smoke_passed",
+      actorType: "deployment",
+      objectType: "admin_account",
+      objectId: accountId,
+      correlationId: randomUUID()
+    });
   });
   if (config.ADMIN_TOTP_SECRET) {
     process.stderr.write("Admin password synchronized from PASS; MFA is configured; existing admin sessions revoked.\n");

@@ -3,7 +3,7 @@ import type { Db } from "../db.js";
 import { tx } from "../db.js";
 import { hmacToken, issueOpaqueSecret } from "../security/secrets.js";
 import { appendAudit } from "./audit.js";
-import { KCML_RELEASE } from "./release.js";
+import { blueprintComponentContract, KCML_RELEASE, KCML_RELEASE_WAVE_KEY } from "./release.js";
 
 export const COMPONENT_CATALOG_VERSION = KCML_RELEASE.catalogVersion;
 export const MCP_REQUIRED_CAPABILITIES = [
@@ -17,11 +17,17 @@ export const ACTIVATION_GATES = [
   "PUBLIC_ENDPOINT",
   "TECHNICAL_DISABLE",
   "MONITORING",
-  "AUDIT_CONTINUITY"
+  "AUDIT_CONTINUITY",
+  "RECERTIFICATION"
 ] as const;
 
 export type ComponentManifest = {
   schemaVersion: typeof COMPONENT_CATALOG_VERSION;
+  blueprint: {
+    componentId: string;
+    version: typeof COMPONENT_CATALOG_VERSION;
+    releaseWaveKey: typeof KCML_RELEASE_WAVE_KEY;
+  };
   name: string;
   description?: string;
   category: "AI_CLIENT" | "AI_AGENT" | "MCP_SERVER" | "MANAGED_RUNTIME" | "EXTERNAL_SERVICE" | "PLATFORM_SERVICE";
@@ -65,12 +71,21 @@ export function validateComponentManifest(input: unknown): ComponentManifest {
   const value = input as Record<string, unknown>;
   const category = text(value.category) as ComponentManifest["category"];
   const role = text(value.role) as ComponentManifest["role"];
+  const blueprint = value.blueprint && typeof value.blueprint === "object" && !Array.isArray(value.blueprint)
+    ? value.blueprint as Record<string, unknown>
+    : null;
+  const blueprintComponentId = blueprint ? text(blueprint.componentId) : "";
+  const blueprintVersion = blueprint ? text(blueprint.version) : "";
+  const releaseWaveKey = blueprint ? text(blueprint.releaseWaveKey) || KCML_RELEASE_WAVE_KEY : "";
+  const contract = blueprintComponentContract(blueprintComponentId);
   const capabilities = Array.isArray(value.capabilities) ? [...new Set(value.capabilities.map(String))].sort() : [];
   const protocols = Array.isArray(value.protocols) ? [...new Set(value.protocols.map(String))].sort() : [];
   const transports = Array.isArray(value.transports) ? [...new Set(value.transports.map(String))].sort() : [];
   const allowedCategories: ComponentManifest["category"][] = ["AI_CLIENT", "AI_AGENT", "MCP_SERVER", "MANAGED_RUNTIME", "EXTERNAL_SERVICE", "PLATFORM_SERVICE"];
   const allowedRoles: ComponentManifest["role"][] = ["CLIENT", "AGENT", "SERVICE", "RUNTIME", "PLATFORM"];
   if (value.schemaVersion !== COMPONENT_CATALOG_VERSION
+    || !blueprint || !blueprintComponentId || blueprintVersion !== COMPONENT_CATALOG_VERSION || releaseWaveKey !== KCML_RELEASE_WAVE_KEY
+    || !contract
     || typeof value.name !== "string" || value.name.trim().length < 2
     || typeof value.registrationType !== "string" || !value.registrationType.trim()
     || typeof value.revision !== "string" || !value.revision.trim()
@@ -83,11 +98,30 @@ export function validateComponentManifest(input: unknown): ComponentManifest {
     || !value.technicalDisable || typeof value.technicalDisable !== "object") {
     throw Object.assign(new Error("invalid_manifest"), { statusCode: 400 });
   }
+  if (category !== contract.category || value.registrationType.trim() !== contract.registrationType || role !== contract.role) {
+    throw Object.assign(new Error("registration_type_mismatch"), { statusCode: 409 });
+  }
+  const evidenceBooleans = [
+    (value.monitoring as { enabled?: unknown }).enabled === true,
+    (value.audit as { enabled?: unknown }).enabled === true,
+    (value.audit as { replaySupported?: unknown }).replaySupported === true,
+    (value.authorization as { mode?: unknown }).mode === "OAUTH2_CLIENT_CREDENTIALS",
+    (value.endpoint as { public?: unknown }).public === true,
+    (value.technicalDisable as { supported?: unknown }).supported === true
+  ];
+  if (evidenceBooleans.includes(false)) {
+    throw Object.assign(new Error("readiness_evidence_required"), { statusCode: 409 });
+  }
   if (category === "MCP_SERVER" && MCP_REQUIRED_CAPABILITIES.some((capability) => !capabilities.includes(capability))) {
     throw Object.assign(new Error("catalog_incompatible"), { statusCode: 409 });
   }
   return {
     schemaVersion: COMPONENT_CATALOG_VERSION,
+    blueprint: {
+      componentId: contract.componentId,
+      version: COMPONENT_CATALOG_VERSION,
+      releaseWaveKey: KCML_RELEASE_WAVE_KEY
+    },
     name: value.name.trim(),
     description: typeof value.description === "string" ? value.description.trim() : "",
     category,
@@ -107,13 +141,22 @@ export function validateComponentManifest(input: unknown): ComponentManifest {
   };
 }
 
-function gateResults(manifest: ComponentManifest): Array<{ gate: typeof ACTIVATION_GATES[number]; passed: boolean }> {
+async function gateResults(db: Db, componentId: string, manifest: ComponentManifest, authorizationSnapshot: Record<string, unknown>): Promise<Array<{ gate: typeof ACTIVATION_GATES[number]; passed: boolean }>> {
+  const evidence = await db.query(
+    `select c.monitoring_state,c.recertification_state,stream.gap_state
+       from component c
+       left join component_audit_stream stream on stream.component_id=c.id
+      where c.id=$1`,
+    [componentId]
+  );
+  const row = evidence.rows[0] ?? {};
   return [
-    { gate: "AUTHORIZATION", passed: manifest.authorization.mode === "OAUTH2_CLIENT_CREDENTIALS" },
-    { gate: "PUBLIC_ENDPOINT", passed: manifest.endpoint.public === true },
+    { gate: "AUTHORIZATION", passed: manifest.authorization.mode === "OAUTH2_CLIENT_CREDENTIALS" && authorizationSnapshot.blueprintComponentId === manifest.blueprint.componentId },
+    { gate: "PUBLIC_ENDPOINT", passed: manifest.endpoint.public === true && Boolean(componentId) },
     { gate: "TECHNICAL_DISABLE", passed: manifest.technicalDisable.supported === true },
-    { gate: "MONITORING", passed: manifest.monitoring.enabled === true },
-    { gate: "AUDIT_CONTINUITY", passed: manifest.audit.enabled === true && manifest.audit.replaySupported === true }
+    { gate: "MONITORING", passed: manifest.monitoring.enabled === true && row.monitoring_state === "HEALTHY" },
+    { gate: "AUDIT_CONTINUITY", passed: manifest.audit.enabled === true && manifest.audit.replaySupported === true && row.gap_state === "CONTIGUOUS" },
+    { gate: "RECERTIFICATION", passed: ["NOT_DUE", "PASSED"].includes(String(row.recertification_state)) }
   ];
 }
 
@@ -127,6 +170,36 @@ export async function createComponentOnboarding(db: Db, params: {
 }): Promise<Record<string, unknown>> {
   const digest = componentManifestDigest(params.manifest);
   return tx(db, async (client) => {
+    const token = await client.query(
+      `select id,token_kind,release_version,release_wave_key,max_child_jobs
+         from integration_token
+        where id=$1
+          and revoked_at is null
+          and deleted_at is null
+          and expires_at > now()
+        for update`,
+      [params.integrationTokenId]
+    );
+    if (!token.rowCount) throw Object.assign(new Error("invalid_integration_token"), { statusCode: 401 });
+    const tokenRow = token.rows[0];
+    const blueprintComponentId = params.manifest.blueprint.componentId;
+    const allowed = await client.query(
+      `select allowed.registration_type, wave.category, wave.component_role
+         from integration_token_allowed_component allowed
+         join release_wave_component wave
+           on wave.release_version=allowed.release_version
+          and wave.wave_key=allowed.release_wave_key
+          and wave.blueprint_component_id=allowed.blueprint_component_id
+        where allowed.token_id=$1
+          and allowed.blueprint_component_id=$2
+          and allowed.release_version=$3
+          and allowed.release_wave_key=$4`,
+      [params.integrationTokenId, blueprintComponentId, COMPONENT_CATALOG_VERSION, KCML_RELEASE_WAVE_KEY]
+    );
+    if (!allowed.rowCount) throw Object.assign(new Error("implementation_token_scope_mismatch"), { statusCode: 403 });
+    if (String(allowed.rows[0].registration_type) !== params.manifest.registrationType) {
+      throw Object.assign(new Error("registration_type_mismatch"), { statusCode: 409 });
+    }
     const existing = await client.query(
       "select * from component_onboarding_job where integration_token_id=$1 and idempotency_key=$2 for update",
       [params.integrationTokenId, params.idempotencyKey]
@@ -135,19 +208,45 @@ export async function createComponentOnboarding(db: Db, params: {
       if (String(existing.rows[0].request_digest) !== digest) throw Object.assign(new Error("idempotency_conflict"), { statusCode: 409 });
       return componentOnboardingView(existing.rows[0]);
     }
+    const childCount = await client.query(
+      "select count(*)::int as count from integration_token_child_job where token_id=$1",
+      [params.integrationTokenId]
+    );
+    if (Number(childCount.rows[0]?.count ?? 0) >= Number(tokenRow.max_child_jobs ?? 1)) {
+      throw Object.assign(new Error("max_child_jobs_exceeded"), { statusCode: 409 });
+    }
+    const duplicate = await client.query(
+      `select id from component_onboarding_job
+        where integration_token_id=$1
+          and blueprint_component_id=$2
+          and state not in ('CANCELLED','FAILED')
+        limit 1`,
+      [params.integrationTokenId, blueprintComponentId]
+    );
+    if (duplicate.rowCount) throw Object.assign(new Error("blueprint_component_duplicate"), { statusCode: 409 });
     const identity = await client.query("select nextval('kcml_number_seq')::bigint as number");
     const number = Number(identity.rows[0].number);
     const code = `KCML${String(number).padStart(4, "0")}`;
     const hostname = `${code.toLowerCase()}.${params.baseDomain}`;
     const componentId = randomUUID();
+    const authorizationSnapshot = {
+      tokenId: params.integrationTokenId,
+      tokenKind: String(tokenRow.token_kind),
+      releaseVersion: COMPONENT_CATALOG_VERSION,
+      releaseWaveKey: KCML_RELEASE_WAVE_KEY,
+      blueprintComponentId,
+      registrationType: params.manifest.registrationType,
+      category: params.manifest.category,
+      capturedAt: new Date().toISOString()
+    };
     await client.query(
       `insert into component(
         id,kcml_number,code,hostname,display_name,description,category,registration_type,component_role,owners,contacts,
-        lifecycle_state,activation_state,operational_state,monitoring_state,enabled,release_version
-      ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11::jsonb,'REVIEW','INACTIVE','UNKNOWN',$12,false,$13)`,
+        lifecycle_state,activation_state,operational_state,monitoring_state,enabled,release_version,release_wave_key,blueprint_component_id
+      ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11::jsonb,'REVIEW','INACTIVE','UNKNOWN',$12,false,$13,$14,$15)`,
       [componentId, number, code, hostname, params.manifest.name, params.manifest.description ?? "", params.manifest.category,
         params.manifest.registrationType, params.manifest.role, JSON.stringify(params.manifest.owners), JSON.stringify(params.manifest.contacts ?? {}),
-        params.manifest.monitoring.enabled ? "PENDING" : "NOT_CONFIGURED", COMPONENT_CATALOG_VERSION]
+        params.manifest.monitoring.enabled ? "PENDING" : "NOT_CONFIGURED", COMPONENT_CATALOG_VERSION, KCML_RELEASE_WAVE_KEY, blueprintComponentId]
     );
     const revision = await client.query(
       `insert into component_revision(
@@ -159,14 +258,26 @@ export async function createComponentOnboarding(db: Db, params: {
     await client.query("insert into component_audit_stream(component_id) values ($1)", [componentId]);
     const inserted = await client.query(
       `insert into component_onboarding_job(
-        integration_token_id,component_id,idempotency_key,request_digest,category,registration_type,manifest,manifest_digest,state
-      ) values ($1,$2,$3,$4,$5,$6,$7::jsonb,$4,'IN_REVIEW') returning *`,
-      [params.integrationTokenId, componentId, params.idempotencyKey, digest, params.manifest.category, params.manifest.registrationType, JSON.stringify(params.manifest)]
+        integration_token_id,component_id,idempotency_key,request_digest,category,registration_type,manifest,manifest_digest,state,
+        release_version,release_wave_key,blueprint_component_id,authorization_snapshot
+      ) values ($1,$2,$3,$4,$5,$6,$7::jsonb,$4,'IN_REVIEW',$8,$9,$10,$11::jsonb) returning *`,
+      [params.integrationTokenId, componentId, params.idempotencyKey, digest, params.manifest.category, params.manifest.registrationType,
+        JSON.stringify(params.manifest), COMPONENT_CATALOG_VERSION, KCML_RELEASE_WAVE_KEY, blueprintComponentId, JSON.stringify(authorizationSnapshot)]
+    );
+    await client.query(
+      `insert into integration_token_child_job(
+         token_id, component_onboarding_job_id, blueprint_component_id, registration_type,
+         release_version, release_wave_key, authorization_snapshot
+       ) values ($1,$2,$3,$4,$5,$6,$7::jsonb)`,
+      [params.integrationTokenId, inserted.rows[0].id, blueprintComponentId, params.manifest.registrationType,
+        COMPONENT_CATALOG_VERSION, KCML_RELEASE_WAVE_KEY, JSON.stringify(authorizationSnapshot)]
     );
     await client.query("update component set active_revision_id=$2 where id=$1", [componentId, revision.rows[0].id]);
     await appendAudit(client, {
       eventType: "component_onboarding.created", actorType: "integration_token", actorId: params.integrationTokenId,
-      objectType: "component", objectId: componentId, after: { code, hostname, catalogVersion: COMPONENT_CATALOG_VERSION }, correlationId: params.correlationId
+      objectType: "component", objectId: componentId,
+      after: { code, hostname, catalogVersion: COMPONENT_CATALOG_VERSION, releaseWaveKey: KCML_RELEASE_WAVE_KEY, blueprintComponentId },
+      correlationId: params.correlationId
     });
     return componentOnboardingView(inserted.rows[0]);
   });
@@ -185,6 +296,8 @@ function componentOnboardingView(row: Record<string, unknown>): Record<string, u
     failureCode: optionalText(row.failure_code),
     lockVersion: Number(row.lock_version),
     releaseVersion: String(row.release_version),
+    releaseWaveKey: optionalText(row.release_wave_key),
+    blueprintComponentId: optionalText(row.blueprint_component_id),
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at)
   };
@@ -202,6 +315,8 @@ export async function getComponentOnboarding(db: Db, jobId: string, integrationT
 export async function reviseComponentOnboarding(db: Db, params: {
   jobId: string;
   integrationTokenId: string;
+  expectedLockVersion: number;
+  idempotencyKey: string;
   manifest: ComponentManifest;
   correlationId: string;
 }): Promise<Record<string, unknown>> {
@@ -213,7 +328,21 @@ export async function reviseComponentOnboarding(db: Db, params: {
     );
     if (!current.rowCount) throw Object.assign(new Error("not_found"), { statusCode: 404 });
     const job = current.rows[0];
+    if (Number(job.lock_version) !== params.expectedLockVersion) throw Object.assign(new Error("lock_version_conflict"), { statusCode: 412 });
     if (["ACTIVE", "CANCELLED"].includes(String(job.state))) throw Object.assign(new Error("invalid_state"), { statusCode: 409 });
+    if (String(job.blueprint_component_id) !== params.manifest.blueprint.componentId) {
+      throw Object.assign(new Error("blueprint_component_immutable"), { statusCode: 409 });
+    }
+    const duplicateRequest = await client.query(
+      "select request_digest from component_onboarding_revision_request where job_id=$1 and idempotency_key=$2",
+      [params.jobId, params.idempotencyKey]
+    );
+    if (duplicateRequest.rowCount) {
+      if (String(duplicateRequest.rows[0].request_digest) !== digest) {
+        throw Object.assign(new Error("idempotency_conflict"), { statusCode: 409 });
+      }
+      return componentOnboardingView(job);
+    }
     const revision = await client.query(
       `insert into component_revision(component_id,revision,manifest,manifest_digest,capabilities,protocols,transports,derived_gates)
        values ($1,$2,$3::jsonb,$4,$5::text[],$6::text[],$7::text[],$8::jsonb)
@@ -227,8 +356,14 @@ export async function reviseComponentOnboarding(db: Db, params: {
     const updated = await client.query(
       `update component_onboarding_job set manifest=$2::jsonb,manifest_digest=$3,request_digest=$3,state='IN_REVIEW',
         gate_results='[]'::jsonb,credential_claim_digest=null,credential_claim_expires_at=null,failure_code=null,
-        lock_version=lock_version+1,updated_at=now() where id=$1 returning *`,
-      [params.jobId, JSON.stringify(params.manifest), digest]
+        lock_version=lock_version+1,updated_at=now() where id=$1 and lock_version=$4 returning *`,
+      [params.jobId, JSON.stringify(params.manifest), digest, params.expectedLockVersion]
+    );
+    if (!updated.rowCount) throw Object.assign(new Error("lock_version_conflict"), { statusCode: 412 });
+    await client.query(
+      `insert into component_onboarding_revision_request(job_id,idempotency_key,request_digest)
+       values ($1,$2,$3)`,
+      [params.jobId, params.idempotencyKey, digest]
     );
     await appendAudit(client, {
       eventType: "component_onboarding.revised", actorType: "integration_token", actorId: params.integrationTokenId,
@@ -253,7 +388,10 @@ export async function evaluateComponentReadiness(db: Db, params: {
     const job = jobResult.rows[0];
     if (["CANCELLED", "FAILED"].includes(String(job.state))) throw Object.assign(new Error("invalid_state"), { statusCode: 409 });
     const manifest = validateComponentManifest(job.manifest);
-    const gates = gateResults(manifest);
+    const authorizationSnapshot = job.authorization_snapshot && typeof job.authorization_snapshot === "object"
+      ? job.authorization_snapshot as Record<string, unknown>
+      : {};
+    const gates = await gateResults(client as unknown as Db, String(job.component_id), manifest, authorizationSnapshot);
     const passed = gates.every((gate) => gate.passed);
     let claimToken: string | undefined;
     let claimDigest: Buffer | null = job.credential_claim_digest ?? null;
@@ -377,10 +515,10 @@ export async function getComponent(db: Db, id: string): Promise<Record<string, u
 }
 
 export async function getComponentDiscovery(db: Db, hostname: string): Promise<Record<string, unknown>> {
-  const result = await db.query(`
+    const result = await db.query(`
     select c.id,c.code,c.hostname,c.display_name,c.description,c.category,c.registration_type,c.component_role,
       c.lifecycle_state,c.activation_state,c.operational_state,c.monitoring_state,c.recertification_state,
-      c.enabled,c.policy_epoch,c.release_version,c.created_at,c.updated_at,
+      c.enabled,c.policy_epoch,c.release_version,c.release_wave_key,c.blueprint_component_id,c.created_at,c.updated_at,
       r.revision,r.capabilities,r.protocols,r.transports
     from component c
     left join component_revision r on r.id=c.active_revision_id
@@ -394,7 +532,9 @@ export async function getComponentDiscovery(db: Db, hostname: string): Promise<R
     operationalState: String(row.operational_state), monitoringState: String(row.monitoring_state),
     recertificationState: String(row.recertification_state), enabled: Boolean(row.enabled), policyEpoch: Number(row.policy_epoch),
     revision: optionalText(row.revision), capabilities: row.capabilities ?? [], protocols: row.protocols ?? [], transports: row.transports ?? [],
-    releaseVersion: String(row.release_version), createdAt: String(row.created_at), updatedAt: String(row.updated_at)
+    releaseVersion: String(row.release_version), releaseWaveKey: optionalText(row.release_wave_key),
+    blueprintComponentId: optionalText(row.blueprint_component_id),
+    createdAt: String(row.created_at), updatedAt: String(row.updated_at)
   };
 }
 
@@ -408,7 +548,9 @@ function componentView(row: Record<string, unknown>): Record<string, unknown> {
     revision: optionalText(row.revision), capabilities: row.capabilities ?? [], protocols: row.protocols ?? [], transports: row.transports ?? [],
     permissionCount: Number(row.permission_count ?? 0), credentialCount: Number(row.credential_count ?? 0), policyEpoch: Number(row.policy_epoch),
     audit: { gapState: optionalText(row.gap_state) ?? "UNAVAILABLE", highestReceivedSequence: Number(row.highest_received_sequence ?? 0), highestAcknowledgedSequence: Number(row.highest_acknowledged_sequence ?? 0) },
-    releaseVersion: String(row.release_version), createdAt: String(row.created_at), updatedAt: String(row.updated_at)
+    releaseVersion: String(row.release_version), releaseWaveKey: optionalText(row.release_wave_key),
+    blueprintComponentId: optionalText(row.blueprint_component_id),
+    createdAt: String(row.created_at), updatedAt: String(row.updated_at)
   };
 }
 
@@ -425,6 +567,7 @@ export async function setComponentActivation(db: Db, params: { componentId: stri
       if (!component.active_revision_id || component.validation_state !== "APPROVED") throw Object.assign(new Error("catalog_incompatible"), { statusCode: 409 });
       if (component.monitoring_state !== "HEALTHY") throw Object.assign(new Error("monitoring_failed"), { statusCode: 409 });
       if (component.gap_state !== "CONTIGUOUS") throw Object.assign(new Error("audit_gap"), { statusCode: 409 });
+      if (!["NOT_DUE", "PASSED"].includes(String(component.recertification_state))) throw Object.assign(new Error("recertification_required"), { statusCode: 409 });
     }
     const updated = await client.query(
       `update component set enabled=$2,ingress_enabled=$2,pulse_enabled=$2,egress_enabled=$2,

@@ -287,8 +287,51 @@ describe("MCP route", () => {
       },
       payload: { jsonrpc: "2.0", method: "notifications/initialized" }
     });
-    expect(initialized.statusCode).toBe(204);
+    expect(initialized.statusCode).toBe(202);
     expect(initialized.body).toBe("");
+  });
+
+  it("rejects unsupported initialize and protocol header versions", async () => {
+    app = Fastify();
+    registerMcpRoutes(app, createDb(), config);
+    await app.ready();
+
+    const unsupportedInitialize = await app.inject({
+      method: "POST",
+      url: "/mcp",
+      headers: { host: "kcml0001.example.invalid", authorization: "Bearer token" },
+      payload: {
+        jsonrpc: "2.0",
+        id: 21,
+        method: "initialize",
+        params: { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "old", version: "1" } }
+      }
+    });
+    expect(unsupportedInitialize.statusCode).toBe(200);
+    expect(unsupportedInitialize.json()).toMatchObject({
+      error: {
+        code: -32602,
+        data: {
+          code: "UNSUPPORTED_MCP_PROTOCOL_VERSION",
+          retryable: false,
+          supported: ["2025-11-25"],
+          requested: "2024-11-05"
+        }
+      }
+    });
+
+    const unsupportedHeader = await app.inject({
+      method: "POST",
+      url: "/mcp",
+      headers: {
+        host: "kcml0001.example.invalid",
+        authorization: "Bearer token",
+        "mcp-protocol-version": "2024-11-05"
+      },
+      payload: { jsonrpc: "2.0", id: 22, method: "tools/list" }
+    });
+    expect(unsupportedHeader.statusCode).toBe(400);
+    expect(unsupportedHeader.json()).toMatchObject({ error: "unsupported_mcp_protocol_version" });
   });
 
   it("does not send method errors for JSON-RPC notifications", async () => {
@@ -301,8 +344,36 @@ describe("MCP route", () => {
       headers: { host: "kcml0001.example.invalid", authorization: "Bearer token" },
       payload: { jsonrpc: "2.0", method: "unknown/notification" }
     });
-    expect(response.statusCode).toBe(204);
+    expect(response.statusCode).toBe(202);
     expect(response.body).toBe("");
+  });
+
+  it("accepts cancellation notifications and aborts an in-flight request", async () => {
+    handlerState.invoke = async (_input, ctx) => new Promise((resolve, reject) => {
+      ctx.signal?.addEventListener("abort", () => reject(Object.assign(new Error("aborted"), { classification: "cancelled" })), { once: true });
+      setTimeout(() => resolve({ ok: true }), 200);
+    });
+    app = Fastify();
+    registerMcpRoutes(app, createDb({ timeout_ms: 500 }), config);
+    await app.ready();
+
+    const call = app.inject({
+      method: "POST",
+      url: "/mcp",
+      headers: { host: "kcml0001.example.invalid", authorization: "Bearer token", "idempotency-key": "cancel-test-0001" },
+      payload: { jsonrpc: "2.0", id: "cancel-1", method: "tools/call", params: { name: "example_tool", arguments: { name: "A" } } }
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const cancel = await app.inject({
+      method: "POST",
+      url: "/mcp",
+      headers: { host: "kcml0001.example.invalid", authorization: "Bearer token" },
+      payload: { jsonrpc: "2.0", method: "notifications/cancelled", params: { requestId: "cancel-1", reason: "test" } }
+    });
+    expect(cancel.statusCode).toBe(202);
+    const response = await call;
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ error: { code: -32008, data: { code: "REQUEST_CANCELLED", retryable: false } } });
   });
 
   it("classifies timed out handlers as JSON-RPC timeout failures", async () => {

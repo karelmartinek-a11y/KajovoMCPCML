@@ -35,6 +35,18 @@ describe.skipIf(!enabled)("component authorization and audit persistence", () =>
     await db.query("delete from component_access_token where source_component_id=$1 or target_component_id=$2", [sourceId, targetId]);
     await db.query("delete from component_permission where source_component_id=$1 or target_component_id=$2", [sourceId, targetId]);
     await db.query("delete from component_credential where component_id=$1", [sourceId]);
+    await db.query(
+      `update component
+          set lifecycle_state='DEREGISTERED',
+              activation_state='INACTIVE',
+              operational_state='RETIRED',
+              enabled=false,
+              ingress_enabled=false,
+              pulse_enabled=false,
+              egress_enabled=false,
+              deregistered_at=coalesce(deregistered_at,now())
+        where blueprint_component_id='MCP-RX-WA-001'`
+    );
     await db.query(`
       insert into component(id,kcml_number,code,hostname,display_name,category,registration_type,component_role,lifecycle_state,activation_state,operational_state,monitoring_state,enabled,ingress_enabled,pulse_enabled,egress_enabled,release_version)
       values
@@ -60,6 +72,18 @@ describe.skipIf(!enabled)("component authorization and audit persistence", () =>
     await db.query("delete from component_access_token where source_component_id=$1 or target_component_id=$2", [sourceId, targetId]);
     await db.query("delete from component_permission where source_component_id=$1 or target_component_id=$2", [sourceId, targetId]);
     await db.query("delete from component_credential where component_id=$1", [sourceId]);
+    await db.query(
+      `update component
+          set lifecycle_state='DEREGISTERED',
+              activation_state='INACTIVE',
+              operational_state='RETIRED',
+              enabled=false,
+              ingress_enabled=false,
+              pulse_enabled=false,
+              egress_enabled=false,
+              deregistered_at=coalesce(deregistered_at,now())
+        where blueprint_component_id='MCP-RX-WA-001'`
+    );
     await db.query("update component set enabled=false,ingress_enabled=false,pulse_enabled=false,egress_enabled=false,activation_state='INACTIVE',operational_state='RETIRED',lifecycle_state='DEREGISTERED',deregistered_at=now() where id=any($1::uuid[])", [[sourceId, targetId]]);
     await db.end();
   });
@@ -104,17 +128,26 @@ describe.skipIf(!enabled)("component authorization and audit persistence", () =>
     const integrationTokenId = randomUUID();
     const admin = await db.query("select id from admin_account order by created_at limit 1");
     await db.query(`insert into integration_token(
-      id,label,lookup_digest,key_id,fingerprint,created_by,initial_expires_at,expires_at,max_expires_at,descriptor,release_version
-    ) values ($1,'Component DB test',$2,'test','component-db-test',$3,now()+interval '1 hour',now()+interval '1 hour',now()+interval '1 day',$4::jsonb,'2026.07.21')`,
+      id,label,lookup_digest,key_id,fingerprint,created_by,initial_expires_at,expires_at,max_expires_at,descriptor,
+      token_kind,release_version,release_wave_key,blueprint_release_version,max_child_jobs
+    ) values ($1,'Component DB test',$2,'test','component-db-test',$3,now()+interval '1 hour',now()+interval '1 hour',now()+interval '1 day',$4::jsonb,
+      'BLUEPRINT_RELEASE','2026.07.23','baseline-2026-07-23','2026.07.23',25)`,
     [integrationTokenId, hmacToken(integrationTokenId, accessHmacKey), admin.rows[0].id, JSON.stringify({ summary: "Component test", businessPurpose: "Validate component onboarding credential issuance safely.", serviceOwner: "KCML", technicalOwner: "KCML", criticality: "LOW" })]);
+    await db.query(
+      `insert into integration_token_allowed_component(token_id,blueprint_component_id,registration_type,release_version,release_wave_key)
+       values ($1,'MCP-RX-WA-001','MCP_SERVER','2026.07.23','baseline-2026-07-23')`,
+      [integrationTokenId]
+    );
     const manifest = validateComponentManifest({
-      schemaVersion: KCML_RELEASE.catalogVersion, name: "Self-service test", category: "MANAGED_RUNTIME", registrationType: "GENERIC_COMPONENT", role: "RUNTIME", revision: "1.0.0",
-      capabilities: ["component.discovery"], protocols: ["HTTPS"], transports: ["HTTPS"], owners: { service: "KCML" }, contacts: {},
+      schemaVersion: KCML_RELEASE.catalogVersion, blueprint: { componentId: "MCP-RX-WA-001", version: KCML_RELEASE.catalogVersion, releaseWaveKey: "baseline-2026-07-23" },
+      name: "Self-service test", category: "MCP_SERVER", registrationType: "MCP_SERVER", role: "SERVICE", revision: "1.0.0",
+      capabilities: ["mcp.initialize", "mcp.notifications.initialized", "mcp.tools.list", "mcp.tools.call"], protocols: ["MCP"], transports: ["STREAMABLE_HTTP"], owners: { service: "KCML" }, contacts: {},
       monitoring: { enabled: true }, audit: { enabled: true, replaySupported: true }, authorization: { mode: "OAUTH2_CLIENT_CREDENTIALS" }, endpoint: { public: true }, technicalDisable: { supported: true }
     });
     const input = { integrationTokenId, idempotencyKey: `component-${integrationTokenId}`, manifest, claimHmacKey: accessHmacKey, baseDomain: "component.test", correlationId: randomUUID() };
     const created = await createComponentOnboarding(db, input);
     expect((await createComponentOnboarding(db, input)).id).toBe(created.id);
+    await db.query("update component set monitoring_state='HEALTHY' where id=$1", [created.componentId]);
     const readiness = await evaluateComponentReadiness(db, { jobId: String(created.id), integrationTokenId, claimHmacKey: accessHmacKey, correlationId: randomUUID() });
     expect(readiness.job.state).toBe("READY");
     expect(readiness.credentialClaimToken).toBeTypeOf("string");

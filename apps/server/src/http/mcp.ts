@@ -8,6 +8,7 @@ import { appendAudit } from "../domain/audit.js";
 import { getServerByHostname, isKcmlHostname, resourceFor } from "../domain/catalog.js";
 import { getManagedServiceByHostname } from "../domain/managed-service.js";
 import { beginInvocation, finalizeInvocation, recordFinalizationFailure } from "../domain/invocation.js";
+import { KCML_RELEASE } from "../domain/release.js";
 import {
   acquireServerExecutionLease,
   BoundedValidatorCache,
@@ -46,6 +47,20 @@ const toolCallParamsSchema = z.object({
   arguments: z.unknown().optional()
 }).strict();
 
+const initializeParamsSchema = z.object({
+  protocolVersion: z.string().min(1).optional(),
+  capabilities: z.record(z.string(), z.unknown()).optional(),
+  clientInfo: z.object({
+    name: z.string().min(1).optional(),
+    version: z.string().min(1).optional()
+  }).passthrough().optional()
+}).passthrough().optional();
+
+const cancellationParamsSchema = z.object({
+  requestId: z.union([z.string(), z.number().finite()]),
+  reason: z.string().max(500).optional()
+}).strict();
+
 type JsonRpcRequest = z.infer<typeof jsonRpcRequestSchema>;
 type IdempotencyReservation = {
   key: string;
@@ -54,6 +69,7 @@ type IdempotencyReservation = {
 };
 
 const IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9._:-]{8,160}$/;
+const inFlightCancellations = new Map<string, AbortController>();
 
 function requestDigest(input: unknown): string {
   return createHash("sha256").update(JSON.stringify(input)).digest("hex");
@@ -194,6 +210,19 @@ function accepts(requestAccept: unknown, contentType: string): boolean {
 function hasJsonContentType(contentType: unknown): boolean {
   return typeof contentType === "string"
     && contentType.split(";")[0]?.trim().toLowerCase() === "application/json";
+}
+
+function requestKey(hostname: string, credentialId: string, requestId: string | number): string {
+  return `${hostname.toLowerCase()}:${credentialId}:${String(requestId)}`;
+}
+
+function unsupportedProtocolHeader(protocolHeader: unknown): { requested: string } | null {
+  if (protocolHeader === undefined) return null;
+  const requested = Array.isArray(protocolHeader) ? protocolHeader[0] : protocolHeader;
+  if (typeof requested !== "string" || requested.trim() !== KCML_RELEASE.mcpProtocolVersion) {
+    return { requested: typeof requested === "string" ? requested : "" };
+  }
+  return null;
 }
 
 function serverAvailability(server: McpServer): ReturnType<typeof evaluateRecertification> {
@@ -368,15 +397,49 @@ export function registerMcpRoutes(app: FastifyInstance, db: Db, config: McpHttpC
     const body: JsonRpcRequest = parsed.data;
     const respond = (payload: JsonRpcResponse): FastifyReply => respondToJsonRpc(reply, body.id, payload);
 
+    const unsupportedProtocol = unsupportedProtocolHeader(request.headers["mcp-protocol-version"]);
+    if (unsupportedProtocol && body.method !== "initialize") {
+      return sendError(reply, 400, "unsupported_mcp_protocol_version", "Unsupported MCP protocol version", correlationId);
+    }
+
     if (body.method === "initialize") {
+      const params = initializeParamsSchema.safeParse(body.params);
+      if (!params.success) return respond(jsonRpcError(body.id, -32602, "Invalid initialize params", correlationId));
+      const requestedProtocolVersion = params.data?.protocolVersion;
+      if (requestedProtocolVersion && requestedProtocolVersion !== KCML_RELEASE.mcpProtocolVersion) {
+        return respond(jsonRpcError(body.id, -32602, "Unsupported protocol version", correlationId, {
+          code: "UNSUPPORTED_MCP_PROTOCOL_VERSION",
+          retryable: false,
+          supported: [KCML_RELEASE.mcpProtocolVersion],
+          requested: requestedProtocolVersion
+        }));
+      }
       return respond(jsonRpcResult(body.id, {
-          protocolVersion: "2025-11-25",
+          protocolVersion: KCML_RELEASE.mcpProtocolVersion,
           capabilities: { tools: {} },
           serverInfo: { name: server.code, version: server.handlerVersion }
       }));
     }
 
-    if (body.method === "notifications/initialized") return reply.code(204).send();
+    if (body.method === "notifications/initialized") return reply.code(202).send();
+
+    if (body.method === "notifications/cancelled") {
+      const params = cancellationParamsSchema.safeParse(body.params ?? {});
+      if (!params.success) return reply.code(202).send();
+      const cancellationKey = requestKey(hostname, principal.credentialId, params.data.requestId);
+      const controller = inFlightCancellations.get(cancellationKey);
+      if (controller && !controller.signal.aborted) controller.abort(params.data.reason ?? "cancelled");
+      await appendAudit(db, {
+        eventType: "mcp.request.cancelled",
+        actorType: "kaja",
+        actorId: principal.credentialId,
+        objectType: "mcp_server",
+        objectId: server.id,
+        after: { requestId: params.data.requestId, matched: Boolean(controller), reason: params.data.reason ?? null },
+        correlationId
+      });
+      return reply.code(202).send();
+    }
 
     if (body.method === "tools/list") {
       return respond(jsonRpcResult(body.id, {
@@ -529,6 +592,9 @@ export function registerMcpRoutes(app: FastifyInstance, db: Db, config: McpHttpC
     }
 
     const started = Date.now();
+    const cancellableRequestKey = body.id === undefined || body.id === null ? null : requestKey(hostname, principal.credentialId, body.id);
+    const cancellationController = cancellableRequestKey ? new AbortController() : null;
+    if (cancellableRequestKey && cancellationController) inFlightCancellations.set(cancellableRequestKey, cancellationController);
     try {
       const output = await invokeWithDeadline(server.timeoutMs, server.shutdownPolicy, (signal) => handler.invoke(params.arguments ?? {}, {
           correlationId,
@@ -538,7 +604,11 @@ export function registerMcpRoutes(app: FastifyInstance, db: Db, config: McpHttpC
             info: (fields, message) => runtimeLog("info", message ?? "handler.info", fields),
             error: (fields, message) => runtimeLog("error", message ?? "handler.error", fields)
           }
-        }));
+        }), cancellationController?.signal);
+
+      if (cancellationController?.signal.aborted) {
+        throw Object.assign(new Error("handler_cancelled"), { classification: "cancelled" });
+      }
 
       serializeWithinLimit(output, server.responseMaxBytes, "worker_response_too_large");
       const validateOutput = validatorCache.get(server, "output", server.outputSchema);
@@ -610,6 +680,7 @@ export function registerMcpRoutes(app: FastifyInstance, db: Db, config: McpHttpC
       request.log.error({ eventType: classifiedEvent, correlationId, invocationId, code: server.code, hostname, toolName: server.toolName, handlerKey: server.handlerKey, handlerVersion: server.handlerVersion, credentialId: principal.credentialId, result: "failure", latencyMs, errorCode, classification }, "MCP invocation failed");
       return respond(response);
     } finally {
+      if (cancellableRequestKey) inFlightCancellations.delete(cancellableRequestKey);
       if (leaseId) await releaseServerExecutionLease(db, leaseId);
     }
   });

@@ -117,7 +117,7 @@ function serverQuery(): string {
 }
 
 export async function getServerByHostname(db: Db, hostname: string): Promise<McpServer | null> {
-  const result = await db.query(`${serverQuery()} where lower(ms.hostname)=lower($1)`, [hostname]);
+  const result = await db.query(`${serverQuery()} where lower(ms.hostname)=lower($1) and ms.archived_at is null`, [hostname]);
   return result.rowCount ? mapServer(result.rows[0]) : null;
 }
 
@@ -127,7 +127,7 @@ export async function getServerById(db: Db, id: string): Promise<McpServer | nul
 }
 
 export async function listServers(db: Db): Promise<McpServer[]> {
-  const result = await db.query(`${serverQuery()} order by ms.kcml_number asc`);
+  const result = await db.query(`${serverQuery()} where ms.archived_at is null order by ms.kcml_number asc`);
   return result.rows.map(mapServer);
 }
 

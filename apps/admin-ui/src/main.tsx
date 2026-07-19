@@ -99,6 +99,12 @@ import {
 import { ApiRequestError, api, csrf, describeApiError, formatDate, formatLocalDateTimeInput, prettyJson, setUiTimeZone } from "./ui-helpers.js";
 
 const integrationTokenActionLabel = "Vygenerovat Integrační token";
+const releaseWaveKey = "baseline-2026-07-23";
+const baselineBlueprintComponents = [
+  ...["AI-CLS-001", "AI-QRP-002", "AI-LYL-003", "AI-GRP-004", "AI-BIZ-005", "AI-IND-006", "AI-HIS-007", "AI-BRD-008", "AI-QA-009"].map((id) => ({ id, group: "AI" })),
+  ...["MCP-RX-WA-001", "MCP-RX-MS-002", "MCP-RX-EM-003", "MCP-RX-BC-004", "MCP-PMS-RO-005", "MCP-PMS-RW-006", "MCP-TX-WA-007", "MCP-TX-MS-008", "MCP-TX-EM-009", "MCP-TX-BC-010", "MCP-WFC-011"].map((id) => ({ id, group: "MCP" })),
+  ...["KCML-AUTH-001", "KCML-CTL-002", "KCML-MON-003", "KCML-AUD-004", "KCML-SEC-005"].map((id) => ({ id, group: "Managed" }))
+];
 
 function recertificationTone(phase: Server["recertification"]["phase"]): "ok" | "warn" | "danger" | "neutral" {
   if (phase === "VALID") return "ok";
@@ -213,13 +219,28 @@ function CreateIntegrationTokenModal({ resumeJobId, catalogVersion, onClose, onC
   const [serviceOwner, setServiceOwner] = useState("");
   const [technicalOwner, setTechnicalOwner] = useState("");
   const [criticality, setCriticality] = useState<OnboardingDescriptor["criticality"]>("MEDIUM");
+  const [tokenKind, setTokenKind] = useState<"SINGLE_COMPONENT" | "BLUEPRINT_RELEASE">("SINGLE_COMPONENT");
+  const [allowedBlueprintComponentIds, setAllowedBlueprintComponentIds] = useState<string[]>(baselineBlueprintComponents.map((component) => component.id));
+  const [maxChildJobs, setMaxChildJobs] = useState(baselineBlueprintComponents.length);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const selectedBlueprintIds = tokenKind === "BLUEPRINT_RELEASE" ? allowedBlueprintComponentIds : [];
+  function toggleBlueprintComponent(componentId: string) {
+    setAllowedBlueprintComponentIds((current) => current.includes(componentId) ? current.filter((id) => id !== componentId) : [...current, componentId]);
+  }
   async function submit(event: React.FormEvent) {
     event.preventDefault();
     if (!label.trim()) { setError("Zadej označení tokenu."); return; }
     if (!summary.trim() || !businessPurpose.trim() || !serviceOwner.trim() || !technicalOwner.trim()) {
       setError("Vyplň shrnutí, účel i oba vlastníky serveru.");
+      return;
+    }
+    if (tokenKind === "BLUEPRINT_RELEASE" && selectedBlueprintIds.length === 0) {
+      setError("Blueprint token musí mít povolenou alespoň jednu komponentu.");
+      return;
+    }
+    if (tokenKind === "BLUEPRINT_RELEASE" && maxChildJobs < selectedBlueprintIds.length) {
+      setError("Limit child jobů nesmí být nižší než počet povolených komponent.");
       return;
     }
     setBusy(true);
@@ -230,6 +251,10 @@ function CreateIntegrationTokenModal({ resumeJobId, catalogVersion, onClose, onC
         headers: { "x-csrf-token": csrf() },
         body: JSON.stringify({
           label: label.trim(),
+          tokenKind,
+          releaseWave: releaseWaveKey,
+          allowedBlueprintComponentIds: selectedBlueprintIds,
+          maxChildJobs: tokenKind === "BLUEPRINT_RELEASE" ? maxChildJobs : 1,
           descriptor: {
             summary: summary.trim(),
             businessPurpose: businessPurpose.trim(),
@@ -252,6 +277,25 @@ function CreateIntegrationTokenModal({ resumeJobId, catalogVersion, onClose, onC
       <form className="modal-form" onSubmit={(event) => { void submit(event); }}>
         <div className="form-intro"><span className="modal-icon"><Workflow size={20} /></span><p>KajovoCML {catalogVersion}, strukturovaný descriptor a integrační token.</p></div>
         <label>Označení tokenu<span className="field-hint">Krátký interní název pro pozdější dohledání tokenu.</span><input autoFocus value={label} onChange={(event) => setLabel(event.target.value)} maxLength={120} placeholder="Např. Fakturační onboarding" /></label>
+        {!resumeJobId ? <div className="permission-preview">
+          <strong>Režim tokenu</strong>
+          <div className="segmented-control" role="group" aria-label="Režim implementačního tokenu">
+            <button type="button" aria-pressed={tokenKind === "SINGLE_COMPONENT"} onClick={() => setTokenKind("SINGLE_COMPONENT")}>Single</button>
+            <button type="button" aria-pressed={tokenKind === "BLUEPRINT_RELEASE"} onClick={() => setTokenKind("BLUEPRINT_RELEASE")}>Blueprint release</button>
+          </div>
+          {tokenKind === "BLUEPRINT_RELEASE" ? <>
+            <span>Release wave {releaseWaveKey}, baseline {baselineBlueprintComponents.length} komponent.</span>
+            <label>Max child jobů<input type="number" min={selectedBlueprintIds.length || 1} max={200} value={maxChildJobs} onChange={(event) => setMaxChildJobs(Number(event.target.value))} /></label>
+            <div className="blueprint-picker">
+              {baselineBlueprintComponents.map((component) => (
+                <label key={component.id} className="checkbox-row">
+                  <input type="checkbox" checked={allowedBlueprintComponentIds.includes(component.id)} onChange={() => toggleBlueprintComponent(component.id)} />
+                  <span>{component.id}</span><small>{component.group}</small>
+                </label>
+              ))}
+            </div>
+          </> : <span>Kompatibilní výchozí režim pro jednu komponentu. V2 blueprint manifest musí mít scope povolený konkrétním tokenem.</span>}
+        </div> : null}
         <div className="descriptor-grid">
           <label>Shrnutí serveru<span className="field-hint">Jednovětý popis integračního záměru.</span><textarea value={summary} onChange={(event) => setSummary(event.target.value)} maxLength={120} rows={3} placeholder="Např. Zpracování fakturačních podkladů" /></label>
           <label>Účel serveru<span className="field-hint">Formální business purpose, který se předá dál.</span><textarea value={businessPurpose} onChange={(event) => setBusinessPurpose(event.target.value)} maxLength={400} rows={3} placeholder="Např. Automatizace fakturačního workflow" /></label>
@@ -1070,12 +1114,12 @@ function IntegrationTokensPage({ tokens, jobs, onCreate, onOpenJob, onResume, on
   const filtered = tokens.filter((token) => `${token.label} ${token.descriptor.summary} ${token.fingerprint} ${token.code ?? ""}`.toLowerCase().includes(query.toLowerCase()));
   return (
     <>
-      <PageHeader title="Implementační tokeny" description="Označení integračního toku, strukturovaný descriptor a token pro automatickou integraci jednoho MCP serveru.">
+      <PageHeader title="Implementační tokeny" description="Označení integračního toku, strukturovaný descriptor a token pro single nebo blueprint release integraci.">
         <label className="search-box"><Search size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Hledat token, job nebo KCML…" aria-label="Hledat implementační token" /></label>
         <button onClick={onCreate}><Plus size={17} /> {integrationTokenActionLabel}</button><IconButton label="Obnovit" onClick={onRefresh}><RefreshCw size={17} /></IconButton>
       </PageHeader>
       <section className="panel table-panel"><div className="panel-head"><div><h2>Vydané tokeny</h2><p>Plná hodnota je v create response a handoffu; tento přehled trvale uchovává fingerprint.</p></div><span className="panel-count">{filtered.length} záznamů</span></div>
-        {filtered.length === 0 ? <div className="empty-state"><Workflow size={34} /><strong>Žádné implementační tokeny</strong><p>Vygeneruj první token a předej jej programátorovi bezpečným kanálem.</p></div> : <div className="table-scroll"><table className="integration-token-table"><thead><tr><th>Token</th><th>KCML / job</th><th>Stav integrace / ochrana</th><th>Platnost a limit 24 hodin</th><th>Akce</th></tr></thead><tbody>{filtered.map((token) => <tr key={token.id}><td><strong>{token.label}</strong><span className="cell-subtitle">{token.descriptor.summary}</span><span className="cell-subtitle">Vydán {formatDate(token.issuedAt)}</span><code className="cell-fingerprint">{token.fingerprint}</code></td><td>{token.code ?? "Čeká na upload"}<span className="cell-subtitle">{token.jobId ? token.jobId.slice(0, 8) : "Nevázaný"}</span></td><td><div className="integration-state-cell"><span className={`badge ${token.active ? "ok" : "danger"}`}>{token.jobState ?? (token.active ? "PŘIPRAVEN" : "NEPLATNÝ")}</span><IntegrationTokenRunIndicator token={token} nowMs={nowMs} /></div></td><td><div className="token-timing-cell"><IntegrationTokenExpiry token={token} nowMs={nowMs} /><IntegrationTokenMaximum token={token} nowMs={nowMs} /></div></td><td><div className="row-actions integration-row-actions">{token.jobId ? <button className="small-button" onClick={() => onOpenJob(token.jobId!)}>Detail</button> : null}{token.jobId && !["ACTIVE", "QUARANTINED", "CANCELLED"].includes(token.jobState ?? "") && !token.active ? <button className="small-button" onClick={() => onResume(token.jobId!)}>Navázat</button> : null}<button className="small-button" disabled={!token.active} onClick={() => onRevoke(token)}>Revokovat</button><button className="small-button danger-link" onClick={() => onDelete(token)}>Smazat</button></div></td></tr>)}</tbody></table></div>}
+        {filtered.length === 0 ? <div className="empty-state"><Workflow size={34} /><strong>Žádné implementační tokeny</strong><p>Vygeneruj první token a předej jej programátorovi bezpečným kanálem.</p></div> : <div className="table-scroll"><table className="integration-token-table"><thead><tr><th>Token</th><th>KCML / job</th><th>Stav integrace / ochrana</th><th>Platnost a limit 24 hodin</th><th>Akce</th></tr></thead><tbody>{filtered.map((token) => <tr key={token.id}><td><strong>{token.label}</strong><span className="cell-subtitle">{token.descriptor.summary}</span><span className="cell-subtitle">Vydán {formatDate(token.issuedAt)}</span><code className="cell-fingerprint">{token.fingerprint}</code><span className="cell-subtitle">{token.tokenKind ?? "SINGLE_COMPONENT"} · {token.releaseWaveKey ?? "bez wave"} · scope {token.allowedBlueprintComponents?.length ?? 0}/{token.maxChildJobs ?? 1}</span></td><td>{token.code ?? "Čeká na upload"}<span className="cell-subtitle">{token.jobId ? token.jobId.slice(0, 8) : "Nevázaný"}</span></td><td><div className="integration-state-cell"><span className={`badge ${token.active ? "ok" : "danger"}`}>{token.jobState ?? (token.active ? "PŘIPRAVEN" : "NEPLATNÝ")}</span><IntegrationTokenRunIndicator token={token} nowMs={nowMs} /></div></td><td><div className="token-timing-cell"><IntegrationTokenExpiry token={token} nowMs={nowMs} /><IntegrationTokenMaximum token={token} nowMs={nowMs} /></div></td><td><div className="row-actions integration-row-actions">{token.jobId ? <button className="small-button" onClick={() => onOpenJob(token.jobId!)}>Detail</button> : null}{token.jobId && !["ACTIVE", "QUARANTINED", "CANCELLED"].includes(token.jobState ?? "") && !token.active ? <button className="small-button" onClick={() => onResume(token.jobId!)}>Navázat</button> : null}<button className="small-button" disabled={!token.active} onClick={() => onRevoke(token)}>Revokovat</button><button className="small-button danger-link" onClick={() => onDelete(token)}>Smazat</button></div></td></tr>)}</tbody></table></div>}
       </section>
       <section className="panel"><div className="panel-head"><h2>Onboardingové joby</h2><span className="panel-count">{jobs.length} jobů</span></div>{jobs.length === 0 ? <div className="empty-state server-empty"><Rocket size={32} /><strong>Zatím nebyl zahájen žádný upload</strong></div> : <div className="job-cards">{jobs.map((job) => <button key={job.id} onClick={() => onOpenJob(job.id)}><span className={`status-dot ${job.state === "ACTIVE" ? "ok" : ["FAILED", "QUARANTINED", "CANCELLED"].includes(job.state) ? "danger" : "warn"}`} /><span><strong>{job.code ?? "Čeká na identitu"}</strong><small>{job.state} · {formatDate(job.updatedAt)}</small></span><ChevronDown className="item-chevron" size={15} /></button>)}</div>}</section>
     </>

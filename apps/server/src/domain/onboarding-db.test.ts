@@ -28,7 +28,7 @@ const descriptor = {
 
 const manifestInput = {
   ...(JSON.parse(
-    readFileSync(new URL("../../../../docs/onboarding-manifest-2026.07.22.example.json", import.meta.url), "utf8")
+    readFileSync(new URL("../../../../docs/onboarding-manifest-2026.07.23.example.json", import.meta.url), "utf8")
   ) as Record<string, unknown>),
   registrationRevision: "db-test-1"
 };
@@ -201,7 +201,7 @@ describe.skipIf(!enabled)("onboarding PostgreSQL transactions", () => {
     expect(transition.rows[0].event_type).toBe("quarantine.revision_approved");
   });
 
-  it("deletes a registered server together with its onboarding state and forces a fresh token for any new registration", async () => {
+  it("archives a registered server while preserving onboarding reconstruction and forces a fresh registration path", async () => {
     const created = await createIntegrationToken(db, config, adminId, randomUUID(), "Deletion test", descriptor);
     const principal = await authenticateIntegrationToken(db, created.token, config);
     const { manifest, digest: manifestDigest } = validateOnboardingManifest(manifestInput);
@@ -232,10 +232,18 @@ describe.skipIf(!enabled)("onboarding PostgreSQL transactions", () => {
     const serverId = await registerDisabledServer(db, activationJob, "/run/kcml/delete-test.sock", randomUUID());
     await deleteRegisteredServer(db, serverId, adminId, randomUUID(), "Registration retired and must be recreated with a new onboarding token.");
 
-    expect((await db.query("select count(*)::int as count from mcp_server where code=$1", [job.code])).rows[0].count).toBe(0);
-    expect((await db.query("select count(*)::int as count from onboarding_job where id=$1", [job.id])).rows[0].count).toBe(0);
+    expect((await db.query("select archived_at is not null as archived, enabled, registration_state, operational_state from mcp_server where code=$1", [job.code])).rows[0]).toMatchObject({
+      archived: true,
+      enabled: false,
+      registration_state: "RETIRED",
+      operational_state: "RETIRED"
+    });
+    expect((await db.query("select archived_at is not null as archived, archive_reason from onboarding_job where id=$1", [job.id])).rows[0]).toMatchObject({
+      archived: true,
+      archive_reason: "Registration retired and must be recreated with a new onboarding token."
+    });
     expect((await db.query("select count(*)::int as count from integration_token where id=$1 and deleted_at is null", [created.id])).rows[0].count).toBe(0);
     await expect(authenticateIntegrationToken(db, created.token, config)).rejects.toThrow("invalid_integration_token");
-    await expect(createIntegrationToken(db, config, adminId, randomUUID(), "Deletion test resume", descriptor, job.id)).rejects.toThrow("not_found");
+    await expect(createIntegrationToken(db, config, adminId, randomUUID(), "Deletion test resume", descriptor, job.id)).rejects.toThrow("job_not_found");
   });
 });

@@ -5,13 +5,14 @@ import { KCML_RELEASE } from "./release.js";
 function manifest(overrides: Record<string, unknown> = {}) {
   return {
     schemaVersion: KCML_RELEASE.catalogVersion,
+    blueprint: { componentId: "MCP-RX-WA-001", version: KCML_RELEASE.catalogVersion, releaseWaveKey: "baseline-2026-07-23" },
     name: "Testovací komponenta",
     description: "Bezpečný obecný runtime pro kontraktní test.",
-    category: "MANAGED_RUNTIME",
-    registrationType: "GENERIC_COMPONENT",
-    role: "RUNTIME",
+    category: "MCP_SERVER",
+    registrationType: "MCP_SERVER",
+    role: "SERVICE",
     revision: "1.0.0",
-    capabilities: ["component.discovery"],
+    capabilities: [...MCP_REQUIRED_CAPABILITIES],
     protocols: ["HTTPS"],
     transports: ["HTTPS"],
     owners: { service: "KCML" },
@@ -27,20 +28,21 @@ function manifest(overrides: Record<string, unknown> = {}) {
 
 describe(`component manifest ${KCML_RELEASE.catalogVersion}`, () => {
   it("normalizes unordered capability declarations and creates a stable canonical digest", () => {
-    const parsed = validateComponentManifest(manifest({ capabilities: ["zeta", "component.discovery", "zeta", "alpha"] }));
-    expect(parsed.capabilities).toEqual(["alpha", "component.discovery", "zeta"]);
+    const parsed = validateComponentManifest(manifest({ capabilities: ["zeta", ...MCP_REQUIRED_CAPABILITIES, "zeta", "alpha"] }));
+    expect(parsed.capabilities).toEqual(["alpha", ...MCP_REQUIRED_CAPABILITIES, "zeta"].sort());
     expect(componentManifestDigest(parsed)).toHaveLength(64);
     expect(canonicalJson({ b: 2, a: 1 })).toBe('{"a":1,"b":2}');
   });
 
   it("requires the complete MCP module for MCP server profiles", () => {
-    expect(() => validateComponentManifest(manifest({ category: "MCP_SERVER", registrationType: "MCP_SERVER" }))).toThrow("catalog_incompatible");
+    expect(() => validateComponentManifest(manifest({ capabilities: ["mcp.initialize"] }))).toThrow("catalog_incompatible");
     expect(validateComponentManifest(manifest({
-      category: "MCP_SERVER",
-      registrationType: "MCP_SERVER",
-      role: "SERVICE",
       capabilities: [...MCP_REQUIRED_CAPABILITIES]
     })).capabilities).toEqual([...MCP_REQUIRED_CAPABILITIES].sort());
+  });
+
+  it("rejects blueprint registration mismatches", () => {
+    expect(() => validateComponentManifest(manifest({ registrationType: "KAJA_CLIENT" }))).toThrow("registration_type_mismatch");
   });
 
   it("rejects older schema versions for new component intake", () => {

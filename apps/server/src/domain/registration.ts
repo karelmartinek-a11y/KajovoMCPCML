@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { z } from "zod";
 import type { Db } from "../db.js";
-import componentManifestSchema from "../contracts/component-manifest-2026.07.22.schema.json" with { type: "json" };
+import componentManifestSchema from "../contracts/component-manifest-2026.07.23.schema.json" with { type: "json" };
 import { kcmlCodeFromNumber, kcmlHostnameForCode } from "./hostnames.js";
 import { KCML_MCP_COMPONENTS, KCML_RELEASE } from "./release.js";
 

@@ -61,10 +61,14 @@ export function abortOnTimeout(shutdownPolicy: McpServer["shutdownPolicy"]): boo
 export async function invokeWithDeadline<T>(
   timeoutMs: number,
   shutdownPolicy: McpServer["shutdownPolicy"],
-  invoke: (signal: AbortSignal) => Promise<T>
+  invoke: (signal: AbortSignal) => Promise<T>,
+  externalSignal?: AbortSignal
 ): Promise<T> {
   const controller = new AbortController();
   let timeoutHandle: NodeJS.Timeout | undefined;
+  const abortFromExternalSignal = (): void => controller.abort(externalSignal?.reason);
+  if (externalSignal?.aborted) controller.abort(externalSignal.reason);
+  else externalSignal?.addEventListener("abort", abortFromExternalSignal, { once: true });
   try {
     return await Promise.race([
       invoke(controller.signal),
@@ -76,6 +80,7 @@ export async function invokeWithDeadline<T>(
       })
     ]);
   } finally {
+    externalSignal?.removeEventListener("abort", abortFromExternalSignal);
     if (timeoutHandle) clearTimeout(timeoutHandle);
   }
 }

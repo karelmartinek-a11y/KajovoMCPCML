@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { Ajv2020, type AnySchema } from "ajv/dist/2020.js";
 import { describe, expect, it } from "vitest";
-import { MCP_ONBOARDING_GATES } from "./onboarding.js";
+import { MCP_ONBOARDING_GATES, nextHeartbeatExpiry, tokenDeadlines } from "./onboarding.js";
 import { onboardingCatalogDigest } from "./onboarding-catalog.js";
 import { validateOnboardingManifest } from "./registration.js";
 import { REQUIRED_ONBOARDING_CHECKS } from "../onboarding/github.js";
@@ -66,7 +66,7 @@ describe(`component onboarding catalog ${KCML_RELEASE.catalogVersion}`, () => {
 
   it("documents release token scope and executable gates", () => {
     expect((catalog.implementationTokens as { blueprintRelease: { maxChildJobs: number; autoActivateAfterPass: boolean; manualApprovalRequiredAfterIssuance: boolean } }).blueprintRelease).toMatchObject({
-      maxChildJobs: 20,
+      maxChildJobs: 200,
       autoActivateAfterPass: true,
       manualApprovalRequiredAfterIssuance: false
     });
@@ -79,6 +79,43 @@ describe(`component onboarding catalog ${KCML_RELEASE.catalogVersion}`, () => {
     ]));
     expect(MCP_ONBOARDING_GATES.length).toBeGreaterThan(0);
     expect(catalog.requiredCiChecks).toEqual(expect.arrayContaining([...REQUIRED_ONBOARDING_CHECKS, "artifact-signature"]));
+  });
+
+  it("keeps implementation token lifecycle metadata aligned with runtime deadlines", () => {
+    const issuedAt = new Date("2026-07-19T10:29:45.182Z");
+    const deadlines = tokenDeadlines(issuedAt);
+    const maximum = deadlines.maxExpiresAt;
+    const extended = nextHeartbeatExpiry(new Date("2026-07-20T10:29:45.182Z"), deadlines.expiresAt, maximum);
+    const tokenPolicy = (catalog.implementationTokens as {
+      blueprintRelease: {
+        ttlHours: number;
+        maxTtlDays: number;
+        lifecycle: {
+          initialExpiresInHours: number;
+          heartbeatExtensionHours: number;
+          maxExpiresInDays: number;
+          currentExpiryField: string;
+          maximumExpiryField: string;
+          terminalStatesStopExtension: string[];
+          pausedStatesStopExtension: string[];
+        };
+      };
+    }).blueprintRelease;
+
+    expect(tokenPolicy.ttlHours).toBe(24);
+    expect(tokenPolicy.maxTtlDays).toBe(30);
+    expect(tokenPolicy.lifecycle).toMatchObject({
+      initialExpiresInHours: 24,
+      heartbeatExtensionHours: 24,
+      maxExpiresInDays: 30,
+      currentExpiryField: "expiresAt",
+      maximumExpiryField: "maxExpiresAt",
+      terminalStatesStopExtension: ["ACTIVE", "FAILED", "QUARANTINED", "CANCELLED"],
+      pausedStatesStopExtension: ["AWAITING_REVISION"]
+    });
+    expect(deadlines.expiresAt.getTime() - issuedAt.getTime()).toBe(tokenPolicy.lifecycle.initialExpiresInHours * 60 * 60 * 1000);
+    expect(maximum.getTime() - issuedAt.getTime()).toBe(tokenPolicy.lifecycle.maxExpiresInDays * 24 * 60 * 60 * 1000);
+    expect(extended.getTime() - deadlines.expiresAt.getTime()).toBe(tokenPolicy.lifecycle.heartbeatExtensionHours * 60 * 60 * 1000);
   });
 
   it("publishes general component and capability contract registries without removing legacy adapters", () => {

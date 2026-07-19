@@ -1,18 +1,18 @@
 {
-  "version": "2026.07.22",
+  "version": "2026.07.23",
   "serviceKind": "COMPONENT",
-  "publishedAt": "2026-07-22",
-  "blueprintVersion": "2026.07.22",
-  "catalogVersion": "2026.07.22",
-  "manifestSchemaVersion": "2026.07.22",
-  "pulseEnvelopeVersion": "2026.07.22",
-  "policyBaseline": "2026-07-22",
+  "publishedAt": "2026-07-23",
+  "blueprintVersion": "2026.07.23",
+  "catalogVersion": "2026.07.23",
+  "manifestSchemaVersion": "2026.07.23",
+  "pulseEnvelopeVersion": "2026.07.23",
+  "policyBaseline": "2026-07-23",
   "mcpProtocolVersion": "2025-11-25",
-  "canonicalDigest": "sha256:588b9adcf29a3b45d533fd3bddb91d2925845c2ee3bd53bc162c20b7e0e97ad4",
-  "manifestExamplePath": "docs/onboarding-manifest-2026.07.22.example.json",
+  "canonicalDigest": "sha256:c9313a6a01f78db52b6180dd651efba6e7975b2f991efe6dac55cc5064b29afe",
+  "manifestExamplePath": "docs/onboarding-manifest-2026.07.23.example.json",
   "humanCatalogFiles": [
-    "docs/releases/2026.07.22/KajovoCML_Onboarding_Catalog_2026.07.22.docx",
-    "docs/releases/2026.07.22/KajovoCML_Onboarding_Catalog_2026.07.22.pdf"
+    "docs/releases/2026.07.23/KajovoCML_Onboarding_Catalog_2026.07.23.docx",
+    "docs/releases/2026.07.23/KajovoCML_Onboarding_Catalog_2026.07.23.pdf"
   ],
   "compatibility": {
     "supersedesCatalogVersions": [
@@ -20,12 +20,12 @@
       "1.8"
     ],
     "acceptedNewManifestSchemaVersions": [
-      "2026.07.22"
+      "2026.07.23"
     ],
     "acceptedStoredManifestSchemaVersions": [
       "1.4",
       "1.5",
-      "2026.07.22"
+      "2026.07.23"
     ],
     "breakingManifestChange": false,
     "catalogChange": "MINOR",
@@ -40,6 +40,47 @@
       "status": 202
     }
   },
+  "releaseWaves": [
+    {
+      "releaseVersion": "2026.07.23",
+      "waveKey": "baseline-2026-07-23",
+      "displayName": "Prvni release vlna 9 AI / 11 MCP / 5 managed",
+      "baseline": true,
+      "baselineCounts": {
+        "aiAgents": 9,
+        "mcpServers": 11,
+        "managedServices": 5
+      },
+      "notFinalTargetScope": true,
+      "allowedBlueprintComponentIds": [
+        "AI-CLS-001",
+        "AI-QRP-002",
+        "AI-LYL-003",
+        "AI-GRP-004",
+        "AI-BIZ-005",
+        "AI-IND-006",
+        "AI-HIS-007",
+        "AI-BRD-008",
+        "AI-QA-009",
+        "MCP-RX-WA-001",
+        "MCP-RX-MS-002",
+        "MCP-RX-EM-003",
+        "MCP-RX-BC-004",
+        "MCP-PMS-RO-005",
+        "MCP-PMS-RW-006",
+        "MCP-TX-WA-007",
+        "MCP-TX-MS-008",
+        "MCP-TX-EM-009",
+        "MCP-TX-BC-010",
+        "MCP-WFC-011",
+        "KCML-AUTH-001",
+        "KCML-CTL-002",
+        "KCML-MON-003",
+        "KCML-AUD-004",
+        "KCML-SEC-005"
+      ]
+    }
+  ],
   "compatibilityMatrix": [
     {
       "profile": "legacy-ai-client",
@@ -57,9 +98,9 @@
     {
       "profile": "component-ai-client",
       "category": "AI_CLIENT",
-      "catalog": "2026.07.22",
+      "catalog": "2026.07.23",
       "manifestSchemas": [
-        "2026.07.22"
+        "2026.07.23"
       ],
       "intake": "/v2/component-onboardings",
       "authorization": "OAUTH2_CLIENT_CREDENTIALS",
@@ -82,9 +123,9 @@
     {
       "profile": "component-ai-agent",
       "category": "AI_AGENT",
-      "catalog": "2026.07.22",
+      "catalog": "2026.07.23",
       "manifestSchemas": [
-        "2026.07.22"
+        "2026.07.23"
       ],
       "intake": "/v2/component-onboardings",
       "authorization": "OAUTH2_CLIENT_CREDENTIALS",
@@ -107,9 +148,9 @@
     {
       "profile": "component-mcp-server",
       "category": "MCP_SERVER",
-      "catalog": "2026.07.22",
+      "catalog": "2026.07.23",
       "manifestSchemas": [
-        "2026.07.22"
+        "2026.07.23"
       ],
       "intake": "/v2/component-onboardings",
       "authorization": "OAUTH2_CLIENT_CREDENTIALS",
@@ -131,9 +172,9 @@
     {
       "profile": "component-managed-runtime",
       "category": "MANAGED_RUNTIME",
-      "catalog": "2026.07.22",
+      "catalog": "2026.07.23",
       "manifestSchemas": [
-        "2026.07.22"
+        "2026.07.23"
       ],
       "intake": "/v2/component-onboardings",
       "authorization": "OAUTH2_CLIENT_CREDENTIALS",
@@ -155,9 +196,9 @@
     {
       "profile": "component-external-service",
       "category": "EXTERNAL_SERVICE",
-      "catalog": "2026.07.22",
+      "catalog": "2026.07.23",
       "manifestSchemas": [
-        "2026.07.22"
+        "2026.07.23"
       ],
       "intake": "/v2/component-onboardings",
       "authorization": "OAUTH2_CLIENT_CREDENTIALS",
@@ -180,9 +221,9 @@
     {
       "profile": "component-platform-service",
       "category": "PLATFORM_SERVICE",
-      "catalog": "2026.07.22",
+      "catalog": "2026.07.23",
       "manifestSchemas": [
-        "2026.07.22"
+        "2026.07.23"
       ],
       "intake": "/v2/component-onboardings",
       "authorization": "OAUTH2_CLIENT_CREDENTIALS",
@@ -216,7 +257,8 @@
         "AUTHORIZATION",
         "TECHNICAL_DISABLE",
         "MONITORING",
-        "AUDIT_CONTINUITY"
+        "AUDIT_CONTINUITY",
+        "RECERTIFICATION"
       ],
       "endpoint": "KCML_HOSTNAME",
       "authorization": "OAUTH2_CLIENT_CREDENTIALS",
@@ -230,7 +272,8 @@
         "AUTHORIZATION",
         "TECHNICAL_DISABLE",
         "MONITORING",
-        "AUDIT_CONTINUITY"
+        "AUDIT_CONTINUITY",
+        "RECERTIFICATION"
       ],
       "endpoint": "KCML_HOSTNAME",
       "authorization": "OAUTH2_CLIENT_CREDENTIALS",
@@ -250,7 +293,8 @@
         "PUBLIC_ENDPOINT",
         "TECHNICAL_DISABLE",
         "MONITORING",
-        "AUDIT_CONTINUITY"
+        "AUDIT_CONTINUITY",
+        "RECERTIFICATION"
       ],
       "endpoint": "KCML_HOSTNAME",
       "authorization": "OAUTH2_CLIENT_CREDENTIALS",
@@ -265,7 +309,8 @@
         "PUBLIC_ENDPOINT",
         "TECHNICAL_DISABLE",
         "MONITORING",
-        "AUDIT_CONTINUITY"
+        "AUDIT_CONTINUITY",
+        "RECERTIFICATION"
       ],
       "endpoint": "KCML_HOSTNAME",
       "authorization": "OAUTH2_CLIENT_CREDENTIALS",
@@ -280,7 +325,8 @@
         "PUBLIC_ENDPOINT",
         "TECHNICAL_DISABLE",
         "MONITORING",
-        "AUDIT_CONTINUITY"
+        "AUDIT_CONTINUITY",
+        "RECERTIFICATION"
       ],
       "endpoint": "KCML_HOSTNAME",
       "authorization": "OAUTH2_CLIENT_CREDENTIALS",
@@ -295,7 +341,8 @@
         "PUBLIC_ENDPOINT",
         "TECHNICAL_DISABLE",
         "MONITORING",
-        "AUDIT_CONTINUITY"
+        "AUDIT_CONTINUITY",
+        "RECERTIFICATION"
       ],
       "endpoint": "KCML_HOSTNAME",
       "authorization": "OAUTH2_CLIENT_CREDENTIALS",
@@ -504,7 +551,8 @@
       "grantIdentity": "Secret API accepts any valid integration token and requires an explicit secret grant bound to component UUID, token UUID, or token fingerprint."
     },
     "blueprintRelease": {
-      "releaseVersion": "2026.07.22",
+      "releaseVersion": "2026.07.23",
+      "releaseWave": "baseline-2026-07-23",
       "allowedBlueprintComponentIds": [
         "AI-CLS-001",
         "AI-QRP-002",
@@ -525,15 +573,19 @@
         "MCP-TX-MS-008",
         "MCP-TX-EM-009",
         "MCP-TX-BC-010",
-        "MCP-WFC-011"
+        "MCP-WFC-011",
+        "KCML-AUTH-001",
+        "KCML-CTL-002",
+        "KCML-MON-003",
+        "KCML-AUD-004",
+        "KCML-SEC-005"
       ],
       "allowedRegistrationTypes": [
         "KAJA_CLIENT",
         "MCP_SERVER",
-        "MANAGED_PLATFORM_SERVICE",
-        "GENERIC_COMPONENT"
+        "MANAGED_PLATFORM_SERVICE"
       ],
-      "maxChildJobs": 20,
+      "maxChildJobs": 200,
       "autoActivateAfterPass": true,
       "manualApprovalRequiredAfterIssuance": false,
       "ttlHours": 24,
@@ -554,7 +606,7 @@
         "pausedStatesStopExtension": [
           "AWAITING_REVISION"
         ],
-        "revocation": "administrator revoke/delete, resume token replacement, cancellation, quarantine release, or job/server deletion"
+        "revocation": "administrator revoke/delete, resume token replacement, cancellation, quarantine release, or server archival"
       },
       "secret": {
         "bytes": 64,
@@ -565,7 +617,7 @@
   },
   "secretManager": {
     "serviceId": "KCML-SEC-005",
-    "catalogVersion": "2026.07.22",
+    "catalogVersion": "2026.07.23",
     "publicApi": {
       "hostPattern": "secrets.{PUBLIC_BASE_DOMAIN}",
       "resolveEndpoint": "/v1/secrets/resolve",
@@ -1137,8 +1189,8 @@
   ],
   "jsonSchema": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "urn:kcml:schema:component-manifest:2026.07.22",
-    "title": "KajovoCML component manifest 2026.07.22",
+    "$id": "urn:kcml:schema:component-manifest:2026.07.23",
+    "title": "KajovoCML component manifest 2026.07.23",
     "oneOf": [
       {
         "$ref": "#/$defs/aiAgentManifest"
@@ -1192,6 +1244,11 @@
           "MCP-TX-EM-009",
           "MCP-TX-BC-010",
           "MCP-WFC-011",
+          "KCML-AUTH-001",
+          "KCML-CTL-002",
+          "KCML-MON-003",
+          "KCML-AUD-004",
+          "KCML-SEC-005",
           "KCML-AUTH-001",
           "KCML-CTL-002",
           "KCML-MON-003",
@@ -1485,10 +1542,10 @@
         ],
         "properties": {
           "schemaVersion": {
-            "const": "2026.07.22"
+            "const": "2026.07.23"
           },
           "releaseVersion": {
-            "const": "2026.07.22"
+            "const": "2026.07.23"
           },
           "registrationRevision": {
             "type": "string",
@@ -1517,19 +1574,23 @@
             "additionalProperties": false,
             "required": [
               "componentId",
-              "version"
+              "version",
+              "releaseWaveKey"
             ],
             "properties": {
               "componentId": {
                 "$ref": "#/$defs/blueprintId"
               },
               "version": {
-                "const": "2026.07.22"
+                "const": "2026.07.23"
+              },
+              "releaseWaveKey": {
+                "const": "baseline-2026-07-23"
               }
             }
           },
           "pulseEnvelopeVersion": {
-            "const": "2026.07.22"
+            "const": "2026.07.23"
           },
           "displayName": {
             "type": "string",
@@ -2047,6 +2108,7 @@
         "additionalProperties": false,
         "required": [
           "schemaVersion",
+          "blueprint",
           "name",
           "category",
           "registrationType",
@@ -2064,7 +2126,7 @@
         ],
         "properties": {
           "schemaVersion": {
-            "const": "2026.07.22"
+            "const": "2026.07.23"
           },
           "name": {
             "type": "string",
@@ -2074,6 +2136,26 @@
           "description": {
             "type": "string",
             "maxLength": 2000
+          },
+          "blueprint": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "componentId",
+              "version",
+              "releaseWaveKey"
+            ],
+            "properties": {
+              "componentId": {
+                "$ref": "#/$defs/blueprintId"
+              },
+              "version": {
+                "const": "2026.07.23"
+              },
+              "releaseWaveKey": {
+                "const": "baseline-2026-07-23"
+              }
+            }
           },
           "category": {
             "enum": [
@@ -2205,7 +2287,7 @@
     "openapi": "3.1.0",
     "info": {
       "title": "KajovoCML component onboarding programmer API",
-      "version": "2026.07.22"
+      "version": "2026.07.23"
     },
     "servers": [
       {
@@ -2264,6 +2346,24 @@
       "/v2/component-onboardings/{id}/revisions": {
         "post": {
           "operationId": "reviseComponentOnboarding",
+          "parameters": [
+            {
+              "name": "Idempotency-Key",
+              "in": "header",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "If-Match",
+              "in": "header",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            }
+          ],
           "responses": {
             "200": {
               "description": "Revised"

@@ -188,6 +188,7 @@ export async function listKajaPermissions(db: Db, credentialId: string): Promise
       (kp.id is not null and kp.revoked_at is null) as granted
     from mcp_server ms
     left join kaja_permission kp on kp.server_id = ms.id and kp.credential_id = $1
+    where ms.archived_at is null
     order by ms.kcml_number asc
   `, [credentialId]);
   return result.rows.map((row) => ({
@@ -215,7 +216,7 @@ export async function replaceKajaPermissions(db: Db, actorId: string, correlatio
     const normalized = [...desired.values()].sort((left, right) => left.serverId.localeCompare(right.serverId));
     const serverIds = normalized.map((permission) => permission.serverId);
     if (serverIds.length) {
-      const validServers = await client.query("select id from mcp_server where id = any($1::uuid[])", [serverIds]);
+      const validServers = await client.query("select id from mcp_server where id = any($1::uuid[]) and archived_at is null", [serverIds]);
       if (validServers.rowCount !== serverIds.length) throw Object.assign(new Error("invalid_server"), { statusCode: 400 });
     }
     const touchedServerIds = [...new Set([...previous.keys(), ...serverIds])];

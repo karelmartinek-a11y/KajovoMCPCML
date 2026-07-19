@@ -13,13 +13,22 @@ describe("JSON-RPC response mapping", () => {
     expect(jsonRpcError(1, -32602, "Invalid params", "correlation-1")).toMatchObject({
       jsonrpc: "2.0",
       id: 1,
-      error: { code: -32602, data: { correlationId: "correlation-1" } }
+      error: {
+        code: -32602,
+        data: {
+          code: "INVALID_PARAMS",
+          retryable: false,
+          correlation_id: "correlation-1",
+          correlationId: "correlation-1"
+        }
+      }
     });
     expect(jsonRpcResult(1, { ok: true })).toEqual({ jsonrpc: "2.0", id: 1, result: { ok: true } });
   });
 
   it.each([
     [Object.assign(new Error("handler_timeout"), { classification: "timeout" }), -32005, "mcp.timeout"],
+    [Object.assign(new Error("handler_cancelled"), { classification: "cancelled" }), -32008, "mcp.cancelled"],
     [Object.assign(new Error("worker_response_too_large"), { classification: "size" }), -32006, "mcp.response_too_large"],
     [new Error("output_schema_failed"), -32603, "mcp.output_schema_failed"],
     [new Error("unexpected"), -32603, "mcp.invocation.failed"]

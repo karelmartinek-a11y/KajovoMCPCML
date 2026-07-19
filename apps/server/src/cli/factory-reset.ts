@@ -76,6 +76,42 @@ async function archiveTable(client: pg.PoolClient, tableName: string, runId: str
   };
 }
 
+async function snapshotPreservedTables(client: pg.PoolClient): Promise<void> {
+  await client.query("create temp table kcml_keep_schema_migration as table public.schema_migration with data");
+  await client.query("create temp table kcml_keep_operational_config_setting as table public.operational_config_setting with data");
+  await client.query("create temp table kcml_keep_operational_config_applied as table public.operational_config_applied with data");
+}
+
+async function restorePreservedTables(client: pg.PoolClient): Promise<void> {
+  await client.query(
+    `insert into public.schema_migration
+     select preserved.*
+       from kcml_keep_schema_migration preserved
+      where not exists (
+        select 1 from public.schema_migration current where current.version=preserved.version
+      )`
+  );
+  await client.query(
+    `insert into public.operational_config_setting
+     select preserved.*
+       from kcml_keep_operational_config_setting preserved
+      where not exists (
+        select 1 from public.operational_config_setting current where current.key=preserved.key
+      )`
+  );
+  await client.query(
+    `insert into public.operational_config_applied
+     select preserved.*
+       from kcml_keep_operational_config_applied preserved
+      where not exists (
+        select 1
+          from public.operational_config_applied current
+         where current.key=preserved.key
+           and current.process_role=preserved.process_role
+      )`
+  );
+}
+
 export async function runFactoryReset(): Promise<void> {
   requireFactoryResetConfirmation(process.env);
   const config = loadBootstrapConfig();
@@ -92,6 +128,7 @@ export async function runFactoryReset(): Promise<void> {
       const tablesToTruncate = allTables;
       const archiveSummaries: ArchiveSummary[] = [];
 
+      await snapshotPreservedTables(client);
       for (const tableName of preservedTables) {
         archiveSummaries.push(await archiveTable(client, tableName, runId));
       }
@@ -103,13 +140,16 @@ export async function runFactoryReset(): Promise<void> {
         [runId, "factory-reset", preservedTables, tablesToTruncate]
       );
 
-      await client.query(
-        `truncate table ${tablesToTruncate.map((tableName) => `public.${quoteIdentifier(tableName)}`).join(", ")} restart identity cascade`
-      );
+      await client.query("select public.kcml_factory_reset_truncate($1::text[])", [tablesToTruncate]);
+      await restorePreservedTables(client);
 
       await client.query(
         `insert into public.${quoteIdentifier(AUDIT_HEAD_TABLE)}(singleton, last_sequence, event_hash, updated_at)
-         values (true, 0, null, now())`
+         values (true, 0, null, now())
+         on conflict (singleton) do update
+           set last_sequence=0,
+               event_hash=null,
+               updated_at=now()`
       );
 
       return archiveSummaries;

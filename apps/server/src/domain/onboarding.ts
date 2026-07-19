@@ -7,6 +7,12 @@ import { fingerprintSecret, hmacToken } from "../security/secrets.js";
 import { appendAudit } from "./audit.js";
 import { kcmlCodeFromNumber, kcmlHostnameForCode } from "./hostnames.js";
 import type { OnboardingManifest } from "./registration.js";
+import {
+  blueprintComponentContract,
+  KCML_BLUEPRINT_COMPONENT_IDS,
+  KCML_RELEASE,
+  KCML_RELEASE_WAVE_KEY
+} from "./release.js";
 import { transitionServerState } from "./server-state.js";
 
 export const ONBOARDING_JOB_STATES = [
@@ -77,6 +83,10 @@ export type IntegrationTokenPrincipal = {
   maxExpiresAt: string;
   serviceKind: "MCP" | "EXTERNAL_API";
   allowedPipeline: "MCP_ONBOARDING" | "EXTERNAL_API_REGISTRATION";
+  tokenKind: "SINGLE_COMPONENT" | "BLUEPRINT_RELEASE";
+  releaseVersion: string;
+  releaseWaveKey: string | null;
+  maxChildJobs: number;
 };
 
 export type SourceEvidence = {
@@ -93,6 +103,16 @@ export type OnboardingDescriptor = {
   serviceOwner: string;
   technicalOwner: string;
   criticality: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+};
+
+export type CreateIntegrationTokenOptions = {
+  serviceKind?: "MCP" | "EXTERNAL_API";
+  allowedPipeline?: "MCP_ONBOARDING" | "EXTERNAL_API_REGISTRATION";
+  tokenKind?: "SINGLE_COMPONENT" | "BLUEPRINT_RELEASE";
+  releaseVersion?: string;
+  releaseWaveKey?: string;
+  allowedBlueprintComponentIds?: string[];
+  maxChildJobs?: number;
 };
 
 export type ProgrammerActionKind = "UPLOAD_SOURCE" | "WAIT" | "UPLOAD_REVISION" | "COMPLETE" | "STOP";
@@ -179,6 +199,11 @@ function mapToken(row: Record<string, unknown>) {
     legacyBackfill: Boolean(row.legacy_backfill),
     serviceKind: optionalText(row.service_kind) ?? "MCP",
     allowedPipeline: optionalText(row.allowed_pipeline) ?? "MCP_ONBOARDING",
+    tokenKind: optionalText(row.token_kind) ?? "SINGLE_COMPONENT",
+    releaseVersion: optionalText(row.release_version) ?? KCML_RELEASE.catalogVersion,
+    releaseWaveKey: optionalText(row.release_wave_key),
+    maxChildJobs: Number(row.max_child_jobs ?? 1),
+    allowedBlueprintComponents: Array.isArray(row.allowed_blueprint_components) ? row.allowed_blueprint_components : [],
     jobId: optionalText(row.onboarding_job_id),
     issuedAt: asIso(row.issued_at) ?? "",
     initialExpiresAt: asIso(row.initial_expires_at) ?? "",
@@ -196,6 +221,42 @@ function mapToken(row: Record<string, unknown>) {
   };
 }
 
+function normalizeTokenOptions(options?: CreateIntegrationTokenOptions): Required<Pick<CreateIntegrationTokenOptions, "serviceKind" | "allowedPipeline" | "tokenKind" | "releaseVersion" | "releaseWaveKey" | "maxChildJobs">> & { allowedBlueprintComponentIds: string[] } {
+  const tokenKind = options?.tokenKind ?? "SINGLE_COMPONENT";
+  const releaseVersion = options?.releaseVersion ?? KCML_RELEASE.catalogVersion;
+  const releaseWaveKey = options?.releaseWaveKey ?? KCML_RELEASE_WAVE_KEY;
+  const selected = options?.allowedBlueprintComponentIds?.length
+    ? [...new Set(options.allowedBlueprintComponentIds)]
+    : tokenKind === "BLUEPRINT_RELEASE"
+      ? [...KCML_BLUEPRINT_COMPONENT_IDS]
+      : [];
+  const maxChildJobs = options?.maxChildJobs ?? (tokenKind === "BLUEPRINT_RELEASE" ? selected.length : 1);
+  if (tokenKind === "BLUEPRINT_RELEASE" && selected.length === 0) {
+    throw Object.assign(new Error("blueprint_components_required"), { statusCode: 400 });
+  }
+  if (maxChildJobs < 1 || maxChildJobs > 200) {
+    throw Object.assign(new Error("max_child_jobs_out_of_range"), { statusCode: 400 });
+  }
+  if (tokenKind === "BLUEPRINT_RELEASE" && maxChildJobs < selected.length) {
+    throw Object.assign(new Error("max_child_jobs_below_allowed_components"), { statusCode: 400 });
+  }
+  for (const componentId of selected) {
+    const contract = blueprintComponentContract(componentId);
+    if (!contract || contract.releaseVersion !== releaseVersion || contract.releaseWaveKey !== releaseWaveKey) {
+      throw Object.assign(new Error("unknown_blueprint_component"), { statusCode: 400 });
+    }
+  }
+  return {
+    serviceKind: options?.serviceKind ?? "MCP",
+    allowedPipeline: options?.allowedPipeline ?? "MCP_ONBOARDING",
+    tokenKind,
+    releaseVersion,
+    releaseWaveKey,
+    maxChildJobs,
+    allowedBlueprintComponentIds: selected
+  };
+}
+
 export async function createIntegrationToken(
   db: Db,
   config: IntegrationTokenConfig,
@@ -204,23 +265,25 @@ export async function createIntegrationToken(
   label: string,
   descriptor: OnboardingDescriptor,
   resumeJobId?: string,
-  options?: { serviceKind?: "MCP" | "EXTERNAL_API"; allowedPipeline?: "MCP_ONBOARDING" | "EXTERNAL_API_REGISTRATION" }
+  options?: CreateIntegrationTokenOptions
 ) {
   const secret = issueIntegrationSecret();
   const deadlines = tokenDeadlines();
   const digest = hmacToken(secret.value, config.INTEGRATION_TOKEN_HMAC_KEY_BASE64);
+  const normalizedOptions = normalizeTokenOptions(options);
   const result = await tx(db, async (client) => {
     let resumeState: OnboardingJobState | null = null;
     let resumeHasServer = false;
     if (resumeJobId) {
       const job = await client.query(
-        `select oj.id, oj.state, ms.enabled
+        `select oj.id, oj.state, oj.archived_at, ms.enabled
            from onboarding_job oj
            left join mcp_server ms on ms.id=oj.server_id
           where oj.id=$1 for update of oj`,
         [resumeJobId]
       );
       if (!job.rowCount) throw Object.assign(new Error("job_not_found"), { statusCode: 404 });
+      if (job.rows[0].archived_at) throw Object.assign(new Error("job_not_found"), { statusCode: 404 });
       if (["ACTIVE", "QUARANTINED", "CANCELLED"].includes(String(job.rows[0].state))) {
         throw Object.assign(new Error("job_not_resumable"), { statusCode: 409 });
       }
@@ -230,13 +293,32 @@ export async function createIntegrationToken(
     const inserted = await client.query(
       `insert into integration_token
         (label, lookup_digest, key_id, fingerprint, created_by, onboarding_job_id,
-         descriptor, service_kind, allowed_pipeline, issued_at, initial_expires_at, expires_at, max_expires_at)
-       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+         descriptor, service_kind, allowed_pipeline, token_kind, release_version, release_wave_key,
+         blueprint_release_version, max_child_jobs, auto_activate_after_pass,
+         manual_approval_required_after_issuance, issued_at, initial_expires_at, expires_at, max_expires_at)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
        returning *`,
       [label, digest, config.INTEGRATION_TOKEN_HMAC_KEY_ID, secret.fingerprint, actorId, resumeJobId ?? null, descriptor,
-        options?.serviceKind ?? "MCP", options?.allowedPipeline ?? "MCP_ONBOARDING",
+        normalizedOptions.serviceKind, normalizedOptions.allowedPipeline, normalizedOptions.tokenKind,
+        normalizedOptions.releaseVersion, normalizedOptions.releaseWaveKey, normalizedOptions.releaseVersion,
+        normalizedOptions.maxChildJobs, normalizedOptions.tokenKind === "BLUEPRINT_RELEASE",
+        normalizedOptions.tokenKind !== "BLUEPRINT_RELEASE",
         deadlines.issuedAt, deadlines.initialExpiresAt, deadlines.expiresAt, deadlines.maxExpiresAt]
     );
+    for (const componentId of normalizedOptions.allowedBlueprintComponentIds) {
+      const contract = blueprintComponentContract(componentId);
+      if (!contract) throw Object.assign(new Error("unknown_blueprint_component"), { statusCode: 400 });
+      await client.query(
+        `insert into integration_token_allowed_component(
+           token_id, blueprint_component_id, registration_type, release_version, release_wave_key
+         ) values ($1,$2,$3,$4,$5)
+         on conflict (token_id, blueprint_component_id) do update
+           set registration_type=excluded.registration_type,
+               release_version=excluded.release_version,
+               release_wave_key=excluded.release_wave_key`,
+        [inserted.rows[0].id, componentId, contract.registrationType, normalizedOptions.releaseVersion, normalizedOptions.releaseWaveKey]
+      );
+    }
     if (resumeJobId) {
       await client.query(
         `update integration_token set revoked_at=coalesce(revoked_at, now()), lock_version=lock_version+1
@@ -263,13 +345,33 @@ export async function createIntegrationToken(
       actorId,
       objectType: "integration_token",
       objectId: inserted.rows[0].id,
-       after: { label, descriptor, serviceKind: options?.serviceKind ?? "MCP", allowedPipeline: options?.allowedPipeline ?? "MCP_ONBOARDING", fingerprint: secret.fingerprint, resumeJobId: resumeJobId ?? null, initialExpiresAt: deadlines.initialExpiresAt, maxExpiresAt: deadlines.maxExpiresAt },
+       after: {
+         label,
+         descriptor,
+         serviceKind: normalizedOptions.serviceKind,
+         allowedPipeline: normalizedOptions.allowedPipeline,
+         tokenKind: normalizedOptions.tokenKind,
+         releaseVersion: normalizedOptions.releaseVersion,
+         releaseWaveKey: normalizedOptions.releaseWaveKey,
+         allowedBlueprintComponentIds: normalizedOptions.allowedBlueprintComponentIds,
+         maxChildJobs: normalizedOptions.maxChildJobs,
+         fingerprint: secret.fingerprint,
+         resumeJobId: resumeJobId ?? null,
+         initialExpiresAt: deadlines.initialExpiresAt,
+         maxExpiresAt: deadlines.maxExpiresAt
+       },
       correlationId
     });
     return inserted.rows[0] as Record<string, unknown>;
   });
   return {
     ...mapToken(result),
+    allowedBlueprintComponents: normalizedOptions.allowedBlueprintComponentIds.map((componentId) => ({
+      componentId,
+      registrationType: blueprintComponentContract(componentId)?.registrationType ?? "",
+      releaseVersion: normalizedOptions.releaseVersion,
+      releaseWaveKey: normalizedOptions.releaseWaveKey
+    })),
     token: secret.value
   };
 }
@@ -353,7 +455,17 @@ export async function releaseQuarantinedOnboardingJob(
 
 export async function listIntegrationTokens(db: Db) {
   const result = await db.query(`
-    select it.*, oj.state as job_state, oj.code, oj.hostname, oj.heartbeat_at, oj.token_extended_at
+    select it.*, oj.state as job_state, oj.code, oj.hostname, oj.heartbeat_at, oj.token_extended_at,
+      coalesce((
+        select jsonb_agg(jsonb_build_object(
+          'componentId', allowed.blueprint_component_id,
+          'registrationType', allowed.registration_type,
+          'releaseVersion', allowed.release_version,
+          'releaseWaveKey', allowed.release_wave_key
+        ) order by allowed.blueprint_component_id)
+        from integration_token_allowed_component allowed
+        where allowed.token_id=it.id
+      ), '[]'::jsonb) as allowed_blueprint_components
       from integration_token it
       left join onboarding_job oj on oj.id=it.onboarding_job_id
      where it.deleted_at is null
@@ -366,7 +478,9 @@ export async function authenticateIntegrationToken(db: Db, token: string, config
   if (!token.startsWith("kci_") || token.length < 80 || token.length > 100) throw new Error("invalid_integration_token");
   const digest = hmacToken(token, config.INTEGRATION_TOKEN_HMAC_KEY_BASE64);
   const result = await db.query(
-    `select it.id, it.onboarding_job_id, it.fingerprint, it.expires_at, it.max_expires_at, it.service_kind, it.allowed_pipeline
+    `select it.id, it.onboarding_job_id, it.fingerprint, it.expires_at, it.max_expires_at,
+            it.service_kind, it.allowed_pipeline, it.token_kind, it.release_version,
+            it.release_wave_key, it.max_child_jobs
        from integration_token it
        left join onboarding_job oj on oj.id=it.onboarding_job_id
       where it.lookup_digest=$1
@@ -386,7 +500,11 @@ export async function authenticateIntegrationToken(db: Db, token: string, config
     expiresAt: String(result.rows[0].expires_at),
     maxExpiresAt: String(result.rows[0].max_expires_at),
     serviceKind: (optionalText(result.rows[0].service_kind) ?? "MCP") as IntegrationTokenPrincipal["serviceKind"],
-    allowedPipeline: (optionalText(result.rows[0].allowed_pipeline) ?? "MCP_ONBOARDING") as IntegrationTokenPrincipal["allowedPipeline"]
+    allowedPipeline: (optionalText(result.rows[0].allowed_pipeline) ?? "MCP_ONBOARDING") as IntegrationTokenPrincipal["allowedPipeline"],
+    tokenKind: (optionalText(result.rows[0].token_kind) ?? "SINGLE_COMPONENT") as IntegrationTokenPrincipal["tokenKind"],
+    releaseVersion: optionalText(result.rows[0].release_version) ?? KCML_RELEASE.catalogVersion,
+    releaseWaveKey: optionalText(result.rows[0].release_wave_key),
+    maxChildJobs: Number(result.rows[0].max_child_jobs ?? 1)
   };
 }
 
@@ -775,8 +893,7 @@ export async function deleteRegisteredServer(db: Db, serverId: string, actorId: 
     if (tokenIds.length) {
       await client.query(
         `update integration_token
-            set onboarding_job_id=null,
-                revoked_at=coalesce(revoked_at,now()),
+            set revoked_at=coalesce(revoked_at,now()),
                 deleted_at=coalesce(deleted_at,now()),
                 lock_version=lock_version+1
           where id = any($1::uuid[])`,
@@ -785,30 +902,64 @@ export async function deleteRegisteredServer(db: Db, serverId: string, actorId: 
     }
 
     if (jobIds.length) {
-      await client.query("delete from onboarding_job where id = any($1::uuid[])", [jobIds]);
+      await client.query(
+        `update onboarding_job
+            set archived_at=coalesce(archived_at,now()),
+                archive_reason=$2,
+                runtime_stopped_at=coalesce(runtime_stopped_at,now()),
+                lease_owner=null,
+                lease_expires_at=null,
+                state=case when state in ('ACTIVE','REGISTERED_DISABLED','TRIAL_TESTING') then 'CANCELLED'::onboarding_job_state else state end,
+                lock_version=lock_version+1
+          where id = any($1::uuid[])`,
+        [jobIds, reason]
+      );
     }
-
-    await client.query("delete from alert_webhook_delivery where alert_id in (select id from operational_alert where server_id=$1)", [serverId]);
-    await client.query("delete from operational_alert where server_id=$1", [serverId]);
-    await client.query("delete from server_state_history where server_id=$1", [serverId]);
-    await client.query("delete from mcp_invocation_metric where server_id=$1", [serverId]);
-    await client.query("delete from mcp_invocation where server_id=$1", [serverId]);
-    await client.query("delete from function_statistics where server_id=$1", [serverId]);
-    await client.query("delete from monitoring_profile where server_id=$1", [serverId]);
-    await client.query("delete from kaja_permission where server_id=$1", [serverId]);
-    await client.query("delete from access_token where server_id=$1", [serverId]);
-    await client.query("delete from egress_capability where server_id=$1", [serverId]);
 
     if (managedIds.length) {
-      await client.query("delete from managed_service where id = any($1::uuid[])", [managedIds]);
+      await client.query(
+        `update managed_service
+            set enabled=false,
+                lifecycle_state='RETIRED',
+                api_state='DISABLED',
+                retired_at=coalesce(retired_at,now()),
+                lock_version=lock_version+1
+          where id = any($1::uuid[])`,
+        [managedIds]
+      );
     }
 
-    await client.query("update mcp_server set active_revision_id=null where id=$1", [serverId]);
-    await client.query("delete from registration_revision where server_id=$1", [serverId]);
-    await client.query("delete from mcp_server where id=$1", [serverId]);
+    await client.query(
+      `update mcp_server
+          set enabled=false,
+              registration_state='RETIRED'::registration_state,
+              operational_state='RETIRED'::operational_state,
+              retired_at=coalesce(retired_at,now()),
+              archived_at=coalesce(archived_at,now()),
+              archive_reason=$2,
+              lock_version=lock_version+1
+        where id=$1`,
+      [serverId, reason]
+    );
+    await client.query(
+      `update component c
+          set enabled=false,
+              ingress_enabled=false,
+              pulse_enabled=false,
+              egress_enabled=false,
+              lifecycle_state='RETIRED',
+              activation_state='INACTIVE',
+              operational_state='RETIRED',
+              retired_at=coalesce(c.retired_at,now()),
+              lock_version=c.lock_version+1
+         from mcp_server server
+        where server.id=$1
+          and c.id=server.component_id`,
+      [serverId]
+    );
 
     await appendAudit(client, {
-      eventType: "mcp_server.deleted",
+      eventType: "mcp_server.archived",
       actorType: "admin",
       actorId,
       objectType: "mcp_server",
@@ -825,7 +976,8 @@ export async function deleteRegisteredServer(db: Db, serverId: string, actorId: 
         managedServiceIds: managedIds
       },
       after: {
-        deleted: true,
+        archived: true,
+        runtimeAccessRevoked: true,
         code: serverRow.code,
         reason
       },

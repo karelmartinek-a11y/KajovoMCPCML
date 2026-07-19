@@ -499,10 +499,8 @@ export async function authenticateSecretIntegrationToken(db: Db, token: string, 
   if (!token.startsWith("kci_") || token.length < 80 || token.length > 100) return null;
   const digest = hmacToken(token, config.INTEGRATION_TOKEN_HMAC_KEY_BASE64);
   const result = await db.query(
-    `select it.id, it.fingerprint, it.token_kind, coalesce(coj.component_id, oj.component_id) as component_id
+    `select it.id, it.fingerprint, it.token_kind
        from integration_token it
-       left join component_onboarding_job coj on coj.integration_token_id=it.id
-       left join onboarding_job oj on oj.id=it.onboarding_job_id
       where it.lookup_digest=$1
         and it.key_id=$2
         and it.revoked_at is null
@@ -514,7 +512,7 @@ export async function authenticateSecretIntegrationToken(db: Db, token: string, 
   await db.query("update integration_token set last_used_at=now(), usage_count=usage_count+1 where id=$1", [result.rows[0].id]);
   return {
     kind: "INTEGRATION_TOKEN",
-    id: result.rows[0].component_id ? String(result.rows[0].component_id) : String(result.rows[0].id),
+    id: String(result.rows[0].id),
     publicId: String(result.rows[0].fingerprint),
     auditActorType: "integration_token",
     tokenKind: String(result.rows[0].token_kind ?? "SINGLE_COMPONENT")

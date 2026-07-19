@@ -520,9 +520,12 @@ describe("admin server actions", () => {
     });
     expect(response.statusCode, response.body).toBe(200);
     expect(response.json()).toMatchObject({ ok: true, deletedServerId: "server-id" });
-    expect(query.mock.calls.some(([sql]) => String(sql).includes("delete from onboarding_job"))).toBe(true);
-    expect(query.mock.calls.some(([sql]) => String(sql).includes("delete from managed_service"))).toBe(true);
-    expect(query.mock.calls.some(([sql]) => String(sql).includes("delete from mcp_server"))).toBe(true);
+    expect(query.mock.calls.some(([sql]) => String(sql).includes("update onboarding_job") && String(sql).includes("archived_at"))).toBe(true);
+    expect(query.mock.calls.some(([sql]) => String(sql).includes("update managed_service") && String(sql).includes("lifecycle_state='RETIRED'"))).toBe(true);
+    expect(query.mock.calls.some(([sql]) => String(sql).includes("update mcp_server") && String(sql).includes("archive_reason"))).toBe(true);
+    expect(query.mock.calls.some(([sql]) => String(sql).includes("delete from onboarding_job"))).toBe(false);
+    expect(query.mock.calls.some(([sql]) => String(sql).includes("delete from managed_service"))).toBe(false);
+    expect(query.mock.calls.some(([sql]) => String(sql).includes("delete from mcp_server"))).toBe(false);
   });
 
   it("returns admin security overview with active sessions", async () => {

@@ -50,7 +50,8 @@ const EXPECTED_MIGRATIONS = [
   "041_component_model_20260721.sql",
   "042_secret_manager_20260722.sql",
   "043_secret_reveal_binding_20260722.sql",
-  "044_component_identity_legacy_insert_bridge_20260722.sql"
+  "044_component_identity_legacy_insert_bridge_20260722.sql",
+  "045_release_wave_blueprint_enforcement_20260723.sql"
 ] as const;
 
 export type ReadinessReport = {

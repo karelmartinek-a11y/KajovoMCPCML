@@ -12,8 +12,13 @@ export function registerAuthRoutes(app: FastifyInstance, db: Db, config: OAuthCo
   app.get("/.well-known/oauth-authorization-server", async () => ({
     issuer: `https://${config.AUTH_HOST}`,
     token_endpoint: `https://${config.AUTH_HOST}/oauth/token`,
+    introspection_endpoint: `https://${config.AUTH_HOST}/oauth/introspect`,
     grant_types_supported: ["client_credentials"],
-    token_endpoint_auth_methods_supported: ["client_secret_basic"]
+    token_endpoint_auth_methods_supported: ["client_secret_basic"],
+    introspection_endpoint_auth_methods_supported: ["none"],
+    scopes_supported: ["mcp.invoke", "component.invoke"],
+    resource_indicators_supported: true,
+    client_id_metadata_document_supported: false
   }));
 
   app.post("/oauth/token", async (request, reply) => {

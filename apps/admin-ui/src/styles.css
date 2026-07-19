@@ -443,6 +443,11 @@ input[type="checkbox"] { width: 17px; height: 17px; min-height: 17px; padding: 0
 .permission-preview > span { line-height: 1.45; }
 .permission-preview dl { display: grid; grid-template-columns: 1fr auto; gap: 8px; margin: 2px 0 0; padding-top: 9px; border-top: 1px solid #e0e5ea; }
 .permission-preview dd { margin: 0; color: #24313f; font-weight: 720; }
+.blueprint-picker { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 6px; max-height: 230px; overflow: auto; padding: 4px; border: 1px solid #e0e5ea; border-radius: 6px; background: #fff; }
+.checkbox-row { min-width: 0; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 7px; padding: 6px 7px; border: 1px solid #e8edf1; border-radius: 6px; background: #fbfcfd; font-size: 11px; }
+.checkbox-row input { margin: 0; }
+.checkbox-row span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #24313f; font-weight: 700; }
+.checkbox-row small { color: #6b7682; }
 .secret-once { display: grid; gap: 9px; background: #eaf6f5; border: 1px solid #9bcecb; border-radius: 6px; padding: 14px; }
 .secret-once code { white-space: normal; word-break: break-all; font-size: 12px; }
 .notice.success { color: #176b3b; background: #effaf3; border-color: #a9d7b9; align-items: flex-start; line-height: 1.45; }

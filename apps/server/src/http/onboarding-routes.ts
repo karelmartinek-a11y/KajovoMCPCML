@@ -30,7 +30,7 @@ import {
   MCP_CONNECT_FILE,
   verifyMcpOnboardingCatalog
 } from "../domain/onboarding-catalog.js";
-import { KCML_BLUEPRINT_COMPONENT_IDS, KCML_RELEASE } from "../domain/release.js";
+import { KCML_BLUEPRINT_COMPONENT_IDS, KCML_RELEASE, KCML_RELEASE_WAVE_KEY } from "../domain/release.js";
 import { evidenceReferencesForManifest, validateOnboardingManifest } from "../domain/registration.js";
 import { MAX_ARCHIVE_BYTES, validateAndQuarantineArchive } from "../domain/upload-validation.js";
 import { decryptMfaSecret } from "../security/secrets.js";
@@ -49,6 +49,10 @@ const onboardingDescriptorSchema = z.object({
 const integrationTokenRequestSchema = z.object({
   label: z.string().trim().min(1).max(120),
   serviceKind: z.enum(["MCP", "EXTERNAL_API"]).default("MCP"),
+  tokenKind: z.enum(["SINGLE_COMPONENT", "BLUEPRINT_RELEASE"]).default("SINGLE_COMPONENT"),
+  releaseWave: z.literal(KCML_RELEASE_WAVE_KEY).default(KCML_RELEASE_WAVE_KEY),
+  allowedBlueprintComponentIds: z.array(z.enum(KCML_BLUEPRINT_COMPONENT_IDS as [string, ...string[]])).optional(),
+  maxChildJobs: z.number().int().min(1).max(200).optional(),
   descriptor: onboardingDescriptorSchema,
   resumeJobId: z.string().uuid().optional()
 }).strict();
@@ -249,7 +253,12 @@ export function registerOnboardingRoutes(app: FastifyInstance, db: Db, config: O
       return {
         ...await createIntegrationToken(db, config, accountId, correlationId, parsed.label, parsed.descriptor, parsed.resumeJobId, {
           serviceKind: parsed.serviceKind,
-          allowedPipeline: parsed.serviceKind === "EXTERNAL_API" ? "EXTERNAL_API_REGISTRATION" : "MCP_ONBOARDING"
+          allowedPipeline: parsed.serviceKind === "EXTERNAL_API" ? "EXTERNAL_API_REGISTRATION" : "MCP_ONBOARDING",
+          tokenKind: parsed.tokenKind,
+          releaseVersion: KCML_RELEASE.catalogVersion,
+          releaseWaveKey: parsed.releaseWave,
+          allowedBlueprintComponentIds: parsed.allowedBlueprintComponentIds,
+          maxChildJobs: parsed.maxChildJobs
         }),
         onboardingCatalogUrl: "/api/onboarding-catalog",
         onboardingCatalogFileName: MCP_CONNECT_FILE,
@@ -275,12 +284,21 @@ export function registerOnboardingRoutes(app: FastifyInstance, db: Db, config: O
     try {
       const intent = await createIntegrationToken(db, config, accountId, correlationId, parsed.label, parsed.descriptor, parsed.resumeJobId, {
         serviceKind: parsed.serviceKind,
-        allowedPipeline: parsed.serviceKind === "EXTERNAL_API" ? "EXTERNAL_API_REGISTRATION" : "MCP_ONBOARDING"
+        allowedPipeline: parsed.serviceKind === "EXTERNAL_API" ? "EXTERNAL_API_REGISTRATION" : "MCP_ONBOARDING",
+        tokenKind: parsed.tokenKind,
+        releaseVersion: KCML_RELEASE.catalogVersion,
+        releaseWaveKey: parsed.releaseWave,
+        allowedBlueprintComponentIds: parsed.allowedBlueprintComponentIds,
+        maxChildJobs: parsed.maxChildJobs
       });
       return {
         integrationIntentId: intent.id,
         integrationToken: intent.token,
         serviceKind: parsed.serviceKind,
+        tokenKind: intent.tokenKind,
+        releaseWave: intent.releaseWaveKey,
+        allowedBlueprintComponents: intent.allowedBlueprintComponents,
+        maxChildJobs: intent.maxChildJobs,
         expiresAt: intent.expiresAt,
         intakeUrl: `https://${config.REGISTER_HOST}/v1/service-onboardings`,
         catalogUrl: `https://${config.REGISTER_HOST}/api/onboarding-catalogs/${parsed.serviceKind === "EXTERNAL_API" ? "external-api/1.0" : `component/${MCP_CATALOG_VERSION}`}`
@@ -458,16 +476,21 @@ export function registerOnboardingRoutes(app: FastifyInstance, db: Db, config: O
         fingerprint: principal.fingerprint,
         serviceKind: principal.serviceKind,
         allowedPipeline: principal.allowedPipeline,
+        tokenKind: principal.tokenKind,
+        releaseVersion: principal.releaseVersion,
+        releaseWaveKey: principal.releaseWaveKey,
+        maxChildJobs: principal.maxChildJobs,
         expiresAt: principal.expiresAt,
         maxExpiresAt: principal.maxExpiresAt
       },
       blueprintRelease: {
         releaseVersion: KCML_RELEASE.applicationVersion,
+        releaseWave: principal.releaseWaveKey ?? KCML_RELEASE_WAVE_KEY,
         allowedBlueprintComponentIds: KCML_BLUEPRINT_COMPONENT_IDS,
-        allowedRegistrationTypes: ["KAJA_CLIENT", "MCP_SERVER"],
-        maxChildJobs: 20,
-        autoActivateAfterPass: true,
-        manualApprovalRequiredAfterIssuance: false
+        allowedRegistrationTypes: ["KAJA_CLIENT", "MCP_SERVER", "MANAGED_PLATFORM_SERVICE"],
+        maxChildJobs: principal.maxChildJobs,
+        autoActivateAfterPass: principal.tokenKind === "BLUEPRINT_RELEASE",
+        manualApprovalRequiredAfterIssuance: principal.tokenKind !== "BLUEPRINT_RELEASE"
       },
       intakeUrl: `https://${config.REGISTER_HOST}/v1/service-onboardings`,
       catalogUrl: `https://${config.REGISTER_HOST}/api/onboarding-catalogs/component/${MCP_CATALOG_VERSION}`,

@@ -132,7 +132,7 @@ describe("machine-readable onboarding catalogs", () => {
     });
     const db = {
       query: async (sql: string) => {
-        if (sql.includes("select it.id, it.onboarding_job_id, it.fingerprint, it.expires_at, it.max_expires_at, it.service_kind, it.allowed_pipeline")) {
+        if (sql.includes("select it.id, it.onboarding_job_id, it.fingerprint, it.expires_at, it.max_expires_at")) {
           return {
             rowCount: 1,
             rows: [{
@@ -142,7 +142,11 @@ describe("machine-readable onboarding catalogs", () => {
               expires_at: new Date(Date.now() + 60_000).toISOString(),
               max_expires_at: new Date(Date.now() + 120_000).toISOString(),
               service_kind: "EXTERNAL_API",
-              allowed_pipeline: "EXTERNAL_API_REGISTRATION"
+              allowed_pipeline: "EXTERNAL_API_REGISTRATION",
+              token_kind: "BLUEPRINT_RELEASE",
+              release_version: KCML_RELEASE.catalogVersion,
+              release_wave_key: "baseline-2026-07-23",
+              max_child_jobs: 25
             }]
           };
         }

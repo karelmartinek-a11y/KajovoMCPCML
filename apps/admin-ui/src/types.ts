@@ -205,6 +205,18 @@ export type IntegrationToken = {
     technicalOwner: string;
     criticality: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
   };
+  serviceKind?: "MCP" | "EXTERNAL_API";
+  allowedPipeline?: "MCP_ONBOARDING" | "EXTERNAL_API_REGISTRATION";
+  tokenKind?: "SINGLE_COMPONENT" | "BLUEPRINT_RELEASE";
+  releaseVersion?: string;
+  releaseWaveKey?: string | null;
+  maxChildJobs?: number;
+  allowedBlueprintComponents?: Array<{
+    componentId: string;
+    registrationType: string;
+    releaseVersion: string;
+    releaseWaveKey: string | null;
+  }>;
   jobId: string | null;
   issuedAt: string;
   initialExpiresAt: string;

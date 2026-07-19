@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const releaseArgument = process.argv.find((argument) => argument.startsWith("--release="));
-const release = releaseArgument?.slice("--release=".length) ?? "2026.07.22";
+const release = releaseArgument?.slice("--release=".length) ?? "2026.07.23";
 if (!/^20[0-9]{2}[.](0[1-9]|1[0-2])[.](0[1-9]|[12][0-9]|3[01])$/.test(release)) throw new Error(`Unsupported catalog release: ${release}`);
 if (release <= "2026.07.20") throw new Error(`Historical catalog is immutable: ${release}`);
 const protocol = "2025-11-25";
@@ -38,7 +38,8 @@ const mcpComponents = [
   ["MCP-WFC-011", "STATEFUL_SERVICE"]
 ];
 const managedServices = ["KCML-AUTH-001", "KCML-CTL-002", "KCML-MON-003", "KCML-AUD-004", "KCML-SEC-005"];
-const blueprintIds = [...aiComponents, ...mcpComponents].map(([componentId]) => componentId);
+const releaseWaveKey = "baseline-2026-07-23";
+const blueprintIds = [...aiComponents, ...mcpComponents].map(([componentId]) => componentId).concat(managedServices);
 
 const gatesByStage = {
   intake: ["archive_policy", "manifest_schema", "token_scope", "authorization_snapshot", "secret_scan", "dependency_policy"],
@@ -137,7 +138,12 @@ const schema = {
         environment: { enum: ["production", "staging"] },
         componentType: { enum: ["AI_AGENT", "MCP_SERVER", "KCML_MANAGED_SERVICE", "GENERIC_COMPONENT"] },
         registrationType: { type: "string", pattern: "^[A-Z][A-Z0-9_]{2,79}$" },
-        blueprint: { type: "object", additionalProperties: false, required: ["componentId", "version"], properties: { componentId: ref("blueprintId"), version: { const: release } } },
+        blueprint: {
+          type: "object",
+          additionalProperties: false,
+          required: ["componentId", "version", "releaseWaveKey"],
+          properties: { componentId: ref("blueprintId"), version: { const: release }, releaseWaveKey: { const: releaseWaveKey } }
+        },
         pulseEnvelopeVersion: { const: release },
         displayName: { type: "string", minLength: 3, maxLength: 120 },
         businessPurpose: { type: "string", minLength: 20, maxLength: 2000 },
@@ -205,9 +211,15 @@ const schema = {
     },
     genericComponentManifest: {
       type: "object", additionalProperties: false,
-      required: ["schemaVersion", "name", "category", "registrationType", "role", "revision", "capabilities", "protocols", "transports", "owners", "monitoring", "audit", "authorization", "endpoint", "technicalDisable"],
+      required: ["schemaVersion", "blueprint", "name", "category", "registrationType", "role", "revision", "capabilities", "protocols", "transports", "owners", "monitoring", "audit", "authorization", "endpoint", "technicalDisable"],
       properties: {
         schemaVersion: { const: release }, name: { type: "string", minLength: 2, maxLength: 120 }, description: { type: "string", maxLength: 2000 },
+        blueprint: {
+          type: "object",
+          additionalProperties: false,
+          required: ["componentId", "version", "releaseWaveKey"],
+          properties: { componentId: ref("blueprintId"), version: { const: release }, releaseWaveKey: { const: releaseWaveKey } }
+        },
         category: { enum: ["AI_CLIENT", "AI_AGENT", "MCP_SERVER", "MANAGED_RUNTIME", "EXTERNAL_SERVICE", "PLATFORM_SERVICE"] },
         registrationType: { type: "string", pattern: "^[A-Z][A-Z0-9_]{2,79}$" }, role: { enum: ["CLIENT", "AGENT", "SERVICE", "RUNTIME", "PLATFORM"] },
         revision: { type: "string", minLength: 1, maxLength: 80 }, capabilities: { type: "array", uniqueItems: true, items: { type: "string", minLength: 2 } },
@@ -229,7 +241,7 @@ const example = {
   environment: "production",
   componentType: "MCP_SERVER",
   registrationType: "MCP_SERVER",
-  blueprint: { componentId: "MCP-RX-WA-001", version: release },
+  blueprint: { componentId: "MCP-RX-WA-001", version: release, releaseWaveKey },
   pulseEnvelopeVersion: release,
   displayName: "WhatsApp event ingress",
   businessPurpose: "Receives approved WhatsApp ingress events and maps them into strict KCML pulses.",
@@ -293,6 +305,15 @@ const catalog = {
     legacyAdapters: ["/v1/onboardings", "/v1/service-onboardings", "/api/mcp-servers", "/api/managed-services"],
     legacyOnboardingPath: { path: "/v1/onboardings", status: 202 }
   },
+  releaseWaves: [{
+    releaseVersion: release,
+    waveKey: releaseWaveKey,
+    displayName: "Prvni release vlna 9 AI / 11 MCP / 5 managed",
+    baseline: true,
+    baselineCounts: { aiAgents: aiComponents.length, mcpServers: mcpComponents.length, managedServices: managedServices.length },
+    notFinalTargetScope: true,
+    allowedBlueprintComponentIds: blueprintIds
+  }],
   compatibilityMatrix: [
     { profile: "legacy-ai-client", category: "AI_CLIENT", catalog: "2026.07.20", manifestSchemas: ["1.4", "1.5"], intake: "/v1/onboardings", authorization: "KAJA_COMPATIBILITY_ADAPTER", endpoint: "KCML_HOSTNAME", result: "SUPPORTED_ADAPTED" },
     { profile: "component-ai-client", category: "AI_CLIENT", catalog: release, manifestSchemas: [release], intake: "/v2/component-onboardings", authorization: "OAUTH2_CLIENT_CREDENTIALS", endpoint: "KCML_HOSTNAME", result: "SUPPORTED_NATIVE" },
@@ -313,12 +334,12 @@ const catalog = {
     endpointAndAudience: { canonicalHostname: "REQUIRED", matchingHostSniAudience: "REQUIRED", alternateHostname: "REJECTED_INVALID_AUDIENCE", ipLocalhostDirectPortServiceName: "REJECTED_INVALID_COMPONENT_HOSTNAME" }
   },
   componentContracts: {
-    AI_CLIENT: { manifestContract: "aiAgentManifest", requiredCapabilities: [], gates: ["AUTHORIZATION", "TECHNICAL_DISABLE", "MONITORING", "AUDIT_CONTINUITY"], endpoint: "KCML_HOSTNAME", authorization: "OAUTH2_CLIENT_CREDENTIALS", deactivation: "POLICY_EPOCH", recertification: "REQUIRED" },
-    AI_AGENT: { manifestContract: "aiAgentManifest", requiredCapabilities: [], gates: ["AUTHORIZATION", "TECHNICAL_DISABLE", "MONITORING", "AUDIT_CONTINUITY"], endpoint: "KCML_HOSTNAME", authorization: "OAUTH2_CLIENT_CREDENTIALS", deactivation: "POLICY_EPOCH", recertification: "REQUIRED" },
-    MCP_SERVER: { manifestContract: "mcpServerManifest", requiredCapabilities: ["mcp.initialize", "mcp.notifications.initialized", "mcp.tools.list", "mcp.tools.call"], gates: ["AUTHORIZATION", "PUBLIC_ENDPOINT", "TECHNICAL_DISABLE", "MONITORING", "AUDIT_CONTINUITY"], endpoint: "KCML_HOSTNAME", authorization: "OAUTH2_CLIENT_CREDENTIALS", deactivation: "POLICY_EPOCH", recertification: "REQUIRED" },
-    MANAGED_RUNTIME: { manifestContract: "genericComponentManifest", requiredCapabilities: [], gates: ["AUTHORIZATION", "PUBLIC_ENDPOINT", "TECHNICAL_DISABLE", "MONITORING", "AUDIT_CONTINUITY"], endpoint: "KCML_HOSTNAME", authorization: "OAUTH2_CLIENT_CREDENTIALS", deactivation: "POLICY_EPOCH", recertification: "REQUIRED" },
-    EXTERNAL_SERVICE: { manifestContract: "genericComponentManifest", requiredCapabilities: [], gates: ["AUTHORIZATION", "PUBLIC_ENDPOINT", "TECHNICAL_DISABLE", "MONITORING", "AUDIT_CONTINUITY"], endpoint: "KCML_HOSTNAME", authorization: "OAUTH2_CLIENT_CREDENTIALS", deactivation: "POLICY_EPOCH", recertification: "REQUIRED" },
-    PLATFORM_SERVICE: { manifestContract: "managedServiceManifest", requiredCapabilities: [], gates: ["AUTHORIZATION", "PUBLIC_ENDPOINT", "TECHNICAL_DISABLE", "MONITORING", "AUDIT_CONTINUITY"], endpoint: "KCML_HOSTNAME", authorization: "OAUTH2_CLIENT_CREDENTIALS", deactivation: "POLICY_EPOCH", recertification: "REQUIRED" }
+    AI_CLIENT: { manifestContract: "aiAgentManifest", requiredCapabilities: [], gates: ["AUTHORIZATION", "TECHNICAL_DISABLE", "MONITORING", "AUDIT_CONTINUITY", "RECERTIFICATION"], endpoint: "KCML_HOSTNAME", authorization: "OAUTH2_CLIENT_CREDENTIALS", deactivation: "POLICY_EPOCH", recertification: "REQUIRED" },
+    AI_AGENT: { manifestContract: "aiAgentManifest", requiredCapabilities: [], gates: ["AUTHORIZATION", "TECHNICAL_DISABLE", "MONITORING", "AUDIT_CONTINUITY", "RECERTIFICATION"], endpoint: "KCML_HOSTNAME", authorization: "OAUTH2_CLIENT_CREDENTIALS", deactivation: "POLICY_EPOCH", recertification: "REQUIRED" },
+    MCP_SERVER: { manifestContract: "mcpServerManifest", requiredCapabilities: ["mcp.initialize", "mcp.notifications.initialized", "mcp.tools.list", "mcp.tools.call"], gates: ["AUTHORIZATION", "PUBLIC_ENDPOINT", "TECHNICAL_DISABLE", "MONITORING", "AUDIT_CONTINUITY", "RECERTIFICATION"], endpoint: "KCML_HOSTNAME", authorization: "OAUTH2_CLIENT_CREDENTIALS", deactivation: "POLICY_EPOCH", recertification: "REQUIRED" },
+    MANAGED_RUNTIME: { manifestContract: "genericComponentManifest", requiredCapabilities: [], gates: ["AUTHORIZATION", "PUBLIC_ENDPOINT", "TECHNICAL_DISABLE", "MONITORING", "AUDIT_CONTINUITY", "RECERTIFICATION"], endpoint: "KCML_HOSTNAME", authorization: "OAUTH2_CLIENT_CREDENTIALS", deactivation: "POLICY_EPOCH", recertification: "REQUIRED" },
+    EXTERNAL_SERVICE: { manifestContract: "genericComponentManifest", requiredCapabilities: [], gates: ["AUTHORIZATION", "PUBLIC_ENDPOINT", "TECHNICAL_DISABLE", "MONITORING", "AUDIT_CONTINUITY", "RECERTIFICATION"], endpoint: "KCML_HOSTNAME", authorization: "OAUTH2_CLIENT_CREDENTIALS", deactivation: "POLICY_EPOCH", recertification: "REQUIRED" },
+    PLATFORM_SERVICE: { manifestContract: "managedServiceManifest", requiredCapabilities: [], gates: ["AUTHORIZATION", "PUBLIC_ENDPOINT", "TECHNICAL_DISABLE", "MONITORING", "AUDIT_CONTINUITY", "RECERTIFICATION"], endpoint: "KCML_HOSTNAME", authorization: "OAUTH2_CLIENT_CREDENTIALS", deactivation: "POLICY_EPOCH", recertification: "REQUIRED" }
   },
   capabilityContracts: {
     "mcp.initialize": { protocol: "MCP", transport: "streamable-http", requiredFor: ["MCP_SERVER"], audit: true, monitoring: true },
@@ -343,13 +364,25 @@ const catalog = {
     },
     blueprintRelease: {
       releaseVersion: release,
+      releaseWave: releaseWaveKey,
       allowedBlueprintComponentIds: blueprintIds,
-      allowedRegistrationTypes: ["KAJA_CLIENT", "MCP_SERVER", "MANAGED_PLATFORM_SERVICE", "GENERIC_COMPONENT"],
-      maxChildJobs: 20,
+      allowedRegistrationTypes: ["KAJA_CLIENT", "MCP_SERVER", "MANAGED_PLATFORM_SERVICE"],
+      maxChildJobs: 200,
       autoActivateAfterPass: true,
       manualApprovalRequiredAfterIssuance: false,
       ttlHours: 24,
       maxTtlDays: 30,
+      lifecycle: {
+        initialExpiresInHours: 24,
+        heartbeatExtensionHours: 24,
+        maxExpiresInDays: 30,
+        currentExpiryField: "expiresAt",
+        maximumExpiryField: "maxExpiresAt",
+        extensionTrigger: "onboarding worker heartbeat while the job is in a non-terminal runnable state",
+        terminalStatesStopExtension: ["ACTIVE", "FAILED", "QUARANTINED", "CANCELLED"],
+        pausedStatesStopExtension: ["AWAITING_REVISION"],
+        revocation: "administrator revoke/delete, resume token replacement, cancellation, quarantine release, or server archival"
+      },
       secret: { bytes: 64, prefix: "kci_", storage: "HMAC digest only" }
     }
   },
@@ -409,7 +442,16 @@ const catalog = {
         get: { operationId: "getComponentOnboarding", responses: { "200": { description: "Current job" } } },
         delete: { operationId: "cancelComponentOnboarding", responses: { "200": { description: "Cancelled" } } }
       },
-      "/v2/component-onboardings/{id}/revisions": { post: { operationId: "reviseComponentOnboarding", responses: { "200": { description: "Revised" } } } },
+      "/v2/component-onboardings/{id}/revisions": {
+        post: {
+          operationId: "reviseComponentOnboarding",
+          parameters: [
+            { name: "Idempotency-Key", in: "header", required: true, schema: { type: "string" } },
+            { name: "If-Match", in: "header", required: true, schema: { type: "string" } }
+          ],
+          responses: { "200": { description: "Revised" } }
+        }
+      },
       "/v2/component-onboardings/{id}/readiness": { post: { operationId: "evaluateComponentReadiness", responses: { "200": { description: "Readiness result" } } } },
       "/v2/component-onboardings/{id}/credential-claims": { post: { operationId: "claimComponentCredential", responses: { "200": { description: "Credential shown once" } } } },
       "/v1/service-onboardings": { post: { operationId: "createServiceOnboarding", parameters: [{ name: "Idempotency-Key", in: "header", required: true, schema: { type: "string" } }], responses: { "202": { description: "Accepted" } } } },

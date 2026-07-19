@@ -55,6 +55,10 @@ function routeError(reply: FastifyReply, error: unknown, correlationId: string) 
   return sendError(reply, statusCode, code, undefined, correlationId);
 }
 
+function etagFor(job: Record<string, unknown>): string {
+  return `"${Number(job.lockVersion ?? 0)}"`;
+}
+
 async function integrationPrincipal(db: Db, config: AppServerConfig, request: FastifyRequest, reply: FastifyReply, correlationId: string) {
   const token = bearer(request);
   if (!token) {
@@ -115,7 +119,7 @@ export function registerComponentRoutes(app: FastifyInstance, db: Db, config: Ap
         integrationTokenId: principal.id, idempotencyKey: key, manifest,
         claimHmacKey: config.INTEGRATION_TOKEN_HMAC_KEY_BASE64, baseDomain: config.PUBLIC_BASE_DOMAIN, correlationId
       });
-      return reply.code(202).header("cache-control", "no-store").send({ job });
+      return reply.code(202).header("etag", etagFor(job)).header("cache-control", "no-store").send({ job });
     } catch (error) {
       return routeError(reply, error, correlationId);
     }
@@ -127,7 +131,8 @@ export function registerComponentRoutes(app: FastifyInstance, db: Db, config: Ap
     const principal = await integrationPrincipal(db, config, request, reply, correlationId);
     if (!principal) return;
     try {
-      return { job: await getComponentOnboarding(db, (request.params as { id: string }).id, principal.id) };
+      const job = await getComponentOnboarding(db, (request.params as { id: string }).id, principal.id);
+      return reply.header("etag", etagFor(job)).header("cache-control", "no-store").send({ job });
     } catch (error) {
       return routeError(reply, error, correlationId);
     }
@@ -138,11 +143,20 @@ export function registerComponentRoutes(app: FastifyInstance, db: Db, config: Ap
     if (hostOf(request.headers.host) !== config.REGISTER_HOST) return sendError(reply, 404, "not_found", undefined, correlationId);
     const principal = await integrationPrincipal(db, config, request, reply, correlationId);
     if (!principal) return;
+    const key = request.headers["idempotency-key"];
+    const match = request.headers["if-match"];
+    const lockVersion = typeof match === "string" ? Number(match.replaceAll('"', "")) : Number.NaN;
+    if (typeof key !== "string" || !idempotencyKeyPattern.test(key) || !Number.isSafeInteger(lockVersion) || lockVersion < 0) {
+      return sendError(reply, 400, "idempotency_key_and_if_match_required", undefined, correlationId);
+    }
     try {
-      return { job: await reviseComponentOnboarding(db, {
+      const job = await reviseComponentOnboarding(db, {
         jobId: (request.params as { id: string }).id, integrationTokenId: principal.id,
+        expectedLockVersion: lockVersion,
+        idempotencyKey: key,
         manifest: validateComponentManifest(request.body), correlationId
-      }) };
+      });
+      return reply.header("etag", etagFor(job)).header("cache-control", "no-store").send({ job });
     } catch (error) {
       return routeError(reply, error, correlationId);
     }
@@ -154,10 +168,11 @@ export function registerComponentRoutes(app: FastifyInstance, db: Db, config: Ap
     const principal = await integrationPrincipal(db, config, request, reply, correlationId);
     if (!principal) return;
     try {
-      return await evaluateComponentReadiness(db, {
+      const result = await evaluateComponentReadiness(db, {
         jobId: (request.params as { id: string }).id, integrationTokenId: principal.id,
         claimHmacKey: config.INTEGRATION_TOKEN_HMAC_KEY_BASE64, correlationId
       });
+      return reply.header("etag", etagFor(result.job)).header("cache-control", "no-store").send(result);
     } catch (error) {
       return routeError(reply, error, correlationId);
     }

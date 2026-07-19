@@ -17,6 +17,13 @@ Katalogová změna je `MINOR`, klasifikace `COMPATIBLE IMPACT`. Historické mani
 | `legacy-platform-service` | `2026.07.20` | `/api/managed-services` | `SUPPORTED_ADAPTED` |
 | `component-platform-service` | `2026.07.22` | `/v2/component-onboardings` | `SUPPORTED_NATIVE` |
 
+| Implementační token | Pravidlo | Výsledek |
+| --- | --- | --- |
+| `expiresAt` | Aktuální použitelnost tokenu po vydání nebo heartbeat prodloužení | 24 hodin od posledního prodloužení, pokud token není revokovaný/smazaný a job je v prodlužovatelném stavu |
+| `maxExpiresAt` | Pevný horní strop od vydání tokenu | 30 dní; worker jej nesmí překročit |
+| `AWAITING_REVISION` | Job čeká na opravu nebo novou revizi | Automatické prodloužení neběží; pokračování vyžaduje resume token |
+| `ACTIVE`, `FAILED`, `QUARANTINED`, `CANCELLED` | Terminální nebo zastavené stavy | Automatické prodloužení neběží |
+
 | Runtime oblast | Kombinace | Výsledek |
 | --- | --- | --- |
 | `pulse` | `legacyBlueprintPulseTypes` | `SUPPORTED_ADAPTED` |
