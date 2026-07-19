@@ -3,8 +3,9 @@ import type { Db } from "../db.js";
 import { tx } from "../db.js";
 import { hmacToken, issueOpaqueSecret } from "../security/secrets.js";
 import { appendAudit } from "./audit.js";
+import { KCML_RELEASE } from "./release.js";
 
-export const COMPONENT_CATALOG_VERSION = "2026.07.21";
+export const COMPONENT_CATALOG_VERSION = KCML_RELEASE.catalogVersion;
 export const MCP_REQUIRED_CAPABILITIES = [
   "mcp.initialize",
   "mcp.notifications.initialized",
@@ -20,7 +21,7 @@ export const ACTIVATION_GATES = [
 ] as const;
 
 export type ComponentManifest = {
-  schemaVersion: "2026.07.21";
+  schemaVersion: typeof COMPONENT_CATALOG_VERSION;
   name: string;
   description?: string;
   category: "AI_CLIENT" | "AI_AGENT" | "MCP_SERVER" | "MANAGED_RUNTIME" | "EXTERNAL_SERVICE" | "PLATFORM_SERVICE";

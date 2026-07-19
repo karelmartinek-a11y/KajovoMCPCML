@@ -15,6 +15,7 @@ import {
   setComponentPermissionEnabled,
   validateComponentManifest
 } from "./component.js";
+import { KCML_RELEASE } from "./release.js";
 
 const sourceId = "91000000-0000-4000-8000-000000000001";
 const targetId = "91000000-0000-4000-8000-000000000002";
@@ -35,12 +36,13 @@ describe.skipIf(!enabled)("component authorization and audit persistence", () =>
     await db.query("delete from component_permission where source_component_id=$1 or target_component_id=$2", [sourceId, targetId]);
     await db.query("delete from component_credential where component_id=$1", [sourceId]);
     await db.query(`
-      insert into component(id,kcml_number,code,hostname,display_name,category,registration_type,component_role,lifecycle_state,activation_state,operational_state,monitoring_state,enabled,ingress_enabled,pulse_enabled,egress_enabled)
+      insert into component(id,kcml_number,code,hostname,display_name,category,registration_type,component_role,lifecycle_state,activation_state,operational_state,monitoring_state,enabled,ingress_enabled,pulse_enabled,egress_enabled,release_version)
       values
-        ($1,91001,'KCML91001','kcml91001.component.test','Zdroj','AI_CLIENT','GENERIC_COMPONENT','CLIENT','ACTIVE','ACTIVE','HEALTHY','HEALTHY',true,true,true,true),
-        ($2,91002,'KCML91002','kcml91002.component.test','Cíl','MANAGED_RUNTIME','GENERIC_COMPONENT','RUNTIME','ACTIVE','ACTIVE','HEALTHY','HEALTHY',true,true,true,true)
-      on conflict (id) do update set lifecycle_state='ACTIVE',activation_state='ACTIVE',operational_state='HEALTHY',monitoring_state='HEALTHY',enabled=true,ingress_enabled=true,pulse_enabled=true,egress_enabled=true`,
-      [sourceId, targetId]
+        ($1,91001,'KCML91001','kcml91001.component.test','Zdroj','AI_CLIENT','GENERIC_COMPONENT','CLIENT','ACTIVE','ACTIVE','HEALTHY','HEALTHY',true,true,true,true,$3),
+        ($2,91002,'KCML91002','kcml91002.component.test','Cíl','MANAGED_RUNTIME','GENERIC_COMPONENT','RUNTIME','ACTIVE','ACTIVE','HEALTHY','HEALTHY',true,true,true,true,$3)
+      on conflict (id) do update set lifecycle_state='ACTIVE',activation_state='ACTIVE',operational_state='HEALTHY',monitoring_state='HEALTHY',
+        enabled=true,ingress_enabled=true,pulse_enabled=true,egress_enabled=true,release_version=excluded.release_version`,
+      [sourceId, targetId, KCML_RELEASE.catalogVersion]
     );
     await db.query(`insert into component_revision(id,component_id,revision,validation_state,manifest,manifest_digest,capabilities,protocols,transports)
       values ($1,$2,'1.0.0','APPROVED','{}','sha256:test',array['component.pulse','component.audit.write'],array['HTTPS'],array['HTTPS'])
@@ -89,7 +91,7 @@ describe.skipIf(!enabled)("component authorization and audit persistence", () =>
     const base = Number(stream.rows[0].expected_next_sequence);
     const event = (sequenceNumber: number) => ({
       sequenceNumber, eventType: "workflow.step", initiatedByType: "component", occurredAt: new Date().toISOString(),
-      correlationId: randomUUID(), catalogVersion: "2026.07.21"
+      correlationId: randomUUID(), catalogVersion: KCML_RELEASE.catalogVersion
     });
     expect((await ingestComponentAuditEvent(db, targetId, event(base))).accepted).toBe(true);
     const gap = await ingestComponentAuditEvent(db, targetId, event(base + 2));
@@ -106,7 +108,7 @@ describe.skipIf(!enabled)("component authorization and audit persistence", () =>
     ) values ($1,'Component DB test',$2,'test','component-db-test',$3,now()+interval '1 hour',now()+interval '1 hour',now()+interval '1 day',$4::jsonb,'2026.07.21')`,
     [integrationTokenId, hmacToken(integrationTokenId, accessHmacKey), admin.rows[0].id, JSON.stringify({ summary: "Component test", businessPurpose: "Validate component onboarding credential issuance safely.", serviceOwner: "KCML", technicalOwner: "KCML", criticality: "LOW" })]);
     const manifest = validateComponentManifest({
-      schemaVersion: "2026.07.21", name: "Self-service test", category: "MANAGED_RUNTIME", registrationType: "GENERIC_COMPONENT", role: "RUNTIME", revision: "1.0.0",
+      schemaVersion: KCML_RELEASE.catalogVersion, name: "Self-service test", category: "MANAGED_RUNTIME", registrationType: "GENERIC_COMPONENT", role: "RUNTIME", revision: "1.0.0",
       capabilities: ["component.discovery"], protocols: ["HTTPS"], transports: ["HTTPS"], owners: { service: "KCML" }, contacts: {},
       monitoring: { enabled: true }, audit: { enabled: true, replaySupported: true }, authorization: { mode: "OAUTH2_CLIENT_CREDENTIALS" }, endpoint: { public: true }, technicalDisable: { supported: true }
     });

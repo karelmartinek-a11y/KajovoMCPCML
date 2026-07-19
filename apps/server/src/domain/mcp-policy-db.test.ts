@@ -11,6 +11,7 @@ describe.skipIf(!enabled)("MCP concurrency PostgreSQL lease", () => {
   beforeAll(() => { db = createDb(loadConfig(process.env)); });
   beforeEach(async () => {
     await db.query("truncate table function_concurrency_lease,mcp_server restart identity cascade");
+    await db.query("delete from component where kcml_number=$1", [9002]);
   });
   afterAll(async () => db.end());
 

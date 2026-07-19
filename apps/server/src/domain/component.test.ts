@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { canonicalJson, componentManifestDigest, MCP_REQUIRED_CAPABILITIES, validateComponentManifest } from "./component.js";
+import { KCML_RELEASE } from "./release.js";
 
 function manifest(overrides: Record<string, unknown> = {}) {
   return {
-    schemaVersion: "2026.07.21",
+    schemaVersion: KCML_RELEASE.catalogVersion,
     name: "Testovací komponenta",
     description: "Bezpečný obecný runtime pro kontraktní test.",
     category: "MANAGED_RUNTIME",
@@ -24,7 +25,7 @@ function manifest(overrides: Record<string, unknown> = {}) {
   };
 }
 
-describe("component manifest 2026.07.21", () => {
+describe(`component manifest ${KCML_RELEASE.catalogVersion}`, () => {
   it("normalizes unordered capability declarations and creates a stable canonical digest", () => {
     const parsed = validateComponentManifest(manifest({ capabilities: ["zeta", "component.discovery", "zeta", "alpha"] }));
     expect(parsed.capabilities).toEqual(["alpha", "component.discovery", "zeta"]);
