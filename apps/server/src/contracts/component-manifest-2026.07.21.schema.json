@@ -1,0 +1,1066 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:kcml:schema:component-manifest:2026.07.21",
+  "title": "KajovoCML component manifest 2026.07.21",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/aiAgentManifest"
+    },
+    {
+      "$ref": "#/$defs/mcpServerManifest"
+    },
+    {
+      "$ref": "#/$defs/managedServiceManifest"
+    },
+    {
+      "$ref": "#/$defs/genericComponentManifest"
+    }
+  ],
+  "discriminator": {
+    "propertyName": "componentType"
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "email": {
+      "type": "string",
+      "format": "email",
+      "maxLength": 254
+    },
+    "blueprintId": {
+      "enum": [
+        "AI-CLS-001",
+        "AI-QRP-002",
+        "AI-LYL-003",
+        "AI-GRP-004",
+        "AI-BIZ-005",
+        "AI-IND-006",
+        "AI-HIS-007",
+        "AI-BRD-008",
+        "AI-QA-009",
+        "MCP-RX-WA-001",
+        "MCP-RX-MS-002",
+        "MCP-RX-EM-003",
+        "MCP-RX-BC-004",
+        "MCP-PMS-RO-005",
+        "MCP-PMS-RW-006",
+        "MCP-TX-WA-007",
+        "MCP-TX-MS-008",
+        "MCP-TX-EM-009",
+        "MCP-TX-BC-010",
+        "MCP-WFC-011",
+        "KCML-AUTH-001",
+        "KCML-CTL-002",
+        "KCML-MON-003",
+        "KCML-AUD-004",
+        "KCML-SEC-005"
+      ]
+    },
+    "contact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "email"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 160
+        },
+        "email": {
+          "$ref": "#/$defs/email"
+        }
+      }
+    },
+    "endpoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "endpointId",
+        "path",
+        "methods",
+        "authMode",
+        "requestSchema",
+        "responseSchema",
+        "limits",
+        "timeoutMs",
+        "rateLimit",
+        "idempotency",
+        "signatureProfile",
+        "eventMapping"
+      ],
+      "properties": {
+        "endpointId": {
+          "type": "string",
+          "pattern": "^[A-Z0-9][A-Z0-9_-]{2,63}$"
+        },
+        "path": {
+          "type": "string",
+          "pattern": "^/"
+        },
+        "methods": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "GET",
+              "POST",
+              "PUT",
+              "PATCH",
+              "DELETE"
+            ]
+          }
+        },
+        "authMode": {
+          "enum": [
+            "KCML_BEARER",
+            "SIGNED_WEBHOOK",
+            "MUTUAL_TLS"
+          ]
+        },
+        "requestSchema": {
+          "type": "object"
+        },
+        "responseSchema": {
+          "type": "object"
+        },
+        "limits": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "requestBytes",
+            "responseBytes"
+          ],
+          "properties": {
+            "requestBytes": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1048576
+            },
+            "responseBytes": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 5242880
+            }
+          }
+        },
+        "timeoutMs": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 60000
+        },
+        "rateLimit": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "windowSeconds",
+            "maxRequests"
+          ],
+          "properties": {
+            "windowSeconds": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 86400
+            },
+            "maxRequests": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100000
+            }
+          }
+        },
+        "idempotency": {
+          "enum": [
+            "REQUIRED",
+            "OPTIONAL",
+            "FORBIDDEN"
+          ]
+        },
+        "signatureProfile": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 120
+        },
+        "eventMapping": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "pulseType",
+            "correlationIdSource"
+          ],
+          "properties": {
+            "pulseType": {
+              "type": "string",
+              "minLength": 3,
+              "maxLength": 160
+            },
+            "correlationIdSource": {
+              "type": "string",
+              "minLength": 3,
+              "maxLength": 160
+            }
+          }
+        }
+      }
+    },
+    "pulse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pulseType",
+        "direction",
+        "schema",
+        "routeAcl",
+        "scopes",
+        "executionMode",
+        "timeoutMs",
+        "resultPulseTypes",
+        "deadlineMs",
+        "retry",
+        "idempotency"
+      ],
+      "properties": {
+        "pulseType": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 160
+        },
+        "direction": {
+          "enum": [
+            "INCOMING",
+            "OUTGOING"
+          ]
+        },
+        "schema": {
+          "type": "object"
+        },
+        "routeAcl": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 160
+          }
+        },
+        "scopes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 160
+          }
+        },
+        "executionMode": {
+          "enum": [
+            "SYNC",
+            "ACK_THEN_EVENT",
+            "ASYNC"
+          ]
+        },
+        "timeoutMs": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 60000
+        },
+        "resultPulseTypes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 160
+          }
+        },
+        "deadlineMs": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 86400000
+        },
+        "retry": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "transportRetry",
+            "retryable",
+            "requiresIdempotencyKey"
+          ],
+          "properties": {
+            "transportRetry": {
+              "type": "boolean"
+            },
+            "retryable": {
+              "type": "boolean"
+            },
+            "requiresIdempotencyKey": {
+              "type": "boolean"
+            }
+          }
+        },
+        "idempotency": {
+          "enum": [
+            "REQUIRED",
+            "OPTIONAL",
+            "FORBIDDEN"
+          ]
+        }
+      }
+    },
+    "common": {
+      "type": "object",
+      "required": [
+        "schemaVersion",
+        "releaseVersion",
+        "registrationRevision",
+        "environment",
+        "componentType",
+        "registrationType",
+        "blueprint",
+        "pulseEnvelopeVersion",
+        "displayName",
+        "businessPurpose",
+        "owners",
+        "contacts",
+        "criticality",
+        "review",
+        "source",
+        "runtime",
+        "dependencies",
+        "networkPolicy",
+        "dataGovernance",
+        "pulseContract",
+        "retryPolicy",
+        "auditPolicy",
+        "monitoringProfile",
+        "maintenance",
+        "autoQuarantine",
+        "evidence",
+        "change",
+        "integrity"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": "2026.07.21"
+        },
+        "releaseVersion": {
+          "const": "2026.07.21"
+        },
+        "registrationRevision": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{2,79}$"
+        },
+        "environment": {
+          "enum": [
+            "production",
+            "staging"
+          ]
+        },
+        "componentType": {
+          "enum": [
+            "AI_AGENT",
+            "MCP_SERVER",
+            "KCML_MANAGED_SERVICE",
+            "GENERIC_COMPONENT"
+          ]
+        },
+        "registrationType": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9_]{2,79}$"
+        },
+        "blueprint": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "componentId",
+            "version"
+          ],
+          "properties": {
+            "componentId": {
+              "$ref": "#/$defs/blueprintId"
+            },
+            "version": {
+              "const": "2026.07.21"
+            }
+          }
+        },
+        "pulseEnvelopeVersion": {
+          "const": "2026.07.21"
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 120
+        },
+        "businessPurpose": {
+          "type": "string",
+          "minLength": 20,
+          "maxLength": 2000
+        },
+        "owners": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "items": {
+            "$ref": "#/$defs/contact"
+          }
+        },
+        "contacts": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "items": {
+            "$ref": "#/$defs/contact"
+          }
+        },
+        "criticality": {
+          "enum": [
+            "LOW",
+            "MEDIUM",
+            "HIGH",
+            "CRITICAL"
+          ]
+        },
+        "review": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "intervalDays",
+            "approvedAt",
+            "reviewDueAt",
+            "recertificationEvaluator"
+          ],
+          "properties": {
+            "intervalDays": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 365
+            },
+            "approvedAt": {
+              "$ref": "#/$defs/timestamp"
+            },
+            "reviewDueAt": {
+              "$ref": "#/$defs/timestamp"
+            },
+            "recertificationEvaluator": {
+              "const": "KCML-SEC-005"
+            }
+          }
+        },
+        "source": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "runtime",
+            "entrypoint",
+            "testCommand"
+          ],
+          "properties": {
+            "runtime": {
+              "const": "nodejs24-typescript"
+            },
+            "entrypoint": {
+              "const": "src/index.ts"
+            },
+            "testCommand": {
+              "const": "pnpm test"
+            }
+          }
+        },
+        "runtime": {
+          "type": "object",
+          "additionalProperties": true,
+          "required": [
+            "memoryMb",
+            "cpuCores",
+            "pidsLimit"
+          ],
+          "properties": {
+            "memoryMb": {
+              "type": "integer",
+              "minimum": 64,
+              "maximum": 1024
+            },
+            "cpuCores": {
+              "type": "number",
+              "minimum": 0.1,
+              "maximum": 4
+            },
+            "pidsLimit": {
+              "type": "integer",
+              "minimum": 16,
+              "maximum": 512
+            }
+          }
+        },
+        "dependencies": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name",
+              "version",
+              "checksum"
+            ],
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "version": {
+                "type": "string",
+                "pattern": "^[0-9][0-9A-Za-z.+-]*$"
+              },
+              "checksum": {
+                "$ref": "#/$defs/sha256"
+              }
+            }
+          }
+        },
+        "networkPolicy": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "outboundAllowlist",
+            "dnsPolicy",
+            "filesystemPolicy"
+          ],
+          "properties": {
+            "outboundAllowlist": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "dnsPolicy": {
+              "const": "strict"
+            },
+            "filesystemPolicy": {
+              "enum": [
+                "read-only",
+                "isolated-runtime-only"
+              ]
+            }
+          }
+        },
+        "dataGovernance": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "classification",
+            "containsPersonalData",
+            "retentionDays"
+          ],
+          "properties": {
+            "classification": {
+              "enum": [
+                "PUBLIC",
+                "INTERNAL",
+                "CONFIDENTIAL",
+                "RESTRICTED"
+              ]
+            },
+            "containsPersonalData": {
+              "type": "boolean"
+            },
+            "retentionDays": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 3650
+            }
+          }
+        },
+        "pulseContract": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "incoming",
+            "outgoing"
+          ],
+          "properties": {
+            "incoming": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/pulse"
+              }
+            },
+            "outgoing": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/pulse"
+              }
+            }
+          }
+        },
+        "retryPolicy": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "handlerRetry"
+          ],
+          "properties": {
+            "handlerRetry": {
+              "const": false
+            }
+          }
+        },
+        "auditPolicy": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "technicalAudit",
+            "businessAudit"
+          ],
+          "properties": {
+            "technicalAudit": {
+              "const": "PLATFORM"
+            },
+            "businessAudit": {
+              "const": "COMPONENT"
+            }
+          }
+        },
+        "monitoringProfile": {
+          "type": "object",
+          "additionalProperties": true,
+          "required": [
+            "slo",
+            "probes"
+          ],
+          "properties": {
+            "slo": {
+              "type": "object"
+            },
+            "probes": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "maintenance": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "autoQuarantine": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "enabled",
+            "rules"
+          ],
+          "properties": {
+            "enabled": {
+              "const": true
+            },
+            "rules": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "evidence": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "change": {
+          "type": "object",
+          "additionalProperties": true,
+          "required": [
+            "changeClass"
+          ],
+          "properties": {
+            "changeClass": {
+              "enum": [
+                "INITIAL",
+                "PATCH",
+                "MINOR",
+                "MAJOR"
+              ]
+            }
+          }
+        },
+        "integrity": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "manifestDigest",
+            "sourceDigest"
+          ],
+          "properties": {
+            "manifestDigest": {
+              "$ref": "#/$defs/sha256"
+            },
+            "sourceDigest": {
+              "$ref": "#/$defs/sha256"
+            }
+          }
+        }
+      }
+    },
+    "aiAgentManifest": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/common"
+        },
+        {
+          "type": "object",
+          "required": [
+            "componentType",
+            "registrationType",
+            "agentKey",
+            "agentVersion",
+            "executionProfile",
+            "modelPolicy",
+            "promptPolicy",
+            "toolScopesAllowlist",
+            "memoryPolicy",
+            "fallbackPolicy",
+            "publicEndpoints"
+          ],
+          "properties": {
+            "componentType": {
+              "const": "AI_AGENT"
+            },
+            "registrationType": {
+              "const": "KAJA_CLIENT"
+            },
+            "agentKey": {
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9_-]{1,62}$"
+            },
+            "agentVersion": {
+              "type": "string",
+              "pattern": "^\\d+\\.\\d+\\.\\d+(?:-[A-Za-z0-9.-]+)?$"
+            },
+            "executionProfile": {
+              "type": "object"
+            },
+            "modelPolicy": {
+              "type": "object"
+            },
+            "promptPolicy": {
+              "type": "object"
+            },
+            "toolScopesAllowlist": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "memoryPolicy": {
+              "type": "object"
+            },
+            "fallbackPolicy": {
+              "type": "object"
+            },
+            "publicEndpoints": {
+              "type": "array",
+              "maxItems": 0
+            }
+          }
+        }
+      ]
+    },
+    "mcpServerManifest": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/common"
+        },
+        {
+          "type": "object",
+          "required": [
+            "componentType",
+            "registrationType",
+            "handlerKey",
+            "handlerVersion",
+            "facadeTools",
+            "protocol",
+            "publicEndpoints",
+            "handlerContract"
+          ],
+          "properties": {
+            "componentType": {
+              "const": "MCP_SERVER"
+            },
+            "registrationType": {
+              "const": "MCP_SERVER"
+            },
+            "handlerKey": {
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9_-]{1,62}$"
+            },
+            "handlerVersion": {
+              "type": "string",
+              "pattern": "^\\d+\\.\\d+\\.\\d+(?:-[A-Za-z0-9.-]+)?$"
+            },
+            "facadeTools": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 1,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "name",
+                  "inputSchema",
+                  "outputSchema"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "inputSchema": {
+                    "type": "object"
+                  },
+                  "outputSchema": {
+                    "type": "object"
+                  }
+                }
+              }
+            },
+            "protocol": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "protocolVersion",
+                "transport",
+                "capabilities"
+              ],
+              "properties": {
+                "protocolVersion": {
+                  "const": "2025-11-25"
+                },
+                "transport": {
+                  "const": "streamable-http"
+                },
+                "capabilities": {
+                  "type": "array",
+                  "prefixItems": [
+                    {
+                      "const": "tools"
+                    }
+                  ],
+                  "minItems": 1,
+                  "maxItems": 1
+                }
+              }
+            },
+            "publicEndpoints": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "$ref": "#/$defs/endpoint"
+              }
+            },
+            "handlerContract": {
+              "type": "object",
+              "additionalProperties": true
+            }
+          }
+        }
+      ]
+    },
+    "managedServiceManifest": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/common"
+        },
+        {
+          "type": "object",
+          "required": [
+            "componentType",
+            "registrationType",
+            "managedServiceId"
+          ],
+          "properties": {
+            "componentType": {
+              "const": "KCML_MANAGED_SERVICE"
+            },
+            "registrationType": {
+              "const": "MANAGED_PLATFORM_SERVICE"
+            },
+            "managedServiceId": {
+              "enum": [
+                "KCML-AUTH-001",
+                "KCML-CTL-002",
+                "KCML-MON-003",
+                "KCML-AUD-004",
+                "KCML-SEC-005"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "genericComponentManifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "name",
+        "category",
+        "registrationType",
+        "role",
+        "revision",
+        "capabilities",
+        "protocols",
+        "transports",
+        "owners",
+        "monitoring",
+        "audit",
+        "authorization",
+        "endpoint",
+        "technicalDisable"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": "2026.07.21"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 120
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "category": {
+          "enum": [
+            "AI_CLIENT",
+            "AI_AGENT",
+            "MCP_SERVER",
+            "MANAGED_RUNTIME",
+            "EXTERNAL_SERVICE",
+            "PLATFORM_SERVICE"
+          ]
+        },
+        "registrationType": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9_]{2,79}$"
+        },
+        "role": {
+          "enum": [
+            "CLIENT",
+            "AGENT",
+            "SERVICE",
+            "RUNTIME",
+            "PLATFORM"
+          ]
+        },
+        "revision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "capabilities": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 2
+          }
+        },
+        "protocols": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 2
+          }
+        },
+        "transports": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 2
+          }
+        },
+        "owners": {
+          "type": "object"
+        },
+        "contacts": {
+          "type": "object"
+        },
+        "monitoring": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "enabled"
+          ],
+          "properties": {
+            "enabled": {
+              "const": true
+            }
+          }
+        },
+        "audit": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "enabled",
+            "replaySupported"
+          ],
+          "properties": {
+            "enabled": {
+              "const": true
+            },
+            "replaySupported": {
+              "const": true
+            }
+          }
+        },
+        "authorization": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "mode"
+          ],
+          "properties": {
+            "mode": {
+              "const": "OAUTH2_CLIENT_CREDENTIALS"
+            }
+          }
+        },
+        "endpoint": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "public"
+          ],
+          "properties": {
+            "public": {
+              "const": true
+            }
+          }
+        },
+        "technicalDisable": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "supported"
+          ],
+          "properties": {
+            "supported": {
+              "const": true
+            }
+          }
+        }
+      }
+    }
+  }
+}

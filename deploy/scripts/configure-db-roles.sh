@@ -44,6 +44,13 @@ grant usage,select on all sequences in schema public to kcml_app;
 revoke all on table audit_event,audit_head from kcml_app;
 grant select on table audit_event to kcml_app;
 grant update (id) on table audit_event to kcml_app;
+do $$
+begin
+  if pg_catalog.to_regclass('public.component_audit_event') is not null then
+    revoke all on table component_audit_event from kcml_app;
+    grant select,insert on table component_audit_event to kcml_app;
+  end if;
+end $$;
 grant execute on function append_audit_event(text,text,text,text,text,jsonb,jsonb,uuid) to kcml_app;
 grant execute on function verify_audit_chain() to kcml_app;
 do $$

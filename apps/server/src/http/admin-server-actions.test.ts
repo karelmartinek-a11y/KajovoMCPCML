@@ -67,7 +67,7 @@ describe("admin server actions", () => {
     await app?.close();
   });
 
-  it("disables a server and revokes issued access tokens", async () => {
+  it("disables a server without revoking its long-lived credential or access-token rows", async () => {
     const sessionHash = await argon2.hash(sessionValue, { type: argon2.argon2id, memoryCost: 4096, timeCost: 2, parallelism: 1 });
     const query = vi.fn(async (sql: string) => {
       if (sql.includes("from admin_session")) {
@@ -108,7 +108,7 @@ describe("admin server actions", () => {
     });
     expect(response.statusCode, response.body).toBe(200);
     expect(response.json()).toMatchObject({ registrationState: "REGISTERED_DISABLED", operationalState: "DISABLED" });
-    expect(query.mock.calls.some(([sql]) => String(sql).includes("update access_token set revoked_at"))).toBe(true);
+    expect(query.mock.calls.some(([sql]) => String(sql).includes("update access_token set revoked_at"))).toBe(false);
   });
 
   it("enables a disabled server without redeploying runtime from the web process", async () => {

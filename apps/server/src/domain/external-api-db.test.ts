@@ -501,7 +501,9 @@ describe.skipIf(!enabled)("EXTERNAL_API PostgreSQL integration", () => {
 
   beforeEach(async () => {
     await db.query("truncate table onboarding_job, integration_token, managed_service, managed_service_revision, managed_service_scope, managed_service_access_token, mcp_server, registration_revision, access_token, kaja_credential, operational_alert, audit_event restart identity cascade");
-    await db.query("select setval('kcml_number_seq', 1, false)");
+    await db.query(
+      "select setval('kcml_number_seq', greatest(coalesce((select max(kcml_number) from component), 0) + 1, 1), false)"
+    );
     await db.query("update audit_head set last_sequence=0,event_hash=null,updated_at=now() where singleton=true");
     backend.state.ready = true;
     backend.state.recentRequests.length = 0;

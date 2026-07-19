@@ -1,4 +1,4 @@
-import type { AlertDelivery, MonitoringProfile, OperationalAlert, Server } from "./types.js";
+import type { AlertDelivery, Component, MonitoringProfile, OperationalAlert, Server } from "./types.js";
 import { api, csrf } from "./ui-helpers.js";
 
 const mutationHeaders = (): HeadersInit => ({ "x-csrf-token": csrf() });
@@ -40,6 +40,45 @@ export async function setServerEnabled(server: Server, enabled: boolean): Promis
     method: "POST",
     headers: mutationHeaders(),
     body: JSON.stringify({ enabled })
+  });
+}
+
+export async function setComponentEnabled(component: Component, enabled: boolean): Promise<Component> {
+  const response = await api<{ component: Component }>(`/api/components/${component.id}/activation`, {
+    method: "POST",
+    headers: mutationHeaders(),
+    body: JSON.stringify({ enabled })
+  });
+  return response.component;
+}
+
+export async function setComponentLifecycle(component: Component, action: "QUARANTINE" | "RESTORE" | "RETIRE" | "DEREGISTER"): Promise<Component> {
+  const response = await api<{ component: Component }>(`/api/components/${component.id}/lifecycle`, {
+    method: "POST", headers: mutationHeaders(), body: JSON.stringify({ action })
+  });
+  return response.component;
+}
+
+export async function setComponentPermission(component: Component, permissionId: string, enabled: boolean): Promise<Component> {
+  const response = await api<{ component: Component }>(`/api/components/${component.id}/permissions/${permissionId}`, {
+    method: "POST", headers: mutationHeaders(), body: JSON.stringify({ enabled })
+  });
+  return response.component;
+}
+
+export async function revokeComponentCredential(component: Component, credentialId: string): Promise<Component> {
+  const response = await api<{ component: Component }>(`/api/components/${component.id}/credentials/${credentialId}/revoke`, {
+    method: "POST", headers: mutationHeaders(), body: "{}"
+  });
+  return response.component;
+}
+
+export async function rotateComponentCredential(component: Component, credentialId: string): Promise<{
+  component: Component;
+  credential: { clientId: string; clientSecret: string; fingerprint: string };
+}> {
+  return api(`/api/components/${component.id}/credentials/${credentialId}/rotate`, {
+    method: "POST", headers: mutationHeaders(), body: "{}"
   });
 }
 

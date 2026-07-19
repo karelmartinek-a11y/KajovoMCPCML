@@ -4,7 +4,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const release = "2026.07.20";
+const releaseArgument = process.argv.find((argument) => argument.startsWith("--release="));
+const release = releaseArgument?.slice("--release=".length) ?? "2026.07.21";
+if (!/^20[0-9]{2}[.](0[1-9]|1[0-2])[.](0[1-9]|[12][0-9]|3[01])$/.test(release)) throw new Error(`Unsupported catalog release: ${release}`);
+if (release <= "2026.07.20") throw new Error(`Historical catalog is immutable: ${release}`);
 const protocol = "2025-11-25";
 const outputPath = path.join(root, `docs/onboarding-catalogs/component-${release}.json`);
 const schemaPath = path.join(root, `apps/server/src/contracts/component-manifest-${release}.schema.json`);
@@ -62,7 +65,9 @@ const errorCodes = [
   "ack_then_event_contract_invalid", "route_acl_invalid", "archive_too_large", "expanded_archive_too_large",
   "too_many_files", "unsafe_archive_path", "secret_detected", "dependency_version_must_be_exact",
   "source_revision_not_allowed", "idempotency_key_and_if_match_required", "lock_version_conflict",
-  "job_terminal", "not_found", "gone"
+  "job_terminal", "not_found", "gone", "invalid_token", "expired_token", "revoked_token",
+  "insufficient_scope", "invalid_audience", "component_disabled", "component_quarantined",
+  "route_denied", "catalog_incompatible", "audit_gap", "audit_stream_unavailable"
 ];
 
 const ref = (name) => ({ $ref: `#/$defs/${name}` });
@@ -70,7 +75,7 @@ const schema = {
   $schema: "https://json-schema.org/draft/2020-12/schema",
   $id: `urn:kcml:schema:component-manifest:${release}`,
   title: `KajovoCML component manifest ${release}`,
-  oneOf: [{ $ref: "#/$defs/aiAgentManifest" }, { $ref: "#/$defs/mcpServerManifest" }, { $ref: "#/$defs/managedServiceManifest" }],
+  oneOf: [{ $ref: "#/$defs/aiAgentManifest" }, { $ref: "#/$defs/mcpServerManifest" }, { $ref: "#/$defs/managedServiceManifest" }, { $ref: "#/$defs/genericComponentManifest" }],
   discriminator: { propertyName: "componentType" },
   $defs: {
     sha256: { type: "string", pattern: "^sha256:[a-f0-9]{64}$" },
@@ -130,8 +135,8 @@ const schema = {
         releaseVersion: { const: release },
         registrationRevision: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{2,79}$" },
         environment: { enum: ["production", "staging"] },
-        componentType: { enum: ["AI_AGENT", "MCP_SERVER", "KCML_MANAGED_SERVICE"] },
-        registrationType: { enum: ["KAJA_CLIENT", "MCP_SERVER", "MANAGED_PLATFORM_SERVICE"] },
+        componentType: { enum: ["AI_AGENT", "MCP_SERVER", "KCML_MANAGED_SERVICE", "GENERIC_COMPONENT"] },
+        registrationType: { type: "string", pattern: "^[A-Z][A-Z0-9_]{2,79}$" },
         blueprint: { type: "object", additionalProperties: false, required: ["componentId", "version"], properties: { componentId: ref("blueprintId"), version: { const: release } } },
         pulseEnvelopeVersion: { const: release },
         displayName: { type: "string", minLength: 3, maxLength: 120 },
@@ -197,6 +202,22 @@ const schema = {
         { $ref: "#/$defs/common" },
         { type: "object", required: ["componentType", "registrationType", "managedServiceId"], properties: { componentType: { const: "KCML_MANAGED_SERVICE" }, registrationType: { const: "MANAGED_PLATFORM_SERVICE" }, managedServiceId: { enum: managedServices } } }
       ]
+    },
+    genericComponentManifest: {
+      type: "object", additionalProperties: false,
+      required: ["schemaVersion", "name", "category", "registrationType", "role", "revision", "capabilities", "protocols", "transports", "owners", "monitoring", "audit", "authorization", "endpoint", "technicalDisable"],
+      properties: {
+        schemaVersion: { const: release }, name: { type: "string", minLength: 2, maxLength: 120 }, description: { type: "string", maxLength: 2000 },
+        category: { enum: ["AI_CLIENT", "AI_AGENT", "MCP_SERVER", "MANAGED_RUNTIME", "EXTERNAL_SERVICE", "PLATFORM_SERVICE"] },
+        registrationType: { type: "string", pattern: "^[A-Z][A-Z0-9_]{2,79}$" }, role: { enum: ["CLIENT", "AGENT", "SERVICE", "RUNTIME", "PLATFORM"] },
+        revision: { type: "string", minLength: 1, maxLength: 80 }, capabilities: { type: "array", uniqueItems: true, items: { type: "string", minLength: 2 } },
+        protocols: { type: "array", uniqueItems: true, items: { type: "string", minLength: 2 } }, transports: { type: "array", uniqueItems: true, items: { type: "string", minLength: 2 } },
+        owners: { type: "object" }, contacts: { type: "object" }, monitoring: { type: "object", additionalProperties: false, required: ["enabled"], properties: { enabled: { const: true } } },
+        audit: { type: "object", additionalProperties: false, required: ["enabled", "replaySupported"], properties: { enabled: { const: true }, replaySupported: { const: true } } },
+        authorization: { type: "object", additionalProperties: false, required: ["mode"], properties: { mode: { const: "OAUTH2_CLIENT_CREDENTIALS" } } },
+        endpoint: { type: "object", additionalProperties: false, required: ["public"], properties: { public: { const: true } } },
+        technicalDisable: { type: "object", additionalProperties: false, required: ["supported"], properties: { supported: { const: true } } }
+      }
     }
   }
 };
@@ -204,7 +225,7 @@ const schema = {
 const example = {
   schemaVersion: release,
   releaseVersion: release,
-  registrationRevision: "2026-07-20.1",
+  registrationRevision: `${release.replaceAll(".", "-")}.1`,
   environment: "production",
   componentType: "MCP_SERVER",
   registrationType: "MCP_SERVER",
@@ -215,7 +236,7 @@ const example = {
   owners: [{ name: "Example Service Owner", email: "service@example.com" }],
   contacts: [{ name: "Example Operations", email: "ops@example.com" }],
   criticality: "HIGH",
-  review: { intervalDays: 180, approvedAt: "2026-07-20T00:00:00.000Z", reviewDueAt: "2027-01-16T00:00:00.000Z", recertificationEvaluator: "KCML-SEC-005" },
+  review: { intervalDays: 180, approvedAt: `${release.replaceAll(".", "-")}T00:00:00.000Z`, reviewDueAt: "2027-01-17T00:00:00.000Z", recertificationEvaluator: "KCML-SEC-005" },
   source: { runtime: "nodejs24-typescript", entrypoint: "src/index.ts", testCommand: "pnpm test" },
   runtime: { memoryMb: 256, cpuCores: 0.5, pidsLimit: 64 },
   dependencies: [{ name: "node", version: "24.0.0", checksum: "sha256:61df8c17ef87f64d8bea5e68e6f19ed9bdaf904cbc70c9b2597e9293758d9944" }],
@@ -250,27 +271,63 @@ const example = {
 const catalog = {
   version: release,
   serviceKind: "COMPONENT",
-  publishedAt: "2026-07-20",
+  publishedAt: release.replaceAll(".", "-"),
   blueprintVersion: release,
   catalogVersion: release,
   manifestSchemaVersion: release,
   pulseEnvelopeVersion: release,
-  policyBaseline: "2026-07-20",
+  policyBaseline: release.replaceAll(".", "-"),
   mcpProtocolVersion: protocol,
   canonicalDigest: "",
   manifestExamplePath: `docs/onboarding-manifest-${release}.example.json`,
   humanCatalogFiles: [
     `docs/releases/${release}/KajovoCML_Onboarding_Catalog_${release}.docx`,
-    `docs/releases/${release}/KajovoCML_Onboarding_Catalog_${release}.pdf`,
-    `docs/releases/${release}/KajovoCML_Blueprint_AI_Agents_MCP_Servers_${release}.docx`,
-    `docs/releases/${release}/KajovoCML_Blueprint_AI_Agents_MCP_Servers_${release}.pdf`
+    `docs/releases/${release}/KajovoCML_Onboarding_Catalog_${release}.pdf`
   ],
   compatibility: {
     supersedesCatalogVersions: ["1.7", "1.8"],
     acceptedNewManifestSchemaVersions: [release],
     acceptedStoredManifestSchemaVersions: ["1.4", "1.5", release],
-    breakingManifestChange: true,
-    legacyOnboardingPath: { path: "/v1/onboardings", status: 410 }
+    breakingManifestChange: false,
+    catalogChange: "MINOR",
+    legacyAdapters: ["/v1/onboardings", "/v1/service-onboardings", "/api/mcp-servers", "/api/managed-services"],
+    legacyOnboardingPath: { path: "/v1/onboardings", status: 202 }
+  },
+  compatibilityMatrix: [
+    { profile: "legacy-ai-client", category: "AI_CLIENT", catalog: "2026.07.20", manifestSchemas: ["1.4", "1.5"], intake: "/v1/onboardings", authorization: "KAJA_COMPATIBILITY_ADAPTER", endpoint: "KCML_HOSTNAME", result: "SUPPORTED_ADAPTED" },
+    { profile: "component-ai-client", category: "AI_CLIENT", catalog: release, manifestSchemas: [release], intake: "/v2/component-onboardings", authorization: "OAUTH2_CLIENT_CREDENTIALS", endpoint: "KCML_HOSTNAME", result: "SUPPORTED_NATIVE" },
+    { profile: "legacy-ai-agent", category: "AI_AGENT", catalog: "2026.07.20", manifestSchemas: ["1.4", "1.5"], intake: "/v1/onboardings", authorization: "KAJA_COMPATIBILITY_ADAPTER", endpoint: "KCML_HOSTNAME", result: "SUPPORTED_ADAPTED" },
+    { profile: "component-ai-agent", category: "AI_AGENT", catalog: release, manifestSchemas: [release], intake: "/v2/component-onboardings", authorization: "OAUTH2_CLIENT_CREDENTIALS", endpoint: "KCML_HOSTNAME", result: "SUPPORTED_NATIVE" },
+    { profile: "legacy-mcp-server", category: "MCP_SERVER", catalog: "2026.07.20", manifestSchemas: ["1.4", "1.5"], intake: "/v1/onboardings", authorization: "MCP_OAUTH_ADAPTER", endpoint: "KCML_HOSTNAME_MCP_RESOURCE", result: "SUPPORTED_ADAPTED" },
+    { profile: "component-mcp-server", category: "MCP_SERVER", catalog: release, manifestSchemas: [release], intake: "/v2/component-onboardings", authorization: "OAUTH2_CLIENT_CREDENTIALS", endpoint: "KCML_HOSTNAME", result: "SUPPORTED_NATIVE" },
+    { profile: "legacy-managed-runtime", category: "MANAGED_RUNTIME", catalog: "external-api-1.0", manifestSchemas: ["external-api-1.0"], intake: "/v1/service-onboardings", authorization: "MANAGED_SERVICE_ADAPTER", endpoint: "KCML_HOSTNAME_RESOURCE", result: "SUPPORTED_ADAPTED" },
+    { profile: "component-managed-runtime", category: "MANAGED_RUNTIME", catalog: release, manifestSchemas: [release], intake: "/v2/component-onboardings", authorization: "OAUTH2_CLIENT_CREDENTIALS", endpoint: "KCML_HOSTNAME", result: "SUPPORTED_NATIVE" },
+    { profile: "legacy-external-service", category: "EXTERNAL_SERVICE", catalog: "external-api-1.0", manifestSchemas: ["external-api-1.0"], intake: "/v1/service-onboardings", authorization: "MANAGED_SERVICE_ADAPTER", endpoint: "KCML_HOSTNAME_RESOURCE", result: "SUPPORTED_ADAPTED" },
+    { profile: "component-external-service", category: "EXTERNAL_SERVICE", catalog: release, manifestSchemas: [release], intake: "/v2/component-onboardings", authorization: "OAUTH2_CLIENT_CREDENTIALS", endpoint: "KCML_HOSTNAME", result: "SUPPORTED_NATIVE" },
+    { profile: "legacy-platform-service", category: "PLATFORM_SERVICE", catalog: "2026.07.20", manifestSchemas: ["1.4", "1.5"], intake: "/api/managed-services", authorization: "MANAGED_SERVICE_ADAPTER", endpoint: "KCML_HOSTNAME_RESOURCE", result: "SUPPORTED_ADAPTED" },
+    { profile: "component-platform-service", category: "PLATFORM_SERVICE", catalog: release, manifestSchemas: [release], intake: "/v2/component-onboardings", authorization: "OAUTH2_CLIENT_CREDENTIALS", endpoint: "KCML_HOSTNAME", result: "SUPPORTED_NATIVE" }
+  ],
+  runtimeCompatibility: {
+    pulse: { legacyBlueprintPulseTypes: "SUPPORTED_ADAPTED", componentPulse: "SUPPORTED_NATIVE", unknownPulseType: "REJECTED_CATALOG_INCOMPATIBLE" },
+    scopesAndAcl: { currentDatabaseScope: "REQUIRED_EACH_CALL", currentRouteAcl: "REQUIRED_EACH_CALL", removedPermission: "REJECTED_ROUTE_DENIED" },
+    endpointAndAudience: { canonicalHostname: "REQUIRED", matchingHostSniAudience: "REQUIRED", alternateHostname: "REJECTED_INVALID_AUDIENCE", ipLocalhostDirectPortServiceName: "REJECTED_INVALID_COMPONENT_HOSTNAME" }
+  },
+  componentContracts: {
+    AI_CLIENT: { manifestContract: "aiAgentManifest", requiredCapabilities: [], gates: ["AUTHORIZATION", "TECHNICAL_DISABLE", "MONITORING", "AUDIT_CONTINUITY"], endpoint: "KCML_HOSTNAME", authorization: "OAUTH2_CLIENT_CREDENTIALS", deactivation: "POLICY_EPOCH", recertification: "REQUIRED" },
+    AI_AGENT: { manifestContract: "aiAgentManifest", requiredCapabilities: [], gates: ["AUTHORIZATION", "TECHNICAL_DISABLE", "MONITORING", "AUDIT_CONTINUITY"], endpoint: "KCML_HOSTNAME", authorization: "OAUTH2_CLIENT_CREDENTIALS", deactivation: "POLICY_EPOCH", recertification: "REQUIRED" },
+    MCP_SERVER: { manifestContract: "mcpServerManifest", requiredCapabilities: ["mcp.initialize", "mcp.notifications.initialized", "mcp.tools.list", "mcp.tools.call"], gates: ["AUTHORIZATION", "PUBLIC_ENDPOINT", "TECHNICAL_DISABLE", "MONITORING", "AUDIT_CONTINUITY"], endpoint: "KCML_HOSTNAME", authorization: "OAUTH2_CLIENT_CREDENTIALS", deactivation: "POLICY_EPOCH", recertification: "REQUIRED" },
+    MANAGED_RUNTIME: { manifestContract: "genericComponentManifest", requiredCapabilities: [], gates: ["AUTHORIZATION", "PUBLIC_ENDPOINT", "TECHNICAL_DISABLE", "MONITORING", "AUDIT_CONTINUITY"], endpoint: "KCML_HOSTNAME", authorization: "OAUTH2_CLIENT_CREDENTIALS", deactivation: "POLICY_EPOCH", recertification: "REQUIRED" },
+    EXTERNAL_SERVICE: { manifestContract: "genericComponentManifest", requiredCapabilities: [], gates: ["AUTHORIZATION", "PUBLIC_ENDPOINT", "TECHNICAL_DISABLE", "MONITORING", "AUDIT_CONTINUITY"], endpoint: "KCML_HOSTNAME", authorization: "OAUTH2_CLIENT_CREDENTIALS", deactivation: "POLICY_EPOCH", recertification: "REQUIRED" },
+    PLATFORM_SERVICE: { manifestContract: "managedServiceManifest", requiredCapabilities: [], gates: ["AUTHORIZATION", "PUBLIC_ENDPOINT", "TECHNICAL_DISABLE", "MONITORING", "AUDIT_CONTINUITY"], endpoint: "KCML_HOSTNAME", authorization: "OAUTH2_CLIENT_CREDENTIALS", deactivation: "POLICY_EPOCH", recertification: "REQUIRED" }
+  },
+  capabilityContracts: {
+    "mcp.initialize": { protocol: "MCP", transport: "streamable-http", requiredFor: ["MCP_SERVER"], audit: true, monitoring: true },
+    "mcp.notifications.initialized": { protocol: "MCP", transport: "streamable-http", requiredFor: ["MCP_SERVER"], audit: true, monitoring: true },
+    "mcp.tools.list": { protocol: "MCP", transport: "streamable-http", requiredFor: ["MCP_SERVER"], audit: true, monitoring: true },
+    "mcp.tools.call": { protocol: "MCP", transport: "streamable-http", requiredFor: ["MCP_SERVER"], audit: true, monitoring: true },
+    "component.discovery": { protocol: "HTTPS", transport: "https", requiredFor: [], audit: true, monitoring: true },
+    "component.pulse": { protocol: "KCML_PULSE", transport: "https", requiredFor: [], audit: true, monitoring: true },
+    "component.audit.write": { protocol: "KCML_AUDIT", transport: "https", requiredFor: [], audit: true, monitoring: true }
   },
   blueprintComponents: {
     aiAgents: aiComponents.map(([componentId, role]) => ({ componentId, role, registrationType: "KAJA_CLIENT" })),
@@ -282,7 +339,7 @@ const catalog = {
     blueprintRelease: {
       releaseVersion: release,
       allowedBlueprintComponentIds: blueprintIds,
-      allowedRegistrationTypes: ["KAJA_CLIENT", "MCP_SERVER"],
+      allowedRegistrationTypes: ["KAJA_CLIENT", "MCP_SERVER", "MANAGED_PLATFORM_SERVICE", "GENERIC_COMPONENT"],
       maxChildJobs: 20,
       autoActivateAfterPass: true,
       manualApprovalRequiredAfterIssuance: false,
@@ -308,6 +365,14 @@ const catalog = {
     servers: [{ url: "https://{registerHost}", variables: { registerHost: { default: "register.example.invalid" } } }],
     security: [{ bearerAuth: [] }],
     paths: {
+      "/v2/component-onboardings": { post: { operationId: "createComponentOnboarding", parameters: [{ name: "Idempotency-Key", in: "header", required: true, schema: { type: "string" } }], responses: { "202": { description: "Accepted" } } } },
+      "/v2/component-onboardings/{id}": {
+        get: { operationId: "getComponentOnboarding", responses: { "200": { description: "Current job" } } },
+        delete: { operationId: "cancelComponentOnboarding", responses: { "200": { description: "Cancelled" } } }
+      },
+      "/v2/component-onboardings/{id}/revisions": { post: { operationId: "reviseComponentOnboarding", responses: { "200": { description: "Revised" } } } },
+      "/v2/component-onboardings/{id}/readiness": { post: { operationId: "evaluateComponentReadiness", responses: { "200": { description: "Readiness result" } } } },
+      "/v2/component-onboardings/{id}/credential-claims": { post: { operationId: "claimComponentCredential", responses: { "200": { description: "Credential shown once" } } } },
       "/v1/service-onboardings": { post: { operationId: "createServiceOnboarding", parameters: [{ name: "Idempotency-Key", in: "header", required: true, schema: { type: "string" } }], responses: { "202": { description: "Accepted" } } } },
       "/v1/service-onboardings/{id}": { get: { operationId: "getServiceOnboarding", responses: { "200": { description: "Current job" } } } },
       "/v1/service-onboardings/{id}/revision": { put: { operationId: "putServiceOnboardingRevision", parameters: [{ name: "Idempotency-Key", in: "header", required: true, schema: { type: "string" } }, { name: "If-Match", in: "header", required: true, schema: { type: "string" } }], responses: { "202": { description: "Accepted" } } } },

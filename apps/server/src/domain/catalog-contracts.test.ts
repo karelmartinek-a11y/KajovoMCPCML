@@ -17,11 +17,11 @@ function clone<T>(value: T): T {
   return structuredClone(value);
 }
 
-const catalog = readJson("../../../../docs/onboarding-catalogs/component-2026.07.20.json");
-const schema = readJson("../contracts/component-manifest-2026.07.20.schema.json");
-const example = readJson("../../../../docs/onboarding-manifest-2026.07.20.example.json");
+const catalog = readJson("../../../../docs/onboarding-catalogs/component-2026.07.21.json");
+const schema = readJson("../contracts/component-manifest-2026.07.21.schema.json");
+const example = readJson("../../../../docs/onboarding-manifest-2026.07.21.example.json");
 
-describe("component onboarding catalog 2026.07.20", () => {
+describe("component onboarding catalog 2026.07.21", () => {
   it("publishes one component catalog with the required release and protocol versions", () => {
     expect(catalog).toMatchObject({
       version: KCML_RELEASE.catalogVersion,
@@ -39,7 +39,9 @@ describe("component onboarding catalog 2026.07.20", () => {
       "/v1/service-onboardings/{id}": expect.any(Object),
       "/v1/service-onboardings/{id}/revision": expect.any(Object),
       "/v1/service-onboardings/{id}/cancel": expect.any(Object),
-      "/v1/integration-intent": expect.any(Object)
+      "/v1/integration-intent": expect.any(Object),
+      "/v2/component-onboardings": expect.any(Object),
+      "/v2/component-onboardings/{id}": expect.any(Object)
     }));
   });
 
@@ -47,7 +49,7 @@ describe("component onboarding catalog 2026.07.20", () => {
     expect(catalog.canonicalDigest).toMatch(/^sha256:[a-f0-9]{64}$/);
     expect(catalog.canonicalDigest).toBe(onboardingCatalogDigest(catalog));
     const tampered = clone(catalog);
-    tampered.version = "2026.07.20-tampered";
+    tampered.version = "2026.07.21-tampered";
     expect(onboardingCatalogDigest(tampered)).not.toBe(catalog.canonicalDigest);
   });
 
@@ -77,6 +79,26 @@ describe("component onboarding catalog 2026.07.20", () => {
     ]));
     expect(MCP_ONBOARDING_GATES.length).toBeGreaterThan(0);
     expect(catalog.requiredCiChecks).toEqual(expect.arrayContaining([...REQUIRED_ONBOARDING_CHECKS, "artifact-signature"]));
+  });
+
+  it("publishes general component and capability contract registries without removing legacy adapters", () => {
+    expect(catalog.componentContracts).toEqual(expect.objectContaining({ AI_AGENT: expect.any(Object), MCP_SERVER: expect.any(Object), EXTERNAL_SERVICE: expect.any(Object) }));
+    expect(catalog.capabilityContracts).toEqual(expect.objectContaining({
+      "mcp.initialize": expect.any(Object), "mcp.tools.call": expect.any(Object), "component.audit.write": expect.any(Object)
+    }));
+    expect((catalog.compatibility as { breakingManifestChange: boolean; legacyAdapters: string[] })).toMatchObject({
+      breakingManifestChange: false,
+      legacyAdapters: expect.arrayContaining(["/v1/onboardings", "/v1/service-onboardings", "/api/mcp-servers", "/api/managed-services"])
+    });
+    const matrix = catalog.compatibilityMatrix as Array<{ category: string; result: string }>;
+    for (const category of ["AI_CLIENT", "AI_AGENT", "MCP_SERVER", "MANAGED_RUNTIME", "EXTERNAL_SERVICE", "PLATFORM_SERVICE"]) {
+      expect(matrix.filter((entry) => entry.category === category).map((entry) => entry.result).sort()).toEqual(["SUPPORTED_ADAPTED", "SUPPORTED_NATIVE"]);
+    }
+    expect(catalog.runtimeCompatibility).toMatchObject({
+      pulse: { unknownPulseType: "REJECTED_CATALOG_INCOMPATIBLE" },
+      scopesAndAcl: { removedPermission: "REJECTED_ROUTE_DENIED" },
+      endpointAndAudience: { alternateHostname: "REJECTED_INVALID_AUDIENCE" }
+    });
   });
 
   it("validates the published MCP component example against catalog schema and runtime", () => {

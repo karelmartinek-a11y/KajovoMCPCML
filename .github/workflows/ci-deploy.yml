@@ -81,6 +81,7 @@ jobs:
         run: |
           pnpm exec vitest run \
             apps/server/src/domain/audit-db.test.ts \
+            apps/server/src/domain/component-db.test.ts \
             apps/server/src/domain/external-api-db.test.ts \
             apps/server/src/domain/mcp-policy-db.test.ts \
             apps/server/src/domain/onboarding-db.test.ts \

@@ -2,6 +2,7 @@ import React from "react";
 import {
   Activity,
   AlertTriangle,
+  Boxes,
   KeyRound,
   LockKeyhole,
   LogOut,
@@ -44,9 +45,10 @@ export function AppLayout({
   return (
     <main className="app-shell">
       <aside className="sidebar">
-        <div className="brand-row"><span className="brand-mark"><ShieldCheck size={22} /></span><div><strong>KCML</strong><span>Release 2026.07.20</span></div></div>
+        <div className="brand-row"><span className="brand-mark"><ShieldCheck size={22} /></span><div><strong>KCML</strong><span>Release 2026.07.21</span></div></div>
         <nav>
-          {navigationButton("monitoring", "Monitoring MCP", <Activity size={18} />)}
+          {navigationButton("components", "Katalog komponent", <Boxes size={18} />)}
+          {navigationButton("monitoring", "Monitoring komponent", <Activity size={18} />)}
           {role !== "AUDITOR" ? navigationButton("integration", "Implementační tokeny", <Workflow size={18} />) : null}
           {role !== "AUDITOR" ? navigationButton("tokens", "Klientská pověření Kaja", <KeyRound size={18} />) : null}
           {role !== "AUDITOR" ? navigationButton("permissions", "Správa oprávnění", <LockKeyhole size={18} />) : null}

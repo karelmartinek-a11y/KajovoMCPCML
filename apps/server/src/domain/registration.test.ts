@@ -4,7 +4,7 @@ import { digestCanonicalJson, reviewMetadataForManifest, validateManifest, valid
 import { KCML_RELEASE } from "./release.js";
 
 const componentFixture = JSON.parse(
-  readFileSync(new URL("../../../../docs/onboarding-manifest-2026.07.20.example.json", import.meta.url), "utf8")
+  readFileSync(new URL("../../../../docs/onboarding-manifest-2026.07.21.example.json", import.meta.url), "utf8")
 ) as Record<string, unknown>;
 
 const legacy15Fixture = JSON.parse(
@@ -15,7 +15,7 @@ function manifest(): Record<string, unknown> {
   return structuredClone(componentFixture);
 }
 
-describe("component manifest 2026.07.20", () => {
+describe("component manifest 2026.07.21", () => {
   it("accepts the published strict component example and normalizes the MCP runtime profile", () => {
     const accepted = validateOnboardingManifest(manifest());
     expect(accepted.digest).toMatch(/^sha256:[a-f0-9]{64}$/);
@@ -50,6 +50,18 @@ describe("component manifest 2026.07.20", () => {
 });
 
 describe("stored production manifest compatibility", () => {
+  it("keeps normalized 2026.07.20 MCP manifests readable for monitoring and recertification", () => {
+    const historic = structuredClone(validateOnboardingManifest(manifest()).manifest) as unknown as Record<string, unknown>;
+    historic.schemaVersion = "2026.07.20";
+    historic.releaseVersion = "2026.07.20";
+    historic.pulseEnvelopeVersion = "2026.07.20";
+    historic.blueprint = { ...(historic.blueprint as Record<string, unknown>), version: "2026.07.20" };
+    const stored = validateStoredOnboardingManifest(historic);
+    expect(stored.manifest.schemaVersion).toBe("2026.07.20");
+    expect(reviewMetadataForManifest(stored.manifest)).toMatchObject({ intervalDays: 180 });
+    expect(() => validateOnboardingManifest(historic)).toThrow("old_manifest_schema_not_accepted");
+  });
+
   it("reads stored 1.5 manifests without accepting them as new intake", () => {
     const stored = validateStoredOnboardingManifest(legacy15Fixture);
     expect(stored.manifest.schemaVersion).toBe("1.5");

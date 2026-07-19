@@ -47,7 +47,7 @@ export function Login({ notice, onLogin }: { notice?: string; onLogin: () => voi
 
   return <main className="login-shell"><section className="login-panel">
     <div className="brand-row"><ShieldCheck size={28} /><strong>KCML</strong></div>
-    <h1>Správce MCP serverů</h1>
+    <h1>Správce komponent</h1>
     {notice ? <div className="login-notice" role="status"><Clock3 size={18} /><span><strong>Je nutné se znovu přihlásit</strong>{notice}</span></div> : null}
     {step === "password" ? <form onSubmit={(event) => { void submitPassword(event); }}>
       <label>Uživatel<input value={username} onChange={(event) => setUsername(event.target.value)} autoComplete="username" /></label>

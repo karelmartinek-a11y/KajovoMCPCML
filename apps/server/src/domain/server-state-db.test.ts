@@ -21,14 +21,18 @@ describe.skipIf(!enabled)("server state PostgreSQL transitions", () => {
   afterAll(async () => db.end());
 
   it("binds registration state parameters without PostgreSQL type ambiguity", async () => {
+    const kcmlNumber = Number((await db.query("select nextval('kcml_number_seq') as value")).rows[0].value);
+    const code = `KCML${String(kcmlNumber).padStart(4, "0")}`;
+    const hostname = `kcml${String(kcmlNumber).padStart(4, "0")}.example.invalid`;
+    const audience = `https://${hostname}/mcp`;
     const server = await db.query(
       `insert into mcp_server(
          kcml_number,code,hostname,tool_name,display_name,description,enabled,
          registration_state,operational_state,input_schema,output_schema,handler_key,
          handler_version,contract_version,artifact_digest,manifest_digest
-       ) values (1,'KCML0001','kcml0001.example.invalid','test_tool','Test','Test',true,
+       ) values ($3,$4,$5,'test_tool','Test','Test',true,
          'ACTIVE','HEALTHY','{}','{}','test','1.0.0','1.0.0',$1,$2) returning id`,
-      [`sha256:${"a".repeat(64)}`, `sha256:${"b".repeat(64)}`]
+      [`sha256:${"a".repeat(64)}`, `sha256:${"b".repeat(64)}`, kcmlNumber, code, hostname]
     );
     const serverId = String(server.rows[0].id);
     const revision = await db.query(
@@ -49,14 +53,14 @@ describe.skipIf(!enabled)("server state PostgreSQL transitions", () => {
     );
     await db.query(
       `insert into access_token(lookup_digest,key_id,fingerprint,credential_id,server_id,audience,expires_at,credential_revocation_epoch,server_revocation_epoch)
-       select decode('01','hex'),'v1','access-fingerprint',$1,id,'https://kcml0001.example.invalid/mcp',now()+interval '1 hour',$2,revocation_epoch
+       select decode('01','hex'),'v1','access-fingerprint',$1,id,$4,now()+interval '1 hour',$2,revocation_epoch
          from mcp_server where id=$3`,
-      [credential.rows[0].id, credential.rows[0].revocation_epoch, serverId]
+      [credential.rows[0].id, credential.rows[0].revocation_epoch, serverId, audience]
     );
     const managed = await db.query(
       `insert into managed_service(legacy_mcp_server_id,code,slug,display_name,description,service_kind,lifecycle_state,operational_state,enabled,public_hostname,base_url,resource_uri,api_state)
-       values ($1,'KCML0001','kcml0001','Test','Test','MCP','ACTIVE','HEALTHY',true,'kcml0001.example.invalid','https://kcml0001.example.invalid','https://kcml0001.example.invalid/mcp','ENABLED') returning id,revocation_epoch,service_token_epoch,permission_epoch,active_revision_epoch`,
-      [serverId]
+       values ($1,$2,$3,'Test','Test','MCP','ACTIVE','HEALTHY',true,$4,$5,$6,'ENABLED') returning id,revocation_epoch,service_token_epoch,permission_epoch,active_revision_epoch`,
+      [serverId, code, hostname.split(".")[0], hostname, `https://${hostname}`, audience]
     );
     await db.query(
       `insert into managed_service_access_token(lookup_digest,key_id,fingerprint,credential_id,managed_service_id,audience,expires_at,credential_revocation_epoch,service_revocation_epoch,principal_token_epoch,service_token_epoch,permission_epoch_snapshot,active_revision_epoch_snapshot)
@@ -76,24 +80,27 @@ describe.skipIf(!enabled)("server state PostgreSQL transitions", () => {
 
     const state = await db.query("select registration_state,operational_state,enabled,revocation_epoch from mcp_server where id=$1", [serverId]);
     expect(state.rows[0]).toMatchObject({ registration_state: "SUSPENDED", operational_state: "DISABLED", enabled: false });
-    expect(String(state.rows[0].revocation_epoch)).not.toBe(previousEpoch);
+    expect(String(state.rows[0].revocation_epoch)).toBe(previousEpoch);
     await expect(db.query("select revoked_at is not null as revoked from access_token where server_id=$1", [serverId]))
-      .resolves.toMatchObject({ rows: [{ revoked: true }] });
+      .resolves.toMatchObject({ rows: [{ revoked: false }] });
     await expect(db.query("select lifecycle_state,operational_state,enabled,api_state from managed_service where id=$1", [managed.rows[0].id]))
       .resolves.toMatchObject({ rows: [{ lifecycle_state: "SUSPENDED", operational_state: "DISABLED", enabled: false, api_state: "DISABLED" }] });
     await expect(db.query("select revoked_at is not null as revoked from managed_service_access_token where managed_service_id=$1", [managed.rows[0].id]))
-      .resolves.toMatchObject({ rows: [{ revoked: true }] });
+      .resolves.toMatchObject({ rows: [{ revoked: false }] });
   });
 
   it("serializes concurrent disable requests into one effective transition", async () => {
+    const kcmlNumber = Number((await db.query("select nextval('kcml_number_seq') as value")).rows[0].value);
+    const code = `KCML${String(kcmlNumber).padStart(4, "0")}`;
+    const hostname = `kcml${String(kcmlNumber).padStart(4, "0")}.example.invalid`;
     const server = await db.query(
       `insert into mcp_server(
          kcml_number,code,hostname,tool_name,display_name,description,enabled,
          registration_state,operational_state,input_schema,output_schema,handler_key,
          handler_version,contract_version,artifact_digest,manifest_digest
-       ) values (2,'KCML0002','kcml0002.example.invalid','concurrent_disable','Concurrent','Concurrent',true,
+       ) values ($3,$4,$5,'concurrent_disable','Concurrent','Concurrent',true,
          'ACTIVE','HEALTHY','{}','{}','test','1.0.0','1.0.0',$1,$2) returning id`,
-      [`sha256:${"d".repeat(64)}`, `sha256:${"e".repeat(64)}`]
+      [`sha256:${"d".repeat(64)}`, `sha256:${"e".repeat(64)}`, kcmlNumber, code, hostname]
     );
     const serverId = String(server.rows[0].id);
 

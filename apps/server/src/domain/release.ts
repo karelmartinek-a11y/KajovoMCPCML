@@ -1,10 +1,10 @@
 export const KCML_RELEASE = {
-  applicationVersion: "2026.07.20",
-  blueprintVersion: "2026.07.20",
-  catalogVersion: "2026.07.20",
-  manifestSchemaVersion: "2026.07.20",
-  pulseEnvelopeVersion: "2026.07.20",
-  policyBaseline: "2026-07-20",
+  applicationVersion: "2026.07.21",
+  blueprintVersion: "2026.07.21",
+  catalogVersion: "2026.07.21",
+  manifestSchemaVersion: "2026.07.21",
+  pulseEnvelopeVersion: "2026.07.21",
+  policyBaseline: "2026-07-21",
   mcpProtocolVersion: "2025-11-25"
 } as const;
 

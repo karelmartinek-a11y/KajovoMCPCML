@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { z } from "zod";
 import type { Db } from "../db.js";
-import componentManifestSchema from "../contracts/component-manifest-2026.07.20.schema.json" with { type: "json" };
+import componentManifestSchema from "../contracts/component-manifest-2026.07.21.schema.json" with { type: "json" };
 import { kcmlCodeFromNumber, kcmlHostnameForCode } from "./hostnames.js";
 import { KCML_MCP_COMPONENTS, KCML_RELEASE } from "./release.js";
 
@@ -350,18 +350,46 @@ const storedRegistrationManifest15Schema = registrationManifest15Schema.extend({
 export type LegacyOnboardingManifest = z.infer<typeof legacyOnboardingManifestSchema>;
 export type RegistrationManifest15 = z.infer<typeof registrationManifest15Schema>;
 export type RuntimeRegistrationManifest = Omit<RegistrationManifest15, "schemaVersion"> & {
-  schemaVersion: "2026.07.20";
-  releaseVersion: "2026.07.20";
+  schemaVersion: typeof KCML_RELEASE.manifestSchemaVersion;
+  releaseVersion: typeof KCML_RELEASE.applicationVersion;
   componentType: "MCP_SERVER";
   registrationType: "MCP_SERVER";
-  blueprint: { componentId: string; version: "2026.07.20" };
-  pulseEnvelopeVersion: "2026.07.20";
+  blueprint: { componentId: string; version: typeof KCML_RELEASE.blueprintVersion };
+  pulseEnvelopeVersion: typeof KCML_RELEASE.pulseEnvelopeVersion;
   publicEndpoints: unknown[];
   pulseContract: unknown;
   normalizedFromComponentManifest: true;
 };
-export type OnboardingManifest = LegacyOnboardingManifest | RegistrationManifest15 | RuntimeRegistrationManifest;
+export type StoredRuntimeRegistrationManifest20260720 = Omit<RuntimeRegistrationManifest, "schemaVersion" | "releaseVersion" | "blueprint" | "pulseEnvelopeVersion"> & {
+  schemaVersion: "2026.07.20";
+  releaseVersion: "2026.07.20";
+  blueprint: { componentId: string; version: "2026.07.20" };
+  pulseEnvelopeVersion: "2026.07.20";
+};
+export type OnboardingManifest = LegacyOnboardingManifest | RegistrationManifest15 | StoredRuntimeRegistrationManifest20260720 | RuntimeRegistrationManifest;
 export type RegistrationManifest = RuntimeRegistrationManifest;
+
+export function isStructuredOnboardingManifest(manifest: OnboardingManifest): manifest is Exclude<OnboardingManifest, LegacyOnboardingManifest> {
+  return ["1.5", "2026.07.20", KCML_RELEASE.manifestSchemaVersion].includes(manifest.schemaVersion);
+}
+
+function parseStoredRuntimeRegistrationManifest20260720(input: unknown): StoredRuntimeRegistrationManifest20260720 | null {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return null;
+  const value = input as Record<string, unknown>;
+  const blueprint = value.blueprint as Record<string, unknown> | undefined;
+  const protocol = value.protocol as Record<string, unknown> | undefined;
+  if (value.schemaVersion !== "2026.07.20" || value.releaseVersion !== "2026.07.20"
+    || value.componentType !== "MCP_SERVER" || value.registrationType !== "MCP_SERVER"
+    || value.pulseEnvelopeVersion !== "2026.07.20" || value.normalizedFromComponentManifest !== true
+    || !blueprint || blueprint.version !== "2026.07.20" || typeof blueprint.componentId !== "string"
+    || !KCML_MCP_COMPONENTS.some(([componentId]) => componentId === blueprint.componentId)
+    || !protocol || protocol.protocolVersion !== KCML_RELEASE.mcpProtocolVersion
+    || !Array.isArray(value.publicEndpoints) || value.publicEndpoints.length === 0
+    || !value.tool || typeof value.tool !== "object" || !value.behavior || typeof value.behavior !== "object"
+    || !value.dependencies || typeof value.dependencies !== "object" || !value.monitoringProfile || typeof value.monitoringProfile !== "object"
+    || !value.review || typeof value.review !== "object" || !value.pulseContract || typeof value.pulseContract !== "object") return null;
+  return structuredClone(value) as unknown as StoredRuntimeRegistrationManifest20260720;
+}
 
 const componentManifestValidator = new Ajv2020({ strict: false, allErrors: true, validateFormats: false }).compile(componentManifestSchema);
 
@@ -416,7 +444,7 @@ function normalizeComponentMcpManifest(input: unknown): RuntimeRegistrationManif
   if (!componentManifestValidator(raw)) throw new Error("invalid_manifest");
   if (raw.componentType !== "MCP_SERVER" || raw.registrationType !== "MCP_SERVER") throw new Error("component_type_not_supported");
 
-  const blueprint = raw.blueprint as { componentId: string; version: "2026.07.20" };
+  const blueprint = raw.blueprint as { componentId: string; version: typeof KCML_RELEASE.blueprintVersion };
   if (!KCML_MCP_COMPONENTS.some(([componentId]) => componentId === blueprint.componentId)) throw new Error("blueprint_component_not_allowed");
   const facadeTools = raw.facadeTools as Array<{ name: string; inputSchema: Record<string, unknown>; outputSchema: Record<string, unknown> }>;
   if (facadeTools.length !== 1) throw new Error("facade_tool_count_mismatch");
@@ -546,7 +574,7 @@ function validateParsedManifest(manifest: OnboardingManifest): void {
   validateJsonSchemas(manifest.tool.inputSchema, manifest.tool.outputSchema);
   assertAnnotationPolicy(manifest.tool.annotations, manifest.behavior.effectClass);
   if (manifest.schemaVersion === "1.5") assertManifest15Invariants(manifest);
-  if (manifest.schemaVersion === KCML_RELEASE.manifestSchemaVersion) {
+  if (manifest.schemaVersion === "2026.07.20" || manifest.schemaVersion === KCML_RELEASE.manifestSchemaVersion) {
     if (!manifest.publicEndpoints.length) throw new Error("public_endpoint_required_for_mcp");
     if (manifest.protocol.protocolVersion !== KCML_RELEASE.mcpProtocolVersion) throw new Error("mcp_protocol_mismatch");
   }
@@ -576,6 +604,8 @@ export function validateOnboardingManifest(input: unknown): { manifest: RuntimeR
 }
 
 export function validateStoredOnboardingManifest(input: unknown): { manifest: OnboardingManifest; digest: string } {
+  const storedRuntime20260720 = parseStoredRuntimeRegistrationManifest20260720(input);
+  if (storedRuntime20260720) return resultFor(storedRuntime20260720);
   const current = registrationManifest15Schema.safeParse(input);
   if (current.success) return resultFor(current.data);
   const storedCurrent = storedRegistrationManifest15Schema.safeParse(input);
@@ -595,7 +625,7 @@ export function validateManifest(input: unknown, baseDomain: string): { manifest
 }
 
 export function reviewMetadataForManifest(manifest: OnboardingManifest): { schemaVersion: string; approvedAt: string; reviewDueAt: string; intervalDays: number } {
-  if (manifest.schemaVersion === "1.5" || manifest.schemaVersion === KCML_RELEASE.manifestSchemaVersion) {
+  if (isStructuredOnboardingManifest(manifest)) {
     return {
       schemaVersion: manifest.schemaVersion,
       approvedAt: manifest.review.approvedAt,
@@ -603,9 +633,10 @@ export function reviewMetadataForManifest(manifest: OnboardingManifest): { schem
       intervalDays: manifest.review.intervalDays
     };
   }
-  const reviewDueAt = new Date(manifest.change.reviewDueAt);
+  const legacy = manifest;
+  const reviewDueAt = new Date(legacy.change.reviewDueAt);
   const intervalDays = manifest.behavior.effectClass === "NON_IDEMPOTENT_WRITE"
-    || manifest.dependencies?.dataClassification.containsPersonalData ? 180 : 365;
+    || legacy.dependencies?.dataClassification.containsPersonalData ? 180 : 365;
   return {
     schemaVersion: manifest.schemaVersion,
     approvedAt: new Date(reviewDueAt.getTime() - intervalDays * 86_400_000).toISOString(),

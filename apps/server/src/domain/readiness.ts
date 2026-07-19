@@ -46,7 +46,8 @@ const EXPECTED_MIGRATIONS = [
   "037_audit_event_fk_lock_privilege.sql",
   "038_drop_legacy_operational_config_constraint.sql",
   "039_release_20260720_component_onboarding.sql",
-  "040_restore_active_runtime_jobs.sql"
+  "040_restore_active_runtime_jobs.sql",
+  "041_component_model_20260721.sql"
 ] as const;
 
 export type ReadinessReport = {

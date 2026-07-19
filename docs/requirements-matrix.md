@@ -1,6 +1,6 @@
-# KCML SSOT 2026.07.20 Requirements Matrix
+# KCML SSOT 2026.07.21 Requirements Matrix
 
-Legacy MCP manifest schemas 1.4/1.5 remain immutable and readable only for archive/migration paths. Every new component intake is strict against the unified component catalog `2026.07.20`, with machine-readable receipts and fail-closed runtime gates.
+Legacy MCP manifest schemas 1.4/1.5 and catalog `2026.07.20` remain immutable and readable for compatibility and migration paths. Every new component intake is strict against the unified component catalog `2026.07.21`, with machine-readable receipts and fail-closed runtime gates.
 
 | Requirement | Implementation | Persisted evidence | Automated gate |
 | --- | --- | --- | --- |
@@ -14,7 +14,7 @@ Legacy MCP manifest schemas 1.4/1.5 remain immutable and readable only for archi
 | External API gateway enforcement | controlled egress proxy plus `EXTERNAL_API` runtime matcher | templated path/method/operation binding, correlation ID, gate receipts, egress capability and redacted runtime logs | direct bypass, wrong scope, wrong route, disable existing token and gateway header enforcement tests |
 | Discovery privacy | fail-closed MCP discovery | active revision and profile reference | unavailable states expose no catalog detail |
 | Shared HTTP throttling | `@fastify/rate-limit` with a fail-closed PostgreSQL store and HMAC bucket keys | route/IP bucket counters without raw client identifiers | 100 concurrent increments serialize exactly; sensitive routes carry explicit limits |
-| Database migrations | checksum ledger and advisory-locked runner | canonical 001-036 ledger plus hashed archive of superseded pre-ledger 007-014; 017-036 add managed services, runtime enforcement, security hardening, versioned operational configuration, audit archival and split-owner audit-writer repair | clean, production-ledger upgrade, idempotency, changed/late migration rejection |
+| Database migrations | checksum ledger and advisory-locked runner | immutable 001-040 plus forward migration 041; component identity and legacy adapter bindings preserve UUID, KCML identity, endpoint and epochs | clean, production-ledger upgrade, repeated migration, role isolation and component backfill assertions |
 | Tamper-evident audit | database append function, serialized `audit_head` | complete previous/event hash chain and verification result | 100 concurrent writes without branches plus tamper detection |
 | Invocation integrity | accepted/final transaction model | request/response digests, status, latency, statistics and linked audit | pre-audit failure blocks handler; finalization failure opens Critical alert without handler retry |
 | Monitoring | separate `kcml-monitor.service` plus managed-service probe persistence | per-probe samples, freshness, SLO, state history, scheduler heartbeat, deduplicated alerts and recovery events | one bad server cannot stop other probes or onboarding; stale or failed `EXTERNAL_API` probes fail closed |
@@ -26,4 +26,5 @@ Legacy MCP manifest schemas 1.4/1.5 remain immutable and readable only for archi
 | Immutable delivery | CI-built release, SBOM, checksum and keyless Sigstore bundle | release manifest/build ID plus GitHub OIDC certificate and transparency proof | production verifies repository/workflow/ref/SHA/trigger and does not build or download dependencies |
 | Recovery | encrypted `age` backup and isolated restore test | checksum and restore evidence | backup mode/recipient/preflight and quarterly restore gate |
 | A22 soak readiness | `scripts/external-api-soak.mjs` and release runbook | JSONL trace, summary JSON, permission churn/disable-enable evidence and explicit harness/run status | harness is release-ready; summary distinguishes `harnessStatus=READY` from a `runStatus=SHORT_RUN` when a shorter-than-72-hour execution ends |
-| UI operations | token modal, permissions page and monitoring workspace | recertification phase, block reason, alerts, probe age, history and deliveries | Testing Library interaction suites, axe dialog checks, responsive rendered audit and empty states |
+| Component control plane | `domain/component*.ts`, `/v2/component-onboardings`, compatibility adapters and component catalog UI | separate lifecycle/activation/operational/monitoring/recertification states, HMAC-only credentials, current route/scope permissions and sequential audit stream | component unit/DB/contract tests, one-time credential claim, permission churn, deactivate/reactivate, audit gap/replay and stable Czech errors |
+| UI operations | component catalog, credential and permission controls, monitoring workspace | component detail, capabilities, directions, fingerprint-only readback, audit continuity and recertification | Testing Library interaction suites, axe dialog checks, keyboard/focus and responsive desktop/mobile rendering |

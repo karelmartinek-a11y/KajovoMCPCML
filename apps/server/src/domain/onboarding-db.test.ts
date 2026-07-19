@@ -28,7 +28,7 @@ const descriptor = {
 
 const manifestInput = {
   ...(JSON.parse(
-    readFileSync(new URL("../../../../docs/onboarding-manifest-2026.07.20.example.json", import.meta.url), "utf8")
+    readFileSync(new URL("../../../../docs/onboarding-manifest-2026.07.21.example.json", import.meta.url), "utf8")
   ) as Record<string, unknown>),
   registrationRevision: "db-test-1"
 };
@@ -37,6 +37,7 @@ describe.skipIf(!enabled)("onboarding PostgreSQL transactions", () => {
   let db: Db;
   let config: AppConfig;
   let adminId: string;
+  let expectedKcmlNumber: number;
 
   beforeAll(async () => {
     config = loadConfig(process.env);
@@ -51,7 +52,11 @@ describe.skipIf(!enabled)("onboarding PostgreSQL transactions", () => {
 
   beforeEach(async () => {
     await db.query("truncate table onboarding_gate,onboarding_event,onboarding_source_revision,egress_capability,onboarding_job,integration_token,registration_revision,function_statistics,mcp_server,audit_event restart identity cascade");
-    await db.query("select setval('kcml_number_seq', 1, false)");
+    const sequence = await db.query(
+      "select greatest(coalesce(max(kcml_number), 0) + 1, 1)::int as next_number from component"
+    );
+    expectedKcmlNumber = Number(sequence.rows[0].next_number);
+    await db.query("select setval('kcml_number_seq', $1, false)", [expectedKcmlNumber]);
     await db.query("update audit_head set last_sequence=0,event_hash=null,updated_at=now() where singleton=true");
   });
 
@@ -79,8 +84,8 @@ describe.skipIf(!enabled)("onboarding PostgreSQL transactions", () => {
       createOnboardingJob(db, config, principal, idempotencyKey, manifest, evidence, randomUUID())
     ]);
     expect(retry.id).toBe(first.id);
-    expect(first.code).toBe("KCML0001");
-    expect(first.hostname).toBe(`kcml0001.${config.PUBLIC_BASE_DOMAIN}`);
+    expect(first.code).toBe(`KCML${String(expectedKcmlNumber).padStart(4, "0")}`);
+    expect(first.hostname).toBe(`kcml${String(expectedKcmlNumber).padStart(4, "0")}.${config.PUBLIC_BASE_DOMAIN}`);
     expect((await db.query("select count(*)::int as count from onboarding_job")).rows[0].count).toBe(1);
     const failed = await transitionJob(
       db,

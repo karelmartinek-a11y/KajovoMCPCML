@@ -21,7 +21,7 @@ describe("onboarding handoff", () => {
     expect(text).toContain("Shrnutí serveru: Zpracování faktur");
     expect(text).toContain("Kritičnost: HIGH");
     expect(text).toContain("Integrační token: kci_example");
-    expect(text).toContain("KajovoCML 2026.07.20");
+    expect(text).toContain("KajovoCML 2026.07.21");
     expect(text).toContain("https://register.hcasc.cz/v1/service-onboardings");
     expect(text).toContain("sám přidělí KCML identitu a HTTPS adresu");
     expect(text).toContain("UPLOAD_REVISION");

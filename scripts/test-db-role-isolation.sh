@@ -32,5 +32,15 @@ if psql "$app_url" --no-psqlrc --set ON_ERROR_STOP=1 --quiet --command \
   echo "application role can read audit_head" >&2
   exit 1
 fi
+if psql "$app_url" --no-psqlrc --set ON_ERROR_STOP=1 --quiet --command \
+  "update component_audit_event set event_type='forbidden' where false" >/dev/null 2>&1; then
+  echo "application role can update component_audit_event" >&2
+  exit 1
+fi
+if psql "$app_url" --no-psqlrc --set ON_ERROR_STOP=1 --quiet --command \
+  "delete from component_audit_event where false" >/dev/null 2>&1; then
+  echo "application role can delete component_audit_event" >&2
+  exit 1
+fi
 test "$(psql "$app_url" --no-psqlrc --tuples-only --no-align --quiet --command 'select valid from verify_audit_chain()')" = "t"
 echo "database-role-isolation-ok"

@@ -455,7 +455,6 @@ export async function setManagedServiceApiState(db: Db, params: {
               api_disabled_reason = case when $2::text = 'DISABLED' then $3 else null end,
               lifecycle_state = $4::managed_service_state,
               enabled = case when $2::text = 'ENABLED' then true else false end,
-              service_token_epoch = case when $2::text = 'DISABLED' then gen_random_uuid() else service_token_epoch end,
               lock_version = lock_version + 1,
               last_policy_invalidation_at = now(),
               updated_at = now()
@@ -482,7 +481,6 @@ export async function setManagedServiceApiState(db: Db, params: {
               set enabled = false,
                   registration_state = 'REGISTERED_DISABLED'::registration_state,
                   operational_state = 'DISABLED'::operational_state,
-                  revocation_epoch = gen_random_uuid(),
                   lock_version = lock_version + 1,
                   updated_at = now()
             where id = $1`,
@@ -490,6 +488,20 @@ export async function setManagedServiceApiState(db: Db, params: {
         );
       }
     }
+    await client.query(
+      `update component c
+          set enabled=($2::text='ENABLED'),
+              ingress_enabled=($2::text='ENABLED'),
+              pulse_enabled=($2::text='ENABLED'),
+              egress_enabled=($2::text='ENABLED'),
+              activation_state=case when $2::text='ENABLED' then 'ACTIVE' else 'READY' end,
+              lifecycle_state=case when $2::text='ENABLED' then 'ACTIVE' else 'APPROVED' end,
+              operational_state=case when $2::text='ENABLED' then 'HEALTHY' else 'DISABLED' end,
+              lock_version=c.lock_version+1
+         from managed_service service
+        where service.id=$1 and c.id=service.component_id`,
+      [params.managedServiceId, params.nextState]
+    );
     await client.query(
       `insert into managed_service_api_status(managed_service_id, api_state, disabled_reason, changed_by_type, changed_by_id, correlation_id, changed_at)
        values ($1,$2,$3,$4,$5,$6,now())

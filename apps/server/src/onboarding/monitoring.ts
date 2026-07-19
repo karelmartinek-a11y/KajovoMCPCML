@@ -13,7 +13,7 @@ import {
   runExternalApiMonitoringTarget
 } from "../domain/external-api.js";
 import { evaluateRecertification, type RecertificationDecision } from "../domain/recertification.js";
-import { digestCanonicalJson, validateStoredOnboardingManifest, type OnboardingManifest } from "../domain/registration.js";
+import { digestCanonicalJson, isStructuredOnboardingManifest, validateStoredOnboardingManifest, type OnboardingManifest } from "../domain/registration.js";
 import { setComputedOperationalState, transitionServerState } from "../domain/server-state.js";
 import { archivePendingAuditEvents } from "../domain/audit-archive.js";
 import { verifyAuditChain } from "../domain/audit.js";
@@ -76,7 +76,7 @@ export function expectedMonitoringProfileDigest(schemaVersion: string, profile: 
 }
 
 function monitorPolicy(manifest: OnboardingManifest): MonitorPolicy {
-  if (manifest.schemaVersion === "1.5" || manifest.schemaVersion === "2026.07.20") {
+  if (isStructuredOnboardingManifest(manifest)) {
     const intervals = manifest.monitoringProfile.probeIntervals;
     return {
       intervals: {
@@ -173,8 +173,8 @@ function recertificationFromRow(row: Record<string, unknown>): RecertificationDe
 }
 
 function externalDependencyUrls(manifest: OnboardingManifest): string[] {
-  if (manifest.schemaVersion === "1.5" || manifest.schemaVersion === "2026.07.20") return manifest.dependencies.externalServices.map((dependency) => dependency.endpoint);
-  return manifest.dependencies?.externalServices.filter((dependency) => dependency.startsWith("https://")) ?? [];
+  if (isStructuredOnboardingManifest(manifest)) return manifest.dependencies.externalServices.map((dependency) => dependency.endpoint);
+  return manifest.dependencies?.externalServices.filter((dependency): dependency is string => typeof dependency === "string" && dependency.startsWith("https://")) ?? [];
 }
 
 async function dependencyHealth(manifest: OnboardingManifest): Promise<Record<string, unknown>> {

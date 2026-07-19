@@ -49,13 +49,13 @@ describe("programmer onboarding API authorization", () => {
 
   afterEach(async () => app?.close());
 
-  it("closes the legacy onboarding intake with 410 Gone", async () => {
+  it("keeps the legacy onboarding intake as an authenticated compatibility adapter", async () => {
     const missing = await app.inject({ method: "POST", url: "/v1/onboardings", headers: { host: config.REGISTER_HOST } });
     const invalid = await app.inject({ method: "POST", url: "/v1/onboardings", headers: { host: config.REGISTER_HOST, authorization: `Bearer kci_${"a".repeat(86)}` } });
-    expect(missing.statusCode).toBe(410);
-    expect(invalid.statusCode).toBe(410);
-    expect((JSON.parse(missing.body) as { error: string }).error).toBe("gone");
-    expect((JSON.parse(invalid.body) as { error: string }).error).toBe("gone");
+    expect(missing.statusCode).toBe(401);
+    expect(invalid.statusCode).toBe(401);
+    expect((JSON.parse(missing.body) as { error: string }).error).toBe("invalid_integration_token");
+    expect((JSON.parse(invalid.body) as { error: string }).error).toBe("invalid_integration_token");
   });
 
   it("does not expose the registration API on another host", async () => {
@@ -63,7 +63,7 @@ describe("programmer onboarding API authorization", () => {
     expect(response.statusCode).toBe(404);
   });
 
-  it("serves the approved 2026.07.20 onboarding catalog to an authenticated administrator", async () => {
+  it("serves the approved 2026.07.21 onboarding catalog to an authenticated administrator", async () => {
     const response = await app.inject({
       method: "GET",
       url: "/api/onboarding-catalog",
@@ -71,7 +71,7 @@ describe("programmer onboarding API authorization", () => {
     });
     expect(response.statusCode).toBe(200);
     expect(response.headers["content-type"]).toContain("application/vnd.openxmlformats-officedocument.wordprocessingml.document");
-    expect(response.headers["content-disposition"]).toContain("KajovoCML_Onboarding_Catalog_2026.07.20.docx");
+    expect(response.headers["content-disposition"]).toContain("KajovoCML_Onboarding_Catalog_2026.07.21.docx");
     expect(response.rawPayload.subarray(0, 2).toString()).toBe("PK");
   });
 
@@ -160,7 +160,7 @@ describe("machine-readable onboarding catalogs", () => {
   it("serves the JSON onboarding catalog to an authenticated programmer on the register host", async () => {
     const response = await app.inject({
       method: "GET",
-      url: "/api/onboarding-catalogs/component/2026.07.20",
+      url: "/api/onboarding-catalogs/component/2026.07.21",
       headers: {
         host: config.REGISTER_HOST,
         authorization: `Bearer kci_${"a".repeat(86)}`
@@ -168,7 +168,7 @@ describe("machine-readable onboarding catalogs", () => {
     });
     expect(response.statusCode).toBe(200);
     expect(response.json()).toMatchObject({
-      version: "2026.07.20",
+      version: "2026.07.21",
       serviceKind: "COMPONENT"
     });
   });

@@ -219,7 +219,7 @@ SQL
 
 psql "$KCML_UPGRADE_DATABASE_URL" --no-psqlrc --set ON_ERROR_STOP=1 --tuples-only --no-align <<'SQL' | grep -Fx 'upgrade-ok'
 select case when
-  (select count(*) from schema_migration) = 41
+  (select count(*) from schema_migration) = 42
   and (select count(*) from legacy_schema_migration) = 9
   and (select count(*) from audit_event) = 1165
   and (select valid from verify_audit_chain()) is true
@@ -258,6 +258,21 @@ select case when
     select 1 from access_token
      where credential_id='30000000-0000-0000-0000-000000000002'
        and revoked_at is null
+       and component_id='00000000-0000-0000-0000-000000000002'
+  )
+  and exists (
+    select 1
+      from component component
+      join mcp_server server on server.component_id=component.id
+      join managed_service service on service.component_id=component.id
+     where component.id='00000000-0000-0000-0000-000000000002'
+       and component.code='KCML0002'
+       and component.hostname='kcml0002.hcasc.cz'
+       and component.enabled=true
+       and component.lifecycle_state='ACTIVE'
+       and component.activation_state='ACTIVE'
+       and component.revocation_epoch=server.revocation_epoch
+       and service.legacy_mcp_server_id=server.id
   )
   and exists (
     select 1

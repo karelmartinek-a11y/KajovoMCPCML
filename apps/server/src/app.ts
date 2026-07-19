@@ -13,6 +13,7 @@ import { isReferenceExternalApiHostname } from "./domain/reference-external-api.
 import { registerAdminRoutes } from "./http/admin-routes.js";
 import { registerAuthRoutes } from "./http/auth-routes.js";
 import { registerExternalApiRoutes } from "./http/external-api-routes.js";
+import { registerComponentRoutes } from "./http/component-routes.js";
 import { registerMcpRoutes } from "./http/mcp.js";
 import { registerOnboardingRoutes } from "./http/onboarding-routes.js";
 import { registerReferenceExternalApiRoutes } from "./http/reference-external-api-routes.js";
@@ -40,7 +41,8 @@ export async function buildApp(config: AppServerConfig, db: Db) {
         scriptSrc: ["'self'"],
         styleSrc: ["'self'", "'unsafe-inline'"],
         imgSrc: ["'self'", "data:"],
-        frameAncestors: ["'none'"]
+        frameAncestors: ["'none'"],
+        upgradeInsecureRequests: process.env.NODE_ENV === "production" ? [] : null
       }
     }
   });
@@ -80,6 +82,7 @@ export async function buildApp(config: AppServerConfig, db: Db) {
   registerReferenceExternalApiRoutes(app, config);
   registerExternalApiRoutes(app, db, config);
   registerOnboardingRoutes(app, db, config);
+  registerComponentRoutes(app, db, config);
 
   app.get("/api/version", async (_request, reply) => reply
     .header("cache-control", "no-store")
@@ -90,7 +93,7 @@ export async function buildApp(config: AppServerConfig, db: Db) {
     const host = hostOf(request.headers.host);
     if (host === config.ADMIN_HOST) return;
     if (host === config.AUTH_HOST && (request.url === "/oauth/token" || request.url === "/oauth/introspect" || request.url === "/.well-known/oauth-authorization-server")) return;
-    if (host === config.REGISTER_HOST && request.url.startsWith("/v1/")) return;
+    if (host === config.REGISTER_HOST && (request.url.startsWith("/v1/") || request.url.startsWith("/v2/"))) return;
     if (isReferenceExternalApiHostname(host, config.PUBLIC_BASE_DOMAIN)) return;
     if (isKcmlHostname(host, config.PUBLIC_BASE_DOMAIN)) return;
     return sendError(reply, 404, "not_found");

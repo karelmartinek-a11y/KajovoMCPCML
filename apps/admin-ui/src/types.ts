@@ -1,4 +1,4 @@
-export type Page = "monitoring" | "integration" | "tokens" | "permissions" | "audit" | "config" | "security" | "admins";
+export type Page = "components" | "monitoring" | "integration" | "tokens" | "permissions" | "audit" | "config" | "security" | "admins";
 export type AdminRole = "OWNER" | "ADMIN" | "AUDITOR";
 export type Session = { authenticated: boolean; account: string | null; role: AdminRole | null; bootstrapRequired?: boolean };
 export type Server = {
@@ -47,6 +47,60 @@ export type Server = {
   };
   createdAt: string;
   updatedAt: string;
+};
+export type ComponentPermission = {
+  id: string;
+  source_component_id: string;
+  target_component_id: string;
+  route_pattern: string;
+  scope_name: string;
+  access_level: string;
+  granted_at: string;
+  revoked_at: string | null;
+};
+export type ComponentCredential = {
+  id: string;
+  public_id: string;
+  secret_fingerprint: string;
+  status: string;
+  issued_at: string;
+  expires_at: string | null;
+  last_used_at: string | null;
+  revoked_at: string | null;
+};
+export type Component = {
+  id: string;
+  code: string;
+  hostname: string;
+  displayName: string;
+  description: string;
+  category: string;
+  registrationType: string;
+  role: string;
+  owners: Record<string, unknown>;
+  contacts: Record<string, unknown>;
+  lifecycleState: string;
+  activationState: string;
+  operationalState: string;
+  monitoringState: string;
+  recertificationState: string;
+  enabled: boolean;
+  ingressEnabled: boolean;
+  pulseEnabled: boolean;
+  egressEnabled: boolean;
+  revision: string | null;
+  capabilities: string[];
+  protocols: string[];
+  transports: string[];
+  permissionCount: number;
+  credentialCount: number;
+  policyEpoch: number;
+  audit: { gapState: string; highestReceivedSequence: number; highestAcknowledgedSequence: number };
+  releaseVersion: string;
+  createdAt: string;
+  updatedAt: string;
+  permissions?: ComponentPermission[];
+  credentials?: ComponentCredential[];
 };
 export type KajaCredential = {
   id: string;
@@ -272,7 +326,8 @@ export type OnboardingDescriptor = {
 };
 
 export const pageNames: Record<Page, string> = {
-  monitoring: "Monitoring MCP",
+  components: "Katalog komponent",
+  monitoring: "Monitoring komponent",
   integration: "Implementační tokeny",
   tokens: "Klientská pověření Kaja",
   permissions: "Správa oprávnění",

@@ -114,25 +114,19 @@ export async function transitionServerState(client: pg.PoolClient, params: Trans
         set enabled=$2,
             registration_state=$3::registration_state,
             operational_state=$4,
-            revocation_epoch=gen_random_uuid(),
             lock_version=lock_version+1,
             updated_at=now(),
             retired_at=case when $3::registration_state='RETIRED'::registration_state then now() else retired_at end
       where id=$1`,
     [params.serverId, enabled, params.to, operationalState]
   );
-  if (!enabled) {
-    await client.query("update access_token set revoked_at=coalesce(revoked_at,now()) where server_id=$1", [params.serverId]);
-    await client.query("update egress_capability set revoked_at=coalesce(revoked_at,now()) where server_id=$1", [params.serverId]);
-  }
-  const managedServices = await client.query<{ id: string }>(
+  await client.query(
     `update managed_service
         set enabled=$2,
             lifecycle_state=$4::managed_service_state,
             operational_state=$5::operational_state,
             api_state=case when $2 then 'ENABLED'::managed_service_api_state else 'DISABLED'::managed_service_api_state end,
             api_disabled_reason=case when $2 then null else $3 end,
-            service_token_epoch=gen_random_uuid(),
             last_policy_invalidation_at=now(),
             lock_version=lock_version+1,
             updated_at=now()
@@ -140,13 +134,26 @@ export async function transitionServerState(client: pg.PoolClient, params: Trans
       returning id`,
     [params.serverId, enabled, params.reason, managedLifecycle, operationalState]
   );
-  if (managedServices.rowCount) {
-    const managedServiceIds = managedServices.rows.map((managedService) => managedService.id);
-    await client.query(
-      "update managed_service_access_token set revoked_at=coalesce(revoked_at,now()) where managed_service_id=any($1::uuid[])",
-      [managedServiceIds]
-    );
-  }
+  await client.query(
+    `update component c
+        set enabled=$2,
+            ingress_enabled=$2,
+            pulse_enabled=$2,
+            egress_enabled=$2,
+            lifecycle_state=case
+              when $3='QUARANTINED' then 'QUARANTINED'
+              when $3='RETIRED' then 'RETIRED'
+              when $3='SUSPENDED' then 'SUSPENDED'
+              when $2 then 'ACTIVE'
+              else 'APPROVED'
+            end,
+            activation_state=case when $2 then 'ACTIVE' else 'READY' end,
+            operational_state=$4,
+            lock_version=c.lock_version+1
+       from mcp_server server
+      where server.id=$1 and c.id=server.component_id`,
+    [params.serverId, enabled, params.to, operationalState]
+  );
   await client.query(
     `insert into server_state_history(server_id,registration_state,operational_state,recertification_phase,reason,correlation_id)
      values ($1,$2,$3,$4,$5,$6)`,
