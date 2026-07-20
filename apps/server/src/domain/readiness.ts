@@ -53,7 +53,8 @@ const EXPECTED_MIGRATIONS = [
   "044_component_identity_legacy_insert_bridge_20260722.sql",
   "045_release_wave_blueprint_enforcement_20260723.sql",
   "046_drop_stale_component_identity_triggers_20260723.sql",
-  "047_blueprint_release_generated_scope_20260723.sql"
+  "047_blueprint_release_generated_scope_20260723.sql",
+  "048_revoke_legacy_blueprint_platform_grants_20260723.sql"
 ] as const;
 
 export type ReadinessReport = {
