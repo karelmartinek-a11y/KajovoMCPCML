@@ -118,8 +118,15 @@ describe("quarantine release MFA", () => {
 describe("machine-readable onboarding catalogs", () => {
   let app: FastifyInstance;
   let config: AppConfig;
+  let tokenKind: "SINGLE_COMPONENT" | "BLUEPRINT_RELEASE";
+  let allowedBlueprintComponents: Array<{ componentId: string; registrationType: string; releaseVersion: string; releaseWaveKey: string }>;
 
   beforeEach(async () => {
+    tokenKind = "BLUEPRINT_RELEASE";
+    allowedBlueprintComponents = [
+      { componentId: "AI-CLS-001", registrationType: "KAJA_CLIENT", releaseVersion: KCML_RELEASE.catalogVersion, releaseWaveKey: "baseline-2026-07-23" },
+      { componentId: "MCP-RX-WA-001", registrationType: "MCP_SERVER", releaseVersion: KCML_RELEASE.catalogVersion, releaseWaveKey: "baseline-2026-07-23" }
+    ];
     config = loadConfig({
       NODE_ENV: "test",
       DATABASE_URL: "postgres://unused/test",
@@ -143,14 +150,11 @@ describe("machine-readable onboarding catalogs", () => {
               max_expires_at: new Date(Date.now() + 120_000).toISOString(),
               service_kind: "MCP",
               allowed_pipeline: "MCP_ONBOARDING",
-              token_kind: "BLUEPRINT_RELEASE",
+              token_kind: tokenKind,
               release_version: KCML_RELEASE.catalogVersion,
               release_wave_key: "baseline-2026-07-23",
               max_child_jobs: 20,
-              allowed_blueprint_components: [
-                { componentId: "AI-CLS-001", registrationType: "KAJA_CLIENT", releaseVersion: KCML_RELEASE.catalogVersion, releaseWaveKey: "baseline-2026-07-23" },
-                { componentId: "MCP-RX-WA-001", registrationType: "MCP_SERVER", releaseVersion: KCML_RELEASE.catalogVersion, releaseWaveKey: "baseline-2026-07-23" }
-              ]
+              allowed_blueprint_components: allowedBlueprintComponents
             }]
           };
         }
@@ -208,4 +212,41 @@ describe("machine-readable onboarding catalogs", () => {
       }
     });
   });
+
+  it("preserves the registration-type fallback for a single-component token", async () => {
+    tokenKind = "SINGLE_COMPONENT";
+    allowedBlueprintComponents = [];
+    const response = await app.inject({
+      method: "GET",
+      url: "/v1/integration-intent",
+      headers: {
+        host: config.REGISTER_HOST,
+        authorization: `Bearer kci_${"a".repeat(86)}`
+      }
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      token: { tokenKind: "SINGLE_COMPONENT" },
+      blueprintRelease: {
+        allowedRegistrationTypes: ["KAJA_CLIENT", "MCP_SERVER", "MANAGED_PLATFORM_SERVICE"]
+      }
+    });
+  });
+
+  it.each(["/v1/onboardings", "/v1/service-onboardings"])(
+    "rejects a blueprint release token on legacy intake %s before parsing an upload",
+    async (url) => {
+      const response = await app.inject({
+        method: "POST",
+        url,
+        headers: {
+          host: config.REGISTER_HOST,
+          authorization: `Bearer kci_${"a".repeat(86)}`,
+          "idempotency-key": "release-token-must-use-native-intake"
+        }
+      });
+      expect(response.statusCode).toBe(409);
+      expect(response.json()).toMatchObject({ error: "integration_token_kind_mismatch" });
+    }
+  );
 });
