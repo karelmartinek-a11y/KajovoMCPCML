@@ -185,7 +185,11 @@ function normalizedLoginUsername(username: string): string {
 }
 
 function canonicalAdminPassword(value: string): string {
-  return value.replace(/[\r\n]+$/u, "");
+  let end = value.length;
+  while (end > 0 && (value.charCodeAt(end - 1) === 10 || value.charCodeAt(end - 1) === 13)) {
+    end -= 1;
+  }
+  return end === value.length ? value : value.slice(0, end);
 }
 
 function loginFailureAuditAfter(reason: "account_not_found" | "account_inactive" | "password_hash_missing" | "password_mismatch", body: { username?: string; password?: string }, loginUsername: string): Record<string, unknown> {

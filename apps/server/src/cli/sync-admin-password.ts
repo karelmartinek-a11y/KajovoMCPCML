@@ -13,7 +13,11 @@ const config = await loadConfigFromDb(db, bootstrapConfig);
 const pass = process.env.PASS;
 
 function canonicalAdminPassword(value: string): string {
-  return value.replace(/[\r\n]+$/u, "");
+  let end = value.length;
+  while (end > 0 && (value.charCodeAt(end - 1) === 10 || value.charCodeAt(end - 1) === 13)) {
+    end -= 1;
+  }
+  return end === value.length ? value : value.slice(0, end);
 }
 
 try {
