@@ -770,8 +770,56 @@ describe("admin server actions", () => {
       reason: "password_mismatch",
       usernamePresent: true,
       proofPresent: true,
+      proofLineEndingNormalized: false,
+      proofLength: 14,
+      canonicalProofLength: 14,
       usernameNormalized: true
     }));
+  });
+
+  it("accepts admin login when the stored secret was synchronized without trailing line endings", async () => {
+    const passwordHash = await argon2.hash("correct password", { type: argon2.argon2id, memoryCost: 4096, timeCost: 2, parallelism: 1 });
+    const query = vi.fn(async (...args: [string, unknown[]?]) => {
+      const [sql] = args;
+      if (sql === "select * from admin_account where username=$1") {
+        return {
+          rowCount: 1,
+          rows: [{
+            id: "account-id",
+            username: "admin",
+            password_hash: passwordHash,
+            mfa_enabled: false,
+            active: true,
+            activated_at: "2026-07-14T10:00:00.000Z",
+            role: "OWNER",
+            session_epoch: "epoch-1"
+          }]
+        };
+      }
+      if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") return { rowCount: 0, rows: [] };
+      return { rowCount: 1, rows: [] };
+    });
+    const db = {
+      query,
+      connect: async () => ({ query, release: () => undefined })
+    } as unknown as Db;
+    app = Fastify();
+    await app.register(cookie, { secret: config.SESSION_SECRET_BASE64.toString("base64url") });
+    registerAdminRoutes(app, db, config);
+    await app.ready();
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/login",
+      headers: { host: config.ADMIN_HOST },
+      payload: {
+        username: "admin",
+        password: "correct password\n"
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ ok: true });
   });
 
   it("returns audit integrity and export for administrators", async () => {

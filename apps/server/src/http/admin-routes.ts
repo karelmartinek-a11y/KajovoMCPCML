@@ -184,11 +184,20 @@ function normalizedLoginUsername(username: string): string {
   return username.trim().toLowerCase();
 }
 
+function canonicalAdminPassword(value: string): string {
+  return value.replace(/[\r\n]+$/u, "");
+}
+
 function loginFailureAuditAfter(reason: "account_not_found" | "account_inactive" | "password_hash_missing" | "password_mismatch", body: { username?: string; password?: string }, loginUsername: string): Record<string, unknown> {
+  const password = typeof body.password === "string" ? body.password : "";
+  const canonicalPassword = canonicalAdminPassword(password);
   return {
     reason,
     usernamePresent: typeof body.username === "string" && body.username.length > 0,
-    proofPresent: typeof body.password === "string" && body.password.length > 0,
+    proofPresent: password.length > 0,
+    proofLineEndingNormalized: password !== canonicalPassword,
+    proofLength: password.length,
+    canonicalProofLength: canonicalPassword.length,
     usernameNormalized: typeof body.username === "string" && body.username !== loginUsername
   };
 }
@@ -1509,7 +1518,7 @@ export function registerAdminRoutes(app: FastifyInstance, db: Db, config: AdminR
     const account = result.rows[0] as Record<string, unknown> | undefined;
     const accountEligible = Boolean(account?.active) && account?.activated_at !== null;
     const passwordHash = accountEligible && typeof account?.password_hash === "string" ? account.password_hash : await dummyPasswordHash;
-    const passwordOk = await argon2.verify(passwordHash, body.password ?? "");
+    const passwordOk = await argon2.verify(passwordHash, canonicalAdminPassword(body.password ?? ""));
     if (!account) {
       await recordLoginFailure(db, request, loginUsername, config);
       await appendAudit(db, { eventType: "admin.login.failed", actorType: "admin", actorId: loginUsername || null, after: loginFailureAuditAfter("account_not_found", body, loginUsername), correlationId });

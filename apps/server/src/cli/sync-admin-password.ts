@@ -12,9 +12,15 @@ const db = createDb(bootstrapConfig);
 const config = await loadConfigFromDb(db, bootstrapConfig);
 const pass = process.env.PASS;
 
+function canonicalAdminPassword(value: string): string {
+  return value.replace(/[\r\n]+$/u, "");
+}
+
 try {
   if (pass === undefined || pass.length === 0) throw new Error("PASS must not be empty");
-  const hash = await argon2.hash(pass, { type: argon2.argon2id, memoryCost: 65536, timeCost: 3, parallelism: 1 });
+  const password = canonicalAdminPassword(pass);
+  if (password.length === 0) throw new Error("PASS must not be empty after removing trailing line endings");
+  const hash = await argon2.hash(password, { type: argon2.argon2id, memoryCost: 65536, timeCost: 3, parallelism: 1 });
   const accountId = await tx(db, async (client) => {
     const account = await client.query(
       `insert into admin_account(username, mfa_enabled)
@@ -41,7 +47,7 @@ try {
   });
   await tx(db, async (client) => {
     const smoke = await client.query("select password_hash from admin_account where id=$1 and active=true", [accountId]);
-    if (!smoke.rowCount || !await argon2.verify(String(smoke.rows[0].password_hash), pass)) {
+    if (!smoke.rowCount || !await argon2.verify(String(smoke.rows[0].password_hash), password)) {
       throw new Error("admin_password_sync_smoke_failed");
     }
     await appendAudit(client, {
