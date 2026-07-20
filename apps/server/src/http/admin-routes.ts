@@ -184,6 +184,15 @@ function normalizedLoginUsername(username: string): string {
   return username.trim().toLowerCase();
 }
 
+function loginFailureAuditAfter(reason: "account_not_found" | "account_inactive" | "password_hash_missing" | "password_mismatch", body: { username?: string; password?: string }, loginUsername: string): Record<string, unknown> {
+  return {
+    reason,
+    usernamePresent: typeof body.username === "string" && body.username.length > 0,
+    proofPresent: typeof body.password === "string" && body.password.length > 0,
+    usernameNormalized: typeof body.username === "string" && body.username !== loginUsername
+  };
+}
+
 function userAgentDigest(request: FastifyRequest, key: Buffer): string {
   const userAgent = String(request.headers["user-agent"] ?? "");
   return hmacToken(`ua:${userAgent}`, key).toString("base64url");
@@ -1496,18 +1505,29 @@ export function registerAdminRoutes(app: FastifyInstance, db: Db, config: AdminR
       return sendError(reply, 429, "login_rate_limited", "Too many login attempts", correlationId);
     }
     const loginUsername = normalizedLoginUsername(body.username ?? "");
-    const result = await db.query("select * from admin_account where username=$1 and active=true and activated_at is not null", [loginUsername]);
+    const result = await db.query("select * from admin_account where username=$1", [loginUsername]);
     const account = result.rows[0] as Record<string, unknown> | undefined;
-    const passwordHash = typeof account?.password_hash === "string" ? account.password_hash : await dummyPasswordHash;
+    const accountEligible = Boolean(account?.active) && account?.activated_at !== null;
+    const passwordHash = accountEligible && typeof account?.password_hash === "string" ? account.password_hash : await dummyPasswordHash;
     const passwordOk = await argon2.verify(passwordHash, body.password ?? "");
-    if (!account || !account.password_hash) {
+    if (!account) {
       await recordLoginFailure(db, request, loginUsername, config);
-      await appendAudit(db, { eventType: "admin.login.failed", actorType: "admin", actorId: loginUsername || null, correlationId });
+      await appendAudit(db, { eventType: "admin.login.failed", actorType: "admin", actorId: loginUsername || null, after: loginFailureAuditAfter("account_not_found", body, loginUsername), correlationId });
+      return sendError(reply, 401, "invalid_login", "Invalid credentials", correlationId);
+    }
+    if (!accountEligible) {
+      await recordLoginFailure(db, request, loginUsername, config);
+      await appendAudit(db, { eventType: "admin.login.failed", actorType: "admin", actorId: loginUsername || null, objectType: "admin_account", objectId: String(account.id), after: loginFailureAuditAfter("account_inactive", body, loginUsername), correlationId });
+      return sendError(reply, 401, "invalid_login", "Invalid credentials", correlationId);
+    }
+    if (!account.password_hash) {
+      await recordLoginFailure(db, request, loginUsername, config);
+      await appendAudit(db, { eventType: "admin.login.failed", actorType: "admin", actorId: loginUsername || null, objectType: "admin_account", objectId: String(account.id), after: loginFailureAuditAfter("password_hash_missing", body, loginUsername), correlationId });
       return sendError(reply, 401, "invalid_login", "Invalid credentials", correlationId);
     }
     if (!passwordOk) {
       await recordLoginFailure(db, request, loginUsername, config);
-      await appendAudit(db, { eventType: "admin.login.failed", actorType: "admin", actorId: loginUsername || null, correlationId });
+      await appendAudit(db, { eventType: "admin.login.failed", actorType: "admin", actorId: loginUsername || null, objectType: "admin_account", objectId: String(account.id), after: loginFailureAuditAfter("password_mismatch", body, loginUsername), correlationId });
       return sendError(reply, 401, "invalid_login", "Invalid credentials", correlationId);
     }
     await clearLoginFailures(db, request, loginUsername, config);

@@ -666,6 +666,8 @@ describe("admin server actions", () => {
             id: "account-id",
             username: "admin",
             password_hash: passwordHash,
+            active: true,
+            activated_at: "2026-07-14T10:00:00.000Z",
             mfa_enabled: true,
             mfa_secret: encrypted,
             session_epoch: "epoch-1"
@@ -718,6 +720,57 @@ describe("admin server actions", () => {
     });
     expect(response.statusCode).toBe(200);
     expect(response.json()).toMatchObject({ ok: true });
+  });
+
+  it("audits the internal login failure reason without exposing it to the client", async () => {
+    const passwordHash = await argon2.hash("correct horse battery staple", { type: argon2.argon2id, memoryCost: 4096, timeCost: 2, parallelism: 1 });
+    const query = vi.fn(async (sql: string, _params?: unknown[]) => {
+      if (sql.startsWith("select * from admin_account where username=$1")) {
+        return {
+          rowCount: 1,
+          rows: [{
+            id: "account-id",
+            username: "admin",
+            password_hash: passwordHash,
+            active: true,
+            activated_at: "2026-07-14T10:00:00.000Z",
+            mfa_enabled: false,
+            mfa_secret: null,
+            session_epoch: "epoch-1"
+          }]
+        };
+      }
+      if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") return { rowCount: 0, rows: [] };
+      return { rowCount: 1, rows: [] };
+    });
+    const db = {
+      query,
+      connect: async () => ({ query, release: () => undefined })
+    } as unknown as Db;
+    app = Fastify();
+    await app.register(cookie, { secret: config.SESSION_SECRET_BASE64.toString("base64url") });
+    registerAdminRoutes(app, db, config);
+    await app.ready();
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/login",
+      headers: { host: config.ADMIN_HOST },
+      payload: {
+        username: " Admin ",
+        password: "wrong password"
+      }
+    });
+
+    expect(response.statusCode).toBe(401);
+    expect(response.json()).toMatchObject({ error: "invalid_login", message: "Invalid credentials" });
+    const auditCall = query.mock.calls.find(([sql, params]) => String(sql).includes("append_audit_event") && Array.isArray(params) && params[0] === "admin.login.failed");
+    expect(auditCall?.[1]?.[6]).toBe(JSON.stringify({
+      reason: "password_mismatch",
+      usernamePresent: true,
+      proofPresent: true,
+      usernameNormalized: true
+    }));
   });
 
   it("returns audit integrity and export for administrators", async () => {
@@ -1072,6 +1125,8 @@ describe("admin server actions", () => {
             id: "account-id",
             username: "admin",
             password_hash: passwordHash,
+            active: true,
+            activated_at: "2026-07-14T10:00:00.000Z",
             mfa_enabled: true,
             mfa_secret: encryptMfaSecret("JBSWY3DPEHPK3PXP", config.MFA_ENCRYPTION_KEY_BASE64, { subjectId: "account-id", purpose: "admin_totp" }),
             session_epoch: "epoch-1"
