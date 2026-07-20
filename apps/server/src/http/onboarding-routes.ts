@@ -225,6 +225,15 @@ export function registerOnboardingRoutes(app: FastifyInstance, db: Db, config: O
     const principal = await programmerPrincipal(db, config, request, reply);
     if (!principal) return;
     if (principal.serviceKind !== "MCP") return sendError(reply, 409, "integration_token_kind_mismatch", undefined, correlationId);
+    if (principal.tokenKind === "BLUEPRINT_RELEASE") {
+      return sendError(
+        reply,
+        409,
+        "integration_token_kind_mismatch",
+        "Blueprint release tokens must use /v2/component-onboardings.",
+        correlationId
+      );
+    }
     const key = idempotencyKey(request);
     if (!key) return sendError(reply, 400, "invalid_idempotency_key", undefined, correlationId);
     let upload: Awaited<ReturnType<typeof validatedUpload>> | null = null;
@@ -516,7 +525,9 @@ export function registerOnboardingRoutes(app: FastifyInstance, db: Db, config: O
           ? principal.allowedBlueprintComponents.map((component) => component.componentId)
           : principal.tokenKind === "BLUEPRINT_RELEASE" ? [] : KCML_GENERATED_BLUEPRINT_COMPONENT_IDS,
         allowedBlueprintComponents: principal.allowedBlueprintComponents,
-        allowedRegistrationTypes: [...new Set(principal.allowedBlueprintComponents.map((component) => component.registrationType))],
+        allowedRegistrationTypes: principal.tokenKind === "BLUEPRINT_RELEASE"
+          ? [...new Set(principal.allowedBlueprintComponents.map((component) => component.registrationType))]
+          : ["KAJA_CLIENT", "MCP_SERVER", "MANAGED_PLATFORM_SERVICE"],
         maxChildJobs: principal.maxChildJobs,
         autoActivateAfterPass: principal.tokenKind === "BLUEPRINT_RELEASE",
         manualApprovalRequiredAfterIssuance: principal.tokenKind !== "BLUEPRINT_RELEASE"
@@ -653,3 +664,4 @@ export function registerOnboardingRoutes(app: FastifyInstance, db: Db, config: O
     }
   });
 }
+
