@@ -56,7 +56,8 @@ const EXPECTED_MIGRATIONS = [
   "047_blueprint_release_generated_scope_20260723.sql",
   "048_revoke_legacy_blueprint_platform_grants_20260723.sql",
   "049_single_use_integration_tokens_20260724.sql",
-  "050_component_full_contract_20260724.sql"
+  "050_component_full_contract_20260724.sql",
+  "051_drop_admin_account_manual_fix_backup_20260720.sql"
 ] as const;
 
 export type ReadinessReport = {

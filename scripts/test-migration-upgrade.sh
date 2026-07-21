@@ -280,7 +280,7 @@ SQL
 
 psql "$KCML_UPGRADE_DATABASE_URL" --no-psqlrc --set ON_ERROR_STOP=1 --tuples-only --no-align <<'SQL' | grep -Fx 'upgrade-ok'
 select case when
-  (select count(*) from schema_migration) = 51
+  (select count(*) from schema_migration) = 52
   and (select count(*) from legacy_schema_migration) = 9
   and (select count(*) from audit_event) = 1165
   and (select valid from verify_audit_chain()) is true
