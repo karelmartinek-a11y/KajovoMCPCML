@@ -57,13 +57,14 @@ const EXPECTED_MIGRATIONS = [
   "048_revoke_legacy_blueprint_platform_grants_20260723.sql",
   "049_single_use_integration_tokens_20260724.sql",
   "050_component_full_contract_20260724.sql",
-  "051_component_runtime_evidence_20260724.sql",
-  "052_component_activation_state_alignment_20260724.sql",
-  "053_component_audit_hash_chain_20260724.sql",
-  "054_release_epoch_20260724.sql",
-  "055_external_component_runtime_20260724.sql",
-  "056_external_gateway_component_tokens_20260724.sql",
-  "057_external_gateway_circuit_breaker_20260724.sql"
+  "051_drop_admin_account_manual_fix_backup_20260720.sql",
+  "052_component_runtime_evidence_20260724.sql",
+  "053_component_activation_state_alignment_20260724.sql",
+  "054_component_audit_hash_chain_20260724.sql",
+  "055_release_epoch_20260724.sql",
+  "056_external_component_runtime_20260724.sql",
+  "057_external_gateway_component_tokens_20260724.sql",
+  "058_external_gateway_circuit_breaker_20260724.sql"
 ] as const;
 
 export type ReadinessReport = {

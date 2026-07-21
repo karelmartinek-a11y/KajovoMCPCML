@@ -1,0 +1,1 @@
+drop table if exists public.admin_account_manual_fix_backup_20260720;

@@ -11,5 +11,5 @@ This release defines the first production release wave baseline for native compo
 - Native v2 component intake is fail-closed against blueprint identity, release wave, token scope, duplicate child components, child-job limits and revision concurrency headers.
 - Blueprint release token handoff recommends `/v2/component-onboardings` and still includes `/v1/service-onboardings` only as a legacy service adapter.
 - Component runtime operations use MCP `2025-11-25` at `/v2/component-mcp`; legacy v2 operation paths remain compatibility adapters.
-- Migrations `051`-`057` are forward-only. Recovery uses the migration-compatible previous application release while retaining added nullable tables/columns; do not reverse or manually delete audit, token, gateway-call or circuit state.
+- Migrations `052`-`058` are forward-only; `051_drop_admin_account_manual_fix_backup_20260720.sql` is retained from `main`. Recovery uses the migration-compatible previous application release while retaining added nullable tables/columns; do not reverse or manually delete audit, token, gateway-call or circuit state.
 - External target disable/revoke is the immediate operational rollback for outbound gateway changes. It prevents new dispatch before DNS or network I/O while preserving the audit trail.
