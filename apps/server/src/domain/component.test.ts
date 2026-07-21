@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { canonicalJson, componentManifestDigest, validateComponentManifest } from "./component.js";
 import { KCML_RELEASE } from "./release.js";
 
-const exampleManifest = JSON.parse(readFileSync(new URL("../../../../docs/onboarding-manifest-2026.07.23.example.json", import.meta.url), "utf8")) as Record<string, unknown>;
+const exampleManifest = JSON.parse(readFileSync(new URL(`../../../../docs/onboarding-manifest-${KCML_RELEASE.manifestSchemaVersion}.example.json`, import.meta.url), "utf8")) as Record<string, unknown>;
 
 function manifest(overrides: Record<string, unknown> = {}) {
   return {
@@ -24,7 +24,7 @@ describe(`component manifest ${KCML_RELEASE.catalogVersion}`, () => {
   it("rejects the former minimal runtime manifest", () => {
     expect(() => validateComponentManifest({
       schemaVersion: KCML_RELEASE.catalogVersion,
-      blueprint: { componentId: "MCP-RX-WA-001", version: KCML_RELEASE.catalogVersion, releaseWaveKey: "baseline-2026-07-23" },
+      blueprint: { componentId: "MCP-RX-WA-001", version: KCML_RELEASE.catalogVersion, releaseWaveKey: "baseline-2026-07-24" },
       name: "Minimal",
       category: "MCP_SERVER",
       registrationType: "MCP_SERVER",
@@ -42,11 +42,21 @@ describe(`component manifest ${KCML_RELEASE.catalogVersion}`, () => {
     expect(() => validateComponentManifest(invalid)).toThrow("manifest_evidence_missing");
   });
 
+  it("rejects fake or repeated digests in integrity and E2E evidence", () => {
+    const invalid = manifest({
+      integrity: {
+        manifestDigest: "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+        sourceDigest: "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+      }
+    });
+    expect(() => validateComponentManifest(invalid)).toThrow("integrity_digest_invalid");
+  });
+
   it("normalizes legacy KAJA_CLIENT only when it matches an AI access client contract", () => {
     const aiManifest = manifest({
       componentType: "AI_AGENT",
       registrationType: "KAJA_CLIENT",
-      blueprint: { componentId: "AI-CLS-001", version: KCML_RELEASE.catalogVersion, releaseWaveKey: "baseline-2026-07-23" },
+      blueprint: { componentId: "AI-CLS-001", version: KCML_RELEASE.catalogVersion, releaseWaveKey: "baseline-2026-07-24" },
       agentKey: "classifier",
       agentVersion: "1.0.0",
       executionProfile: { mode: "isolated" },

@@ -1180,7 +1180,7 @@ export function registerAdminRoutes(app: FastifyInstance, db: Db, config: AdminR
     if (request.method === "GET") {
       const session = await sessionAccount(db, request, config);
       if (!session || session.role !== "AUDITOR") return;
-      const auditorReadable = ["/api/audit", "/api/monitoring", "/api/readiness", "/api/admin-security", "/api/mcp-servers", "/api/components"];
+      const auditorReadable = ["/api/audit", "/api/monitoring", "/api/readiness", "/api/admin-security", "/api/mcp-servers", "/api/components", "/api/external-principals", "/api/external-targets", "/api/external-permissions"];
       if (!auditorReadable.some((prefix) => path.startsWith(prefix))) return sendError(reply, 403, "admin_role_forbidden");
       return;
     }

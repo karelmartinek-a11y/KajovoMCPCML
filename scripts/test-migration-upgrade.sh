@@ -184,14 +184,14 @@ insert into integration_token(
   '20000000-0000-0000-0000-000000000024','Legacy blueprint platform grant',digest('legacy-blueprint-platform-grant','sha256'),'v1','legacyplatform24',id,
   now()+interval '1 hour',now()+interval '1 hour',now()+interval '1 day',
   '{"summary":"Legacy platform grant","businessPurpose":"Exercise upgrade cleanup for forbidden platform scope.","serviceOwner":"KCML","technicalOwner":"KCML","criticality":"HIGH"}'::jsonb,
-  'BLUEPRINT_RELEASE','2026.07.23','baseline-2026-07-23','2026.07.23',1
+  'BLUEPRINT_RELEASE','2026.07.24','baseline-2026-07-24','2026.07.24',1
 from admin_account order by created_at limit 1;
 
 alter table integration_token_allowed_component disable trigger integration_token_allowed_component_generated_scope_tg;
 insert into integration_token_allowed_component(token_id,blueprint_component_id,registration_type,release_version,release_wave_key)
 values
-  ('20000000-0000-0000-0000-000000000024','AI-CLS-001','KCML_ACCESS_CLIENT','2026.07.23','baseline-2026-07-23'),
-  ('20000000-0000-0000-0000-000000000024','KCML-AUTH-001','MANAGED_PLATFORM_SERVICE','2026.07.23','baseline-2026-07-23');
+  ('20000000-0000-0000-0000-000000000024','AI-CLS-001','KCML_ACCESS_CLIENT','2026.07.24','baseline-2026-07-24'),
+  ('20000000-0000-0000-0000-000000000024','KCML-AUTH-001','MANAGED_PLATFORM_SERVICE','2026.07.24','baseline-2026-07-24');
 alter table integration_token_allowed_component enable trigger integration_token_allowed_component_generated_scope_tg;
 SQL
 psql "$KCML_UPGRADE_DATABASE_URL" --no-psqlrc --set ON_ERROR_STOP=1 --file "$migrations/048_revoke_legacy_blueprint_platform_grants_20260723.sql" >/dev/null
@@ -229,7 +229,7 @@ begin
       from managed_service service
       join component component on component.id=service.component_id
      where service.slug='reference-external-api-upgrade-fixture'
-       and component.release_version='2026.07.23'
+       and component.release_version='2026.07.24'
   ) then
     raise exception 'managed_service_component_bridge_not_current';
   end if;
@@ -280,7 +280,7 @@ SQL
 
 psql "$KCML_UPGRADE_DATABASE_URL" --no-psqlrc --set ON_ERROR_STOP=1 --tuples-only --no-align <<'SQL' | grep -Fx 'upgrade-ok'
 select case when
-  (select count(*) from schema_migration) = 52
+  (select count(*) from schema_migration) = 59
   and (select count(*) from legacy_schema_migration) = 9
   and (select count(*) from audit_event) = 1165
   and (select valid from verify_audit_chain()) is true
@@ -393,4 +393,3 @@ select case when
   )
   then 'upgrade-ok' else 'upgrade-failed' end;
 SQL
-

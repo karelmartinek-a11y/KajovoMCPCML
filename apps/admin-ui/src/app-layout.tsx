@@ -53,6 +53,7 @@ export function AppLayout({
         <div className="brand-row"><span className="brand-mark"><ShieldCheck size={22} /></span><div><strong>KCML</strong><span>{releaseLabel}</span></div></div>
         <nav>
           {navigationButton("components", "Katalog komponent", <Boxes size={18} />)}
+          {navigationButton("external", "Externí strany", <Workflow size={18} />)}
           {navigationButton("monitoring", "Monitoring komponent", <Activity size={18} />)}
           {role !== "AUDITOR" ? navigationButton("integration", "Integrační tokeny", <Workflow size={18} />) : null}
           {role !== "AUDITOR" ? navigationButton("secrets", "Secrets", <Lock size={18} />) : null}

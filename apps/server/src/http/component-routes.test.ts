@@ -39,6 +39,8 @@ describe("component public route protection", () => {
     expect(routeRateLimits.get("GET /.well-known/kcml-component")).toEqual({ max: 60, timeWindow: "1 minute" });
     expect(routeRateLimits.get("POST /v2/component-pulse")).toEqual({ max: 120, timeWindow: "1 minute" });
     expect(routeRateLimits.get("POST /v2/component-audit-events")).toEqual({ max: 600, timeWindow: "1 minute" });
+    expect(routeRateLimits.get("POST /v2/component-outbound-pulse")).toEqual({ max: 120, timeWindow: "1 minute" });
+    expect(routeRateLimits.get("POST /v2/component-mcp")).toEqual({ max: 240, timeWindow: "1 minute" });
   });
 
   it("returns a public discovery projection without credentials, permissions, contacts or audit internals", async () => {
@@ -91,7 +93,7 @@ describe("component public route protection", () => {
         allowed_pipeline: "MCP_ONBOARDING",
         token_kind: "BLUEPRINT_RELEASE",
         release_version: KCML_RELEASE.catalogVersion,
-        release_wave_key: "baseline-2026-07-23",
+        release_wave_key: "baseline-2026-07-24",
         max_child_jobs: 20
       }]
     }));
@@ -115,5 +117,11 @@ describe("component public route protection", () => {
     expect(response.statusCode).toBe(400);
     expect(response.json()).toMatchObject({ error: "idempotency_key_and_if_match_required" });
     expect(query).toHaveBeenCalledTimes(2);
+  });
+
+  it("exposes the component MCP endpoint as strict JSON-RPC", async () => {
+    const response = await app.inject({ method: "POST", url: "/v2/component-mcp", headers: { host: "kcml0002.hcasc.cz" }, payload: { method: "tools/list" } });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ jsonrpc: "2.0", id: null, error: { code: -32600, message: "Invalid Request" } });
   });
 });

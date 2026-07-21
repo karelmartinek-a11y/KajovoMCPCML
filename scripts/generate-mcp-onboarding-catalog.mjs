@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const releaseArgument = process.argv.find((argument) => argument.startsWith("--release="));
-const release = releaseArgument?.slice("--release=".length) ?? "2026.07.23";
+const release = releaseArgument?.slice("--release=".length) ?? "2026.07.24";
 if (!/^20[0-9]{2}[.](0[1-9]|1[0-2])[.](0[1-9]|[12][0-9]|3[01])$/.test(release)) throw new Error(`Unsupported catalog release: ${release}`);
 if (release <= "2026.07.20") throw new Error(`Historical catalog is immutable: ${release}`);
 const protocol = "2025-11-25";
@@ -43,7 +43,7 @@ const mcpComponents = [
   ["MCP-WFC-011", "STATEFUL_SERVICE"]
 ];
 const managedServices = ["KCML-AUTH-001", "KCML-CTL-002", "KCML-MON-003", "KCML-AUD-004", "KCML-SEC-005"];
-const releaseWaveKey = "baseline-2026-07-23";
+const releaseWaveKey = "baseline-2026-07-24";
 const generatedBlueprintIds = [...aiComponents, ...mcpComponents].map(([componentId]) => componentId);
 const blueprintIds = generatedBlueprintIds.concat(managedServices);
 
@@ -280,6 +280,104 @@ const schema = {
   }
 };
 
+const ingressPayloadSchema = {
+  type: "object",
+  required: ["messageId", "payload"],
+  additionalProperties: false,
+  properties: {
+    messageId: { type: "string", minLength: 6, maxLength: 120 },
+    payload: {
+      type: "object",
+      required: ["text", "sender"],
+      additionalProperties: false,
+      properties: {
+        text: { type: "string", minLength: 1, maxLength: 4096 },
+        sender: { type: "string", minLength: 3, maxLength: 160 }
+      }
+    }
+  }
+};
+
+const acceptedPulseSchema = {
+  type: "object",
+  required: ["payload"],
+  additionalProperties: false,
+  properties: {
+    payload: {
+      type: "object",
+      required: ["accepted", "nextPulseType"],
+      additionalProperties: false,
+      properties: {
+        accepted: { type: "boolean" },
+        nextPulseType: { type: "string", const: "wa.message.accepted" }
+      }
+    }
+  }
+};
+
+const stateHealthSchema = {
+  type: "object",
+  required: ["status", "checkedAt"],
+  additionalProperties: false,
+  properties: {
+    status: { type: "string", enum: ["HEALTHY", "DEGRADED", "UNHEALTHY"] },
+    checkedAt: { type: "string", format: "date-time" }
+  }
+};
+
+const controlRequestSchema = (requiredKey) => ({
+  type: "object",
+  required: [requiredKey, "policyEpoch"],
+  additionalProperties: false,
+  properties: {
+    [requiredKey]: { type: "string", format: "uuid" },
+    policyEpoch: { type: "integer", minimum: 0 }
+  }
+});
+
+const controlAckSchema = {
+  type: "object",
+  required: ["accepted", "commandId"],
+  additionalProperties: false,
+  properties: {
+    accepted: { type: "boolean" },
+    commandId: { type: "string", format: "uuid" }
+  }
+};
+
+const stateResponseSchema = {
+  type: "object",
+  required: ["stateKey", "enabled"],
+  additionalProperties: false,
+  properties: {
+    stateKey: { type: "string", minLength: 2, maxLength: 120 },
+    enabled: { type: "boolean" }
+  }
+};
+
+const heartbeatRequestSchema = {
+  type: "object",
+  required: ["challengeId", "nonce"],
+  additionalProperties: false,
+  properties: {
+    challengeId: { type: "string", format: "uuid" },
+    nonce: { type: "string", format: "uuid" }
+  }
+};
+
+const heartbeatResponseSchema = {
+  type: "object",
+  required: ["challengeId", "received"],
+  additionalProperties: false,
+  properties: {
+    challengeId: { type: "string", format: "uuid" },
+    received: { type: "boolean" }
+  }
+};
+
+const expectedOutput = { payload: { accepted: true, nextPulseType: "wa.message.accepted" } };
+const expectedOutputDigest = `sha256:${createHash("sha256").update(JSON.stringify(expectedOutput)).digest("hex")}`;
+
 const example = {
   schemaVersion: release,
   releaseVersion: release,
@@ -301,8 +399,8 @@ const example = {
   networkPolicy: { outboundAllowlist: [], dnsPolicy: "strict", filesystemPolicy: "isolated-runtime-only" },
   dataGovernance: { classification: "CONFIDENTIAL", containsPersonalData: true, retentionDays: 365 },
   pulseContract: {
-    incoming: [{ pulseType: "wa.message.received", direction: "INCOMING", schema: { type: "object", required: ["payload"], additionalProperties: false, properties: { payload: { type: "object", minProperties: 1 } } }, routeAcl: ["AI-CLS-001"], scopes: ["component.pulse"], executionMode: "ACK_THEN_EVENT", timeoutMs: 3000, resultPulseTypes: ["wa.message.accepted"], deadlineMs: 60000, retry: { transportRetry: true, retryable: true, requiresIdempotencyKey: true }, idempotency: "REQUIRED" }],
-    outgoing: [{ pulseType: "wa.message.accepted", direction: "OUTGOING", schema: { type: "object", required: ["payload"], additionalProperties: false, properties: { payload: { type: "object", minProperties: 1 } } }, routeAcl: ["AI-CLS-001"], scopes: ["component.outbound.pulse"], executionMode: "ASYNC", timeoutMs: 3000, resultPulseTypes: [], deadlineMs: 60000, retry: { transportRetry: false, retryable: false, requiresIdempotencyKey: true }, idempotency: "REQUIRED" }]
+    incoming: [{ pulseType: "wa.message.received", direction: "INCOMING", schema: ingressPayloadSchema, routeAcl: ["AI-CLS-001"], scopes: ["component.pulse"], executionMode: "ACK_THEN_EVENT", timeoutMs: 3000, resultPulseTypes: ["wa.message.accepted"], deadlineMs: 60000, retry: { transportRetry: true, retryable: true, requiresIdempotencyKey: true }, idempotency: "REQUIRED" }],
+    outgoing: [{ pulseType: "wa.message.accepted", direction: "OUTGOING", schema: acceptedPulseSchema, routeAcl: ["AI-CLS-001"], scopes: ["component.outbound.pulse"], executionMode: "ASYNC", timeoutMs: 3000, resultPulseTypes: [], deadlineMs: 60000, retry: { transportRetry: false, retryable: false, requiresIdempotencyKey: true }, idempotency: "REQUIRED" }]
   },
   retryPolicy: { handlerRetry: false },
   auditPolicy: { technicalAudit: "PLATFORM", businessAudit: "COMPONENT" },
@@ -311,40 +409,40 @@ const example = {
   autoQuarantine: { enabled: true, rules: ["CROSS_HOST", "ARTIFACT_DRIFT", "ROUTE_ACL_DRIFT"] },
   evidence: { architectureRef: "evidence/architecture.md", securityRef: "evidence/security.md" },
   change: { changeClass: "INITIAL" },
-  integrity: { manifestDigest: "sha256:0000000000000000000000000000000000000000000000000000000000000000", sourceDigest: "sha256:1111111111111111111111111111111111111111111111111111111111111111" },
+  integrity: { manifestDigest: "sha256:0f12c34a56b789cd01ef23456789abcd0123456789abcdef0011223344556677", sourceDigest: "sha256:9a10bc32de54fa7698102345bcdef67890123456789abcdeffedcba987654321" },
   stateContract: {
-    states: [{ stateKey: "HEALTHY", category: "OPERATIONAL", schema: { type: "object", required: ["payload"], additionalProperties: false, properties: { payload: { type: "object", minProperties: 1 } } }, terminal: false }],
+    states: [{ stateKey: "HEALTHY", category: "OPERATIONAL", schema: stateHealthSchema, terminal: false }],
     transitions: [{ from: "HEALTHY", to: "UNHEALTHY", triggerMask: "heartbeat.missed" }]
   },
   e2eScenarios: [{
     scenarioId: "wa-ingress-happy-path",
     variant: "message",
     inputRef: "fixtures/wa-message.input.json",
-    inputDigest: "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+    inputDigest: "sha256:1f2e3d4c5b6a79808192a3b4c5d6e7f8102031425364758697a8b9c0d1e2f3a4",
     expectedOutputRef: "fixtures/wa-message.expected.json",
-    expectedOutputDigest: "sha256:3333333333333333333333333333333333333333333333333333333333333333",
-    expectedOutput: { payload: { accepted: true, nextPulseType: "wa.message.accepted" } },
+    expectedOutputDigest,
+    expectedOutput,
     testCommands: ["pnpm test", "pnpm e2e", "pnpm kcml:contract-test"]
   }],
   documentationEvidence: [
-    { evidenceKey: "architecture", evidenceRef: "evidence/architecture.md", evidenceDigest: "sha256:4444444444444444444444444444444444444444444444444444444444444444", mediaType: "text/markdown", required: true },
-    { evidenceKey: "contract", evidenceRef: "evidence/contract.md", evidenceDigest: "sha256:5555555555555555555555555555555555555555555555555555555555555555", mediaType: "text/markdown", required: true }
+    { evidenceKey: "architecture", evidenceRef: "evidence/architecture.md", evidenceDigest: "sha256:2468ace013579bdf2468ace013579bdf13579bdf2468ace013579bdf2468ace0", mediaType: "text/markdown", required: true },
+    { evidenceKey: "contract", evidenceRef: "evidence/contract.md", evidenceDigest: "sha256:13579bdf2468ace013579bdf2468ace02468ace013579bdf2468ace013579bdf", mediaType: "text/markdown", required: true }
   ],
   controlPlane: {
-    enable: { supported: true, path: "/v2/control/enable", method: "POST", requestSchema: { type: "object", required: ["payload"], additionalProperties: false, properties: { payload: { type: "object", minProperties: 1 } } }, responseSchema: { type: "object", required: ["payload"], additionalProperties: false, properties: { payload: { type: "object", minProperties: 1 } } } },
-    disable: { supported: true, path: "/v2/control/disable", method: "POST", requestSchema: { type: "object", required: ["payload"], additionalProperties: false, properties: { payload: { type: "object", minProperties: 1 } } }, responseSchema: { type: "object", required: ["payload"], additionalProperties: false, properties: { payload: { type: "object", minProperties: 1 } } } },
-    state: { supported: true, path: "/v2/control/state", method: "POST", requestSchema: { type: "object", required: ["payload"], additionalProperties: false, properties: { payload: { type: "object", minProperties: 1 } } }, responseSchema: { type: "object", required: ["payload"], additionalProperties: false, properties: { payload: { type: "object", minProperties: 1 } } } },
-    heartbeat: { supported: true, path: "/v2/control/heartbeat", method: "POST", requestSchema: { type: "object", required: ["payload"], additionalProperties: false, properties: { payload: { type: "object", minProperties: 1 } } }, responseSchema: { type: "object", required: ["payload"], additionalProperties: false, properties: { payload: { type: "object", minProperties: 1 } } } }
+    enable: { supported: true, path: "/v2/control/enable", method: "POST", requestSchema: controlRequestSchema("commandId"), responseSchema: controlAckSchema },
+    disable: { supported: true, path: "/v2/control/disable", method: "POST", requestSchema: controlRequestSchema("commandId"), responseSchema: controlAckSchema },
+    state: { supported: true, path: "/v2/control/state", method: "POST", requestSchema: controlRequestSchema("queryId"), responseSchema: stateResponseSchema },
+    heartbeat: { supported: true, path: "/v2/control/heartbeat", method: "POST", requestSchema: heartbeatRequestSchema, responseSchema: heartbeatResponseSchema }
   },
   outboundAuthorization: { required: true, tokenRequired: true, gatewayRequired: true, verifyEachPulse: true },
   secretPolicy: { mode: "GRANTED_SECRETS", authorizationAuthority: "KCML", allSecretsRequiresGrant: true, auditLevel: "FULL" },
   handlerKey: "whatsapp_ingress",
   handlerVersion: "1.0.0",
-  facadeTools: [{ name: "ingress", inputSchema: { type: "object", required: ["payload"], additionalProperties: false, properties: { payload: { type: "object", minProperties: 1 } } }, outputSchema: { type: "object", required: ["payload"], additionalProperties: false, properties: { payload: { type: "object", minProperties: 1 } } } }],
+  facadeTools: [{ name: "ingress", inputSchema: ingressPayloadSchema, outputSchema: acceptedPulseSchema }],
   protocol: { protocolVersion: protocol, transport: "streamable-http", capabilities: ["tools"] },
   publicEndpoints: [{
     endpointId: "WA_INGRESS", path: "/events/whatsapp", methods: ["POST"], authMode: "SIGNED_WEBHOOK",
-    requestSchema: { type: "object", required: ["payload"], additionalProperties: false, properties: { payload: { type: "object", minProperties: 1 } } }, responseSchema: { type: "object", required: ["payload"], additionalProperties: false, properties: { payload: { type: "object", minProperties: 1 } } },
+    requestSchema: ingressPayloadSchema, responseSchema: acceptedPulseSchema,
     limits: { requestBytes: 262144, responseBytes: 65536 }, timeoutMs: 3000,
     rateLimit: { windowSeconds: 60, maxRequests: 600 }, idempotency: "REQUIRED",
     signatureProfile: "whatsapp-hmac-v1", eventMapping: { pulseType: "wa.message.received", correlationIdSource: "header:x-correlation-id" }
@@ -423,12 +521,12 @@ const catalog = {
     "mcp.tools.list": { protocol: "MCP", transport: "streamable-http", requiredFor: ["MCP_SERVER"], audit: true, monitoring: true },
     "mcp.tools.call": { protocol: "MCP", transport: "streamable-http", requiredFor: ["MCP_SERVER"], audit: true, monitoring: true },
     "component.discovery": { protocol: "HTTPS", transport: "https", requiredFor: [], audit: true, monitoring: true },
-    "component.pulse": { protocol: "KCML_PULSE", transport: "https", requiredFor: [], audit: true, monitoring: true },
-    "component.audit.write": { protocol: "KCML_AUDIT", transport: "https", requiredFor: [], audit: true, monitoring: true },
-    "component.heartbeat": { protocol: "KCML_CONTROL", transport: "https", requiredFor: [], audit: true, monitoring: true },
-    "component.state.query": { protocol: "KCML_CONTROL", transport: "https", requiredFor: [], audit: true, monitoring: true },
-    "component.control.ack": { protocol: "KCML_CONTROL", transport: "https", requiredFor: [], audit: true, monitoring: true },
-    "component.outbound.pulse": { protocol: "KCML_PULSE", transport: "https", requiredFor: [], audit: true, monitoring: true }
+    "component.pulse": { protocol: "MCP", transport: "streamable-http", toolName: "kcml.pulse.accept", requiredFor: [], audit: true, monitoring: true },
+    "component.audit.write": { protocol: "MCP", transport: "streamable-http", toolName: "kcml.audit.append", requiredFor: [], audit: true, monitoring: true },
+    "component.heartbeat": { protocol: "MCP", transport: "streamable-http", toolName: "kcml.heartbeat.push", requiredFor: [], audit: true, monitoring: true },
+    "component.state.query": { protocol: "MCP", transport: "streamable-http", toolName: "kcml.state.query", requiredFor: [], audit: true, monitoring: true },
+    "component.control.ack": { protocol: "MCP", transport: "streamable-http", toolName: "kcml.control.ack", requiredFor: [], audit: true, monitoring: true },
+    "component.outbound.pulse": { protocol: "MCP", transport: "streamable-http", toolName: "kcml.pulse.emit", requiredFor: [], audit: true, monitoring: true }
   },
   blueprintComponents: {
     aiAgents: aiComponents.map(([componentId, role]) => ({ componentId, role, registrationType: "KCML_ACCESS_CLIENT" })),
@@ -536,7 +634,9 @@ const catalog = {
       "/v2/component-onboardings/{id}/e2e-results": { post: { operationId: "recordComponentE2EResult", responses: { "202": { description: "Scenario output matches expected output" }, "409": { description: "Scenario output differs from expected output" } } } },
       "/v2/component-pulse": { post: { operationId: "ingestComponentPulse", responses: { "202": { description: "Full inbound PULS envelope accepted" } } } },
       "/v2/component-outbound-pulse": { post: { operationId: "dispatchComponentOutboundPulse", responses: { "202": { description: "Outbound PULS envelope authorized and audited" } } } },
+      "/v2/component-mcp": { post: { operationId: "invokeComponentRuntimeMcpTool", responses: { "200": { description: "MCP JSON-RPC response" }, "202": { description: "MCP notification accepted" } } } },
       "/v2/component-heartbeat": { post: { operationId: "recordComponentHeartbeat", responses: { "202": { description: "Heartbeat accepted and policy snapshot returned" } } } },
+      "/v2/component-state-push": { post: { operationId: "recordComponentStatePush", responses: { "202": { description: "State snapshot accepted" } } } },
       "/v2/component-state-query": { post: { operationId: "recordComponentStateQueryResponse", responses: { "202": { description: "State snapshot accepted" } } } },
       "/v2/component-control-ack": { post: { operationId: "recordComponentControlAck", responses: { "202": { description: "Control-plane acknowledgement accepted" } } } },
       "/v2/component-audit-events": { post: { operationId: "ingestComponentOperationAuditEvent", responses: { "202": { description: "Full operation audit accepted" } } } },

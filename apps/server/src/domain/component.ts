@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import type pg from "pg";
-import componentManifestSchema from "../contracts/component-manifest-2026.07.23.schema.json" with { type: "json" };
+import componentManifestSchema from "../contracts/component-manifest-2026.07.24.schema.json" with { type: "json" };
 import type { Db } from "../db.js";
 import { tx } from "../db.js";
 import { hmacToken, issueOpaqueSecret } from "../security/secrets.js";
@@ -67,6 +67,15 @@ export type ComponentManifest = JsonRecord & {
   secretPolicy: JsonRecord;
 };
 
+type GateResult = {
+  gate: typeof ACTIVATION_GATES[number];
+  status: "PASS" | "FAIL";
+  reasonCode: string;
+  evaluatorVersion: string;
+  evidence: JsonRecord;
+  expiresAt: string | null;
+};
+
 const ajv = new Ajv2020({ strict: false, allErrors: true, validateFormats: false });
 const validateCatalogComponentManifest = ajv.compile(componentManifestSchema);
 
@@ -114,8 +123,31 @@ function isEmptyObjectSchema(value: unknown): boolean {
     && keys.every((key) => ["type", "additionalProperties", "$schema", "title", "description"].includes(key));
 }
 
+function isPayloadSkeletonSchema(value: unknown): boolean {
+  const schema = record(value);
+  const properties = record(schema?.properties);
+  const payload = record(properties?.payload);
+  return schema?.type === "object"
+    && Array.isArray(schema.required)
+    && schema.required.length === 1
+    && schema.required[0] === "payload"
+    && schema.additionalProperties === false
+    && Boolean(payload)
+    && payload?.type === "object"
+    && Number(payload?.minProperties ?? 0) === 1
+    && !record(payload?.properties);
+}
+
+function fakeDigest(value: unknown): boolean {
+  const digest = text(value);
+  const match = /^sha256:([a-f0-9]{64})$/i.exec(digest);
+  if (!match) return true;
+  return /^([a-f0-9])\1{63}$/i.test(match[1]!);
+}
+
 function rejectPlaceholderSchemas(value: unknown, path = "manifest"): void {
   if (isEmptyObjectSchema(value)) throw Object.assign(new Error(`placeholder_schema:${path}`), { statusCode: 400 });
+  if (isPayloadSkeletonSchema(value)) throw Object.assign(new Error(`placeholder_schema:${path}`), { statusCode: 400 });
   if (Array.isArray(value)) {
     value.forEach((item, index) => rejectPlaceholderSchemas(item, `${path}[${index}]`));
     return;
@@ -142,14 +174,20 @@ function rejectIncompleteContract(manifest: ComponentManifest): void {
   if (!manifest.documentationEvidence.length) throw Object.assign(new Error("documentation_evidence_required"), { statusCode: 400 });
   if (manifest.source.testCommand !== "pnpm kcml:contract-test") throw Object.assign(new Error("contract_test_command_required"), { statusCode: 400 });
   for (const evidence of manifest.documentationEvidence) {
-    if (!nonPlaceholderRef(evidence.evidenceRef)) throw Object.assign(new Error("manifest_evidence_missing"), { statusCode: 400 });
+    if (!nonPlaceholderRef(evidence.evidenceRef) || fakeDigest(evidence.evidenceDigest)) {
+      throw Object.assign(new Error("manifest_evidence_missing"), { statusCode: 400 });
+    }
   }
   for (const scenario of manifest.e2eScenarios) {
     if (!nonPlaceholderRef(scenario.inputRef) || !nonPlaceholderRef(scenario.expectedOutputRef)
-      || !text(scenario.inputDigest).startsWith("sha256:") || !text(scenario.expectedOutputDigest).startsWith("sha256:")
+      || fakeDigest(scenario.inputDigest) || fakeDigest(scenario.expectedOutputDigest)
       || !record(scenario.expectedOutput)) {
       throw Object.assign(new Error("e2e_fixture_required"), { statusCode: 400 });
     }
+  }
+  const integrity = record(manifest.integrity);
+  if (fakeDigest(integrity?.manifestDigest) || fakeDigest(integrity?.sourceDigest)) {
+    throw Object.assign(new Error("integrity_digest_invalid"), { statusCode: 400 });
   }
   rejectPlaceholderSchemas(manifest);
 }
@@ -171,7 +209,7 @@ function manifestRevision(manifest: ComponentManifest): string {
 }
 
 function manifestCapabilities(manifest: ComponentManifest): string[] {
-  const capabilities = new Set(["component.pulse", "component.audit.write", "component.heartbeat", "component.state.query", "component.control.ack", "component.outbound.pulse"]);
+  const capabilities = new Set(["mcp.initialize", "mcp.notifications.initialized", "mcp.tools.list", "mcp.tools.call", "component.pulse", "component.audit.write", "component.heartbeat", "component.state.query", "component.control.ack", "component.outbound.pulse"]);
   if (manifest.componentType === "MCP_SERVER") MCP_REQUIRED_CAPABILITIES.forEach((capability) => capabilities.add(capability));
   const protocol = record(manifest.protocol);
   const declared = Array.isArray(protocol?.capabilities) ? protocol.capabilities : [];
@@ -203,9 +241,29 @@ export function validateComponentManifest(input: unknown): ComponentManifest {
   return manifest;
 }
 
-async function gateResults(db: Db, componentId: string, manifest: ComponentManifest, authorizationSnapshot: Record<string, unknown>): Promise<Array<{ gate: typeof ACTIVATION_GATES[number]; passed: boolean }>> {
+function evidenceDigest(value: unknown): string {
+  return `sha256:${createHash("sha256").update(canonicalJson(value)).digest("hex")}`;
+}
+
+function statePayloadMatchesCommand(expectedStateKey: string | null, payload: unknown): boolean {
+  if (!expectedStateKey) return false;
+  const body = record(payload);
+  const activationState = text(body?.activationState).toUpperCase();
+  const operationalState = text(body?.operationalState).toUpperCase();
+  const enabled = typeof body?.enabled === "boolean" ? body.enabled : null;
+  if (expectedStateKey === "ENABLED") {
+    return enabled === true || activationState === "ACTIVE" || operationalState === "HEALTHY";
+  }
+  if (expectedStateKey === "DISABLED") {
+    return enabled === false || activationState === "DISABLED" || operationalState === "DISABLED";
+  }
+  return activationState === expectedStateKey || operationalState === expectedStateKey;
+}
+
+async function gateResults(db: Db, componentId: string, manifest: ComponentManifest, authorizationSnapshot: Record<string, unknown>): Promise<GateResult[]> {
   const evidence = await db.query(
     `select c.monitoring_state,c.recertification_state,stream.gap_state,
+            c.hostname,c.category,c.activation_state,c.lifecycle_state,c.enabled,
             (select count(*)::int from component_pulse_mask where component_id=c.id) as pulse_masks,
             (select count(*)::int from component_state_contract where component_id=c.id) as state_contracts,
             (select count(*)::int from component_call_mask where component_id=c.id) as call_masks,
@@ -217,7 +275,8 @@ async function gateResults(db: Db, componentId: string, manifest: ComponentManif
             (select count(*)::int from component_documentation_evidence where component_id=c.id) as documentation,
             (select count(distinct command_type)::int from component_control_command where component_id=c.id and command_type in ('enable','disable','state','heartbeat')) as control_commands,
             exists (select 1 from component_secret_policy where component_id=c.id) as secret_policy,
-            exists (select 1 from component_pulse_mask where component_id=c.id and direction='OUTGOING' and token_required is true) as outbound_auth
+            exists (select 1 from component_pulse_mask where component_id=c.id and direction='OUTGOING' and token_required is true) as outbound_auth,
+            exists (select 1 from component_readiness_gate_evidence g where g.component_id=c.id and g.gate_key='MONITORING' and g.status='PASS' and (g.expires_at is null or g.expires_at > now())) as monitoring_probe_evidence
        from component c
        left join component_audit_stream stream on stream.component_id=c.id
       where c.id=$1`,
@@ -225,23 +284,308 @@ async function gateResults(db: Db, componentId: string, manifest: ComponentManif
   );
   const row = evidence.rows[0] ?? {};
   const e2eScenarios = Number(row.e2e_scenarios ?? 0);
+  const now = new Date().toISOString();
   return [
-    { gate: "FULL_SCHEMA", passed: Boolean(validateComponentManifest(manifest)) },
-    { gate: "PULSE_CONTRACT", passed: Number(row.pulse_masks ?? 0) >= manifest.pulseContract.incoming.length + manifest.pulseContract.outgoing.length },
-    { gate: "STATE_CONTRACT", passed: Number(row.state_contracts ?? 0) >= manifest.stateContract.states.length },
-    { gate: "CALL_MASKS", passed: Number(row.call_masks ?? 0) > 0 && Number(row.endpoint_contracts ?? 0) > 0 },
-    { gate: "E2E_SCENARIOS", passed: e2eScenarios > 0 && Number(row.e2e_passed ?? 0) >= e2eScenarios },
-    { gate: "DOCUMENTATION", passed: Number(row.documentation ?? 0) >= manifest.documentationEvidence.length },
-    { gate: "CONTROL_PLANE", passed: Number(row.control_commands ?? 0) === 4 },
-    { gate: "SECRET_POLICY", passed: row.secret_policy === true },
-    { gate: "OUTBOUND_AUTH", passed: row.outbound_auth === true && manifest.outboundAuthorization.tokenRequired === true },
-    { gate: "AUTHORIZATION", passed: manifest.secretPolicy.authorizationAuthority === "KCML" && authorizationSnapshot.blueprintComponentId === manifest.blueprint.componentId },
-    { gate: "PUBLIC_ENDPOINT", passed: Boolean(componentId) },
-    { gate: "TECHNICAL_DISABLE", passed: record(manifest.controlPlane.disable)?.supported === true && record(manifest.controlPlane.enable)?.supported === true },
-    { gate: "MONITORING", passed: Array.isArray(manifest.monitoringProfile.probes) && row.monitoring_state === "HEALTHY" },
-    { gate: "AUDIT_CONTINUITY", passed: manifest.auditPolicy.technicalAudit === "PLATFORM" && row.gap_state === "CONTIGUOUS" },
-    { gate: "RECERTIFICATION", passed: ["NOT_DUE", "PASSED"].includes(String(row.recertification_state)) }
+    {
+      gate: "FULL_SCHEMA",
+      status: "PASS",
+      reasonCode: "manifest_validated",
+      evaluatorVersion: "2026.07.24",
+      evidence: { schemaVersion: manifest.schemaVersion, manifestDigest: componentManifestDigest(manifest), checkedAt: now },
+      expiresAt: null
+    },
+    {
+      gate: "PULSE_CONTRACT",
+      status: Number(row.pulse_masks ?? 0) >= manifest.pulseContract.incoming.length + manifest.pulseContract.outgoing.length ? "PASS" : "FAIL",
+      reasonCode: Number(row.pulse_masks ?? 0) >= manifest.pulseContract.incoming.length + manifest.pulseContract.outgoing.length ? "pulse_masks_complete" : "pulse_masks_incomplete",
+      evaluatorVersion: "2026.07.24",
+      evidence: { declaredIncoming: manifest.pulseContract.incoming.length, declaredOutgoing: manifest.pulseContract.outgoing.length, storedMasks: Number(row.pulse_masks ?? 0), checkedAt: now },
+      expiresAt: null
+    },
+    {
+      gate: "STATE_CONTRACT",
+      status: Number(row.state_contracts ?? 0) >= manifest.stateContract.states.length ? "PASS" : "FAIL",
+      reasonCode: Number(row.state_contracts ?? 0) >= manifest.stateContract.states.length ? "state_contract_complete" : "state_contract_incomplete",
+      evaluatorVersion: "2026.07.24",
+      evidence: { declaredStates: manifest.stateContract.states.map((state) => text(state.stateKey)), storedStates: Number(row.state_contracts ?? 0), checkedAt: now },
+      expiresAt: null
+    },
+    {
+      gate: "CALL_MASKS",
+      status: Number(row.call_masks ?? 0) > 0 && Number(row.endpoint_contracts ?? 0) > 0 ? "PASS" : "FAIL",
+      reasonCode: Number(row.call_masks ?? 0) > 0 && Number(row.endpoint_contracts ?? 0) > 0 ? "call_masks_complete" : "call_masks_missing",
+      evaluatorVersion: "2026.07.24",
+      evidence: { storedCallMasks: Number(row.call_masks ?? 0), storedEndpoints: Number(row.endpoint_contracts ?? 0), checkedAt: now },
+      expiresAt: null
+    },
+    {
+      gate: "E2E_SCENARIOS",
+      status: e2eScenarios > 0 && Number(row.e2e_passed ?? 0) >= e2eScenarios ? "PASS" : "FAIL",
+      reasonCode: e2eScenarios > 0 && Number(row.e2e_passed ?? 0) >= e2eScenarios ? "e2e_all_variants_passed" : "e2e_variants_missing_or_failed",
+      evaluatorVersion: "2026.07.24",
+      evidence: { declaredScenarioCount: e2eScenarios, passingScenarioCount: Number(row.e2e_passed ?? 0), checkedAt: now },
+      expiresAt: null
+    },
+    {
+      gate: "DOCUMENTATION",
+      status: Number(row.documentation ?? 0) >= manifest.documentationEvidence.length ? "PASS" : "FAIL",
+      reasonCode: Number(row.documentation ?? 0) >= manifest.documentationEvidence.length ? "documentation_evidence_complete" : "documentation_evidence_missing",
+      evaluatorVersion: "2026.07.24",
+      evidence: { declaredEvidence: manifest.documentationEvidence.map((item) => text(item.evidenceKey)), storedEvidenceCount: Number(row.documentation ?? 0), checkedAt: now },
+      expiresAt: null
+    },
+    {
+      gate: "CONTROL_PLANE",
+      status: Number(row.control_commands ?? 0) === 4 ? "PASS" : "FAIL",
+      reasonCode: Number(row.control_commands ?? 0) === 4 ? "control_contract_complete" : "control_contract_incomplete",
+      evaluatorVersion: "2026.07.24",
+      evidence: { storedControlCommands: Number(row.control_commands ?? 0), expectedCommands: ["enable", "disable", "state", "heartbeat"], checkedAt: now },
+      expiresAt: null
+    },
+    {
+      gate: "SECRET_POLICY",
+      status: row.secret_policy === true ? "PASS" : "FAIL",
+      reasonCode: row.secret_policy === true ? "secret_policy_present" : "secret_policy_missing",
+      evaluatorVersion: "2026.07.24",
+      evidence: { policyDeclared: row.secret_policy === true, checkedAt: now },
+      expiresAt: null
+    },
+    {
+      gate: "OUTBOUND_AUTH",
+      status: row.outbound_auth === true && manifest.outboundAuthorization.tokenRequired === true ? "PASS" : "FAIL",
+      reasonCode: row.outbound_auth === true && manifest.outboundAuthorization.tokenRequired === true ? "outbound_auth_enforced" : "outbound_auth_incomplete",
+      evaluatorVersion: "2026.07.24",
+      evidence: { tokenRequired: manifest.outboundAuthorization.tokenRequired === true, outboundMaskRequiresToken: row.outbound_auth === true, checkedAt: now },
+      expiresAt: null
+    },
+    {
+      gate: "AUTHORIZATION",
+      status: manifest.secretPolicy.authorizationAuthority === "KCML" && authorizationSnapshot.blueprintComponentId === manifest.blueprint.componentId ? "PASS" : "FAIL",
+      reasonCode: manifest.secretPolicy.authorizationAuthority === "KCML" && authorizationSnapshot.blueprintComponentId === manifest.blueprint.componentId ? "authorization_bound" : "authorization_snapshot_mismatch",
+      evaluatorVersion: "2026.07.24",
+      evidence: { authorizationAuthority: manifest.secretPolicy.authorizationAuthority, snapshotBlueprint: authorizationSnapshot.blueprintComponentId ?? null, manifestBlueprint: manifest.blueprint.componentId, checkedAt: now },
+      expiresAt: null
+    },
+    {
+      gate: "PUBLIC_ENDPOINT",
+      status: typeof row.hostname === "string" && String(row.hostname).endsWith(`.${STRICT_COMPONENT_HOST_SUFFIX}`) ? "PASS" : "FAIL",
+      reasonCode: typeof row.hostname === "string" && String(row.hostname).endsWith(`.${STRICT_COMPONENT_HOST_SUFFIX}`) ? "canonical_hostname_verified" : "canonical_hostname_missing",
+      evaluatorVersion: "2026.07.24",
+      evidence: { hostname: row.hostname ?? null, category: row.category ?? null, checkedAt: now },
+      expiresAt: null
+    },
+    {
+      gate: "TECHNICAL_DISABLE",
+      status: record(manifest.controlPlane.disable)?.supported === true && record(manifest.controlPlane.enable)?.supported === true ? "PASS" : "FAIL",
+      reasonCode: record(manifest.controlPlane.disable)?.supported === true && record(manifest.controlPlane.enable)?.supported === true ? "enable_disable_supported" : "enable_disable_missing",
+      evaluatorVersion: "2026.07.24",
+      evidence: { enable: record(manifest.controlPlane.enable) ?? null, disable: record(manifest.controlPlane.disable) ?? null, checkedAt: now },
+      expiresAt: null
+    },
+    {
+      gate: "MONITORING",
+      status: Array.isArray(manifest.monitoringProfile.probes) && (row.monitoring_probe_evidence === true || row.monitoring_state === "HEALTHY") ? "PASS" : "FAIL",
+      reasonCode: Array.isArray(manifest.monitoringProfile.probes) && (row.monitoring_probe_evidence === true || row.monitoring_state === "HEALTHY") ? "monitoring_probe_evidence_present" : "monitoring_probe_evidence_missing",
+      evaluatorVersion: "2026.07.24",
+      evidence: { probes: manifest.monitoringProfile.probes ?? [], monitoringState: row.monitoring_state ?? null, priorEvidence: row.monitoring_probe_evidence === true, checkedAt: now },
+      expiresAt: new Date(Date.now() + 15 * 60_000).toISOString()
+    },
+    {
+      gate: "AUDIT_CONTINUITY",
+      status: manifest.auditPolicy.technicalAudit === "PLATFORM" && row.gap_state === "CONTIGUOUS" ? "PASS" : "FAIL",
+      reasonCode: manifest.auditPolicy.technicalAudit === "PLATFORM" && row.gap_state === "CONTIGUOUS" ? "audit_contiguous" : "audit_gap_detected",
+      evaluatorVersion: "2026.07.24",
+      evidence: { technicalAudit: manifest.auditPolicy.technicalAudit, gapState: row.gap_state ?? null, checkedAt: now },
+      expiresAt: null
+    },
+    {
+      gate: "RECERTIFICATION",
+      status: ["NOT_DUE", "PASSED"].includes(String(row.recertification_state)) ? "PASS" : "FAIL",
+      reasonCode: ["NOT_DUE", "PASSED"].includes(String(row.recertification_state)) ? "recertification_current" : "recertification_blocked",
+      evaluatorVersion: "2026.07.24",
+      evidence: { recertificationState: row.recertification_state ?? null, checkedAt: now },
+      expiresAt: null
+    }
   ];
+}
+
+async function persistGateEvidence(
+  client: pg.PoolClient,
+  componentId: string,
+  revisionId: string,
+  gates: GateResult[],
+  correlationId: string
+): Promise<void> {
+  await client.query("delete from component_readiness_gate_evidence where component_id=$1 and revision_id=$2", [componentId, revisionId]);
+  for (const gate of gates) {
+    await client.query(
+      `insert into component_readiness_gate_evidence(
+        component_id,revision_id,gate_key,evaluator_version,status,reason_code,evidence,evidence_digest,correlation_id,expires_at
+      ) values ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10)`,
+      [componentId, revisionId, gate.gate, gate.evaluatorVersion, gate.status, gate.reasonCode, JSON.stringify(gate.evidence), evidenceDigest(gate.evidence), correlationId, gate.expiresAt]
+    );
+  }
+}
+
+async function controlContract(client: pg.PoolClient, componentId: string, commandType: "enable" | "disable" | "state" | "heartbeat") {
+  const revisionId = await componentActiveRevision(client, componentId);
+  const contract = await client.query(
+    `select id,endpoint_path,request_schema,response_schema
+       from component_control_command
+      where component_id=$1 and revision_id=$2 and command_type=$3`,
+    [componentId, revisionId, commandType]
+  );
+  if (!contract.rowCount) throw Object.assign(new Error("control_contract_missing"), { statusCode: 409 });
+  return { revisionId, row: contract.rows[0] };
+}
+
+async function enqueueControlDispatch(client: pg.PoolClient, params: {
+  componentId: string;
+  commandType: "enable" | "disable" | "state" | "heartbeat";
+  requestedPolicyEpoch: number;
+  correlationId: string;
+  causationId?: string;
+  expectedStateKey?: string | null;
+}): Promise<Record<string, unknown>> {
+  const { revisionId, row } = await controlContract(client, params.componentId, params.commandType);
+  const target = await client.query("select hostname,code from component where id=$1", [params.componentId]);
+  const requestBody = {
+    commandId: randomUUID(),
+    commandType: params.commandType,
+    componentId: params.componentId,
+    componentCode: String(target.rows[0]?.code ?? ""),
+    policyEpoch: params.requestedPolicyEpoch,
+    expectedStateKey: params.expectedStateKey ?? null,
+    requestedAt: new Date().toISOString()
+  };
+  const dispatch = await client.query(
+    `insert into component_control_dispatch(
+      component_id,revision_id,command_contract_id,command_type,target_hostname,endpoint_path,request_body,request_digest,
+      requested_policy_epoch,expected_state_key,correlation_id,causation_id,deadline_at,retry_policy
+    ) values ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10,$11,$12,now()+interval '5 minutes',$13::jsonb)
+    returning *`,
+    [
+      params.componentId,
+      revisionId,
+      row.id,
+      params.commandType,
+      String(target.rows[0]?.hostname ?? ""),
+      String(row.endpoint_path),
+      JSON.stringify(requestBody),
+      evidenceDigest(requestBody),
+      params.requestedPolicyEpoch,
+      params.expectedStateKey ?? null,
+      params.correlationId,
+      params.causationId ?? null,
+      JSON.stringify({ maxAttempts: 3, strategy: "fail_closed" })
+    ]
+  );
+  await client.query(
+    `insert into component_control_dispatch_attempt(
+      dispatch_id,attempt_number,status,request_body,correlation_id
+    ) values ($1,1,'SENT',$2::jsonb,$3)`,
+    [dispatch.rows[0].id, JSON.stringify(requestBody), params.correlationId]
+  );
+  await client.query(
+    `update component_control_dispatch
+        set state='ACK_PENDING',attempt_count=1,last_attempt_at=now(),updated_at=now()
+      where id=$1`,
+    [dispatch.rows[0].id]
+  );
+  return dispatch.rows[0] as Record<string, unknown>;
+}
+
+async function createStateQueryRun(client: pg.PoolClient, params: {
+  componentId: string;
+  revisionId: string;
+  dispatchId: string;
+  requestedPolicyEpoch: number;
+  expectedStateKey: string;
+  correlationId: string;
+}): Promise<{ id: string; challenge_nonce: string }> {
+  const nonce = randomUUID();
+  const result = await client.query(
+    `insert into component_state_query_run(
+      component_id,revision_id,dispatch_id,requested_state_keys,challenge_nonce,requested_policy_epoch,correlation_id
+    ) values ($1,$2,$3,$4::text[],$5,$6,$7) returning id,challenge_nonce`,
+    [params.componentId, params.revisionId, params.dispatchId, [params.expectedStateKey], nonce, params.requestedPolicyEpoch, params.correlationId]
+  );
+  return { id: String(result.rows[0].id), challenge_nonce: String(result.rows[0].challenge_nonce) };
+}
+
+async function createHeartbeatChallenge(client: pg.PoolClient, params: {
+  componentId: string;
+  revisionId: string;
+  dispatchId: string;
+  requestedPolicyEpoch: number;
+  correlationId: string;
+}): Promise<{ id: string; challenge_nonce: string }> {
+  const nonce = randomUUID();
+  const result = await client.query(
+    `insert into component_heartbeat_challenge(
+      component_id,revision_id,dispatch_id,challenge_nonce,requested_policy_epoch,correlation_id
+    ) values ($1,$2,$3,$4,$5,$6) returning id,challenge_nonce`,
+    [params.componentId, params.revisionId, params.dispatchId, nonce, params.requestedPolicyEpoch, params.correlationId]
+  );
+  return { id: String(result.rows[0].id), challenge_nonce: String(result.rows[0].challenge_nonce) };
+}
+
+async function finalizeDispatchFromEvidence(client: pg.PoolClient, dispatchId: string, correlationId: string): Promise<void> {
+  const result = await client.query(
+    `select d.*, c.enabled, c.lifecycle_state, c.activation_state,
+            sq.status as query_status, sq.response_state_key, sq.response_payload,
+            hb.status as heartbeat_status
+       from component_control_dispatch d
+       join component c on c.id=d.component_id
+       left join component_state_query_run sq on sq.dispatch_id=d.id
+       left join component_heartbeat_challenge hb on hb.dispatch_id=d.id
+      where d.id=$1
+      for update of d, c`,
+    [dispatchId]
+  );
+  if (!result.rowCount) return;
+  const row = result.rows[0];
+  const commandType = String(row.command_type);
+  const queryOkay = row.query_status === "RESPONDED" && statePayloadMatchesCommand(optionalText(row.expected_state_key), row.response_payload);
+  const heartbeatOkay = commandType === "enable" ? row.heartbeat_status === "RESPONDED" : true;
+  const acked = ["ACKED", "STATE_CONFIRMED", "HEARTBEAT_CONFIRMED", "COMPLETED"].includes(String(row.state));
+  if (!acked || !queryOkay || !heartbeatOkay) return;
+  const activating = commandType === "enable";
+  await client.query(
+    `update component
+        set enabled=$2,
+            ingress_enabled=$2,
+            pulse_enabled=$2,
+            egress_enabled=$2,
+            activation_state=$3,
+            operational_state=$4,
+            monitoring_state=$5,
+            updated_at=now()
+      where id=$1`,
+    [
+      row.component_id,
+      activating,
+      activating ? "ACTIVE" : "READY",
+      activating ? "HEALTHY" : "DISABLED",
+      activating ? "HEALTHY" : "PENDING"
+    ]
+  );
+  await client.query(
+    `update component_control_dispatch
+        set state='COMPLETED',
+            final_result=$2::jsonb,
+            updated_at=now()
+      where id=$1`,
+    [dispatchId, JSON.stringify({ queryStateKey: row.response_state_key ?? null, heartbeatConfirmed: heartbeatOkay })]
+  );
+  await appendAudit(client, {
+    eventType: activating ? "component.activation.confirmed" : "component.deactivation.confirmed",
+    actorType: "system",
+    objectType: "component_control_dispatch",
+    objectId: dispatchId,
+    after: { componentId: row.component_id, commandType, queryOkay, heartbeatOkay },
+    correlationId
+  });
 }
 
 async function replaceDerivedComponentContracts(client: pg.PoolClient, componentId: string, revisionId: string, manifest: ComponentManifest, hostname: string): Promise<void> {
@@ -362,6 +706,14 @@ async function replaceDerivedComponentContracts(client: pg.PoolClient, component
      values ($1,$2,$3,$4,$5)`,
     [componentId, revisionId, text(manifest.secretPolicy.mode) || "GRANTED_SECRETS", manifest.secretPolicy.allSecretsRequiresGrant !== false, text(manifest.secretPolicy.auditLevel) || "FULL"]
   );
+  for (const scopeName of ["mcp.initialize", "mcp.notifications.initialized", "mcp.tools.list", "mcp.tools.call"]) {
+    await client.query(
+      `insert into component_permission(source_component_id,target_component_id,route_pattern,scope_name,access_level,granted_by_type)
+       values ($1,$1,'/v2/component-mcp',$2,'INVOKE','system')
+       on conflict (source_component_id,target_component_id,route_pattern,scope_name) do nothing`,
+      [componentId, scopeName]
+    );
+  }
 }
 
 export async function createComponentOnboarding(db: Db, params: {
@@ -507,7 +859,7 @@ async function cleanupRetryableComponentOnboardings(client: pg.PoolClient, integ
        from component_onboarding_job job
       where job.integration_token_id=$1
         and job.credential_id is null
-        and job.state in ('GATES_PENDING','FAILED','CANCELLED')
+        and job.state in ('GATES_PENDING','BLOCKED','FAILED','CANCELLED')
       for update`,
     [integrationTokenId]
   );
@@ -664,8 +1016,12 @@ export async function evaluateComponentReadiness(db: Db, params: {
     const authorizationSnapshot = job.authorization_snapshot && typeof job.authorization_snapshot === "object"
       ? job.authorization_snapshot as Record<string, unknown>
       : {};
+    const componentCurrent = await client.query("select active_revision_id from component where id=$1", [job.component_id]);
+    const activeRevisionId = optionalText(componentCurrent.rows[0]?.active_revision_id);
+    if (!activeRevisionId) throw Object.assign(new Error("catalog_incompatible"), { statusCode: 409 });
     const gates = await gateResults(client as unknown as Db, String(job.component_id), manifest, authorizationSnapshot);
-    const passed = gates.every((gate) => gate.passed);
+    await persistGateEvidence(client, String(job.component_id), activeRevisionId, gates, params.correlationId);
+    const passed = gates.every((gate) => gate.status === "PASS");
     let claimToken: string | undefined;
     let claimDigest: Buffer | null = job.credential_claim_digest ?? null;
     if (passed && !job.credential_id && !job.credential_claimed_at) {
@@ -678,7 +1034,7 @@ export async function evaluateComponentReadiness(db: Db, params: {
               credential_claim_expires_at=case when credential_claimed_at is null then coalesce(credential_claim_expires_at,now()+interval '24 hours') else credential_claim_expires_at end,
               lock_version=lock_version+1, updated_at=now()
         where id=$1 returning *`,
-      [params.jobId, passed ? "READY" : "GATES_PENDING", JSON.stringify(gates), claimDigest]
+      [params.jobId, passed ? "READY_FOR_ACTIVATION" : "BLOCKED", JSON.stringify(gates), claimDigest]
     );
     await client.query(
       `update component
@@ -686,7 +1042,7 @@ export async function evaluateComponentReadiness(db: Db, params: {
               activation_state=$3,
               monitoring_state=case when $4 then monitoring_state else 'PENDING' end
         where id=$1`,
-      [job.component_id, passed ? "APPROVED" : "REVIEW", passed ? "READY" : "BLOCKED", passed]
+      [job.component_id, passed ? "APPROVED" : "REVIEW", passed ? "READY_FOR_ACTIVATION" : "BLOCKED", passed]
     );
     await client.query(
       `update component_revision set validation_state=$2,approved_at=case when $2='APPROVED' then now() else approved_at end
@@ -720,7 +1076,7 @@ export async function claimComponentCredential(db: Db, params: {
     );
     if (!result.rowCount) throw Object.assign(new Error("not_found"), { statusCode: 404 });
     const job = result.rows[0];
-    if (job.state !== "READY" || job.credential_claimed_at || !job.credential_claim_digest
+    if (job.state !== "READY_FOR_ACTIVATION" || job.credential_claimed_at || !job.credential_claim_digest
       || !Buffer.from(job.credential_claim_digest).equals(claimDigest)
       || !job.credential_claim_expires_at || new Date(job.credential_claim_expires_at).getTime() <= Date.now()) {
       throw Object.assign(new Error("credential_claim_invalid"), { statusCode: 409 });
@@ -730,9 +1086,9 @@ export async function claimComponentCredential(db: Db, params: {
       ? job.authorization_snapshot as Record<string, unknown>
       : {};
     const gates = await gateResults(client as unknown as Db, String(job.component_id), manifest, authorizationSnapshot);
-    if (!gates.every((gate) => gate.passed)) {
+    if (!gates.every((gate) => gate.status === "PASS")) {
       await client.query(
-        `update component_onboarding_job set state='GATES_PENDING',gate_results=$2::jsonb,credential_claim_digest=null,
+        `update component_onboarding_job set state='BLOCKED',gate_results=$2::jsonb,credential_claim_digest=null,
           credential_claim_expires_at=null,lock_version=lock_version+1,updated_at=now() where id=$1`,
         [params.jobId, JSON.stringify(gates)]
       );
@@ -836,12 +1192,27 @@ async function componentActiveRevision(client: pg.PoolClient, componentId: strin
 export async function ingestComponentPulse(db: Db, componentId: string, envelope: ComponentPulseEnvelope): Promise<{ accepted: true; correlationId: string }> {
   return tx(db, async (client) => {
     const mask = await client.query(
-      `select * from component_pulse_mask
+      `select mask.*,component.code as component_code
+         from component_pulse_mask mask
+         join component on component.id=mask.component_id
         where component_id=$1 and pulse_type=$2 and direction=$3`,
       [componentId, envelope.pulseType, envelope.direction]
     );
     if (!mask.rowCount) throw Object.assign(new Error("unknown_pulse_type"), { statusCode: 409 });
     if (!envelope.accessTokenFingerprint) throw Object.assign(new Error("access_token_required"), { statusCode: 401 });
+    const source = record(envelope.source);
+    const target = record(envelope.target);
+    const routeAclRaw = mask.rows[0].route_acl;
+    const routeAcl = Array.isArray(routeAclRaw) ? routeAclRaw.map((value: unknown) => String(value)) : [];
+    if (!text(source?.clientId) || !text(source?.componentCode) || !text(target?.componentCode)) {
+      throw Object.assign(new Error("component_identity_required"), { statusCode: 400 });
+    }
+    if (target?.componentCode !== mask.rows[0].component_code) {
+      throw Object.assign(new Error("target_component_mismatch"), { statusCode: 403 });
+    }
+    if (routeAcl.length > 0 && !routeAcl.includes(text(source?.componentCode))) {
+      throw Object.assign(new Error("route_denied"), { statusCode: 403 });
+    }
     validateAgainstStoredSchema(mask.rows[0].envelope_schema, envelope.input, "pulse_schema_invalid");
     await client.query(
       `insert into component_operation_event(
@@ -901,25 +1272,81 @@ export async function recordComponentHeartbeat(db: Db, componentId: string, hear
   operationalState: string;
   stateDigest?: string;
   correlationId: string;
+  declaredClientId: string;
+  declaredComponentCode: string;
+  policyEpoch: number;
+  challengeId?: string;
+  challengeNonce?: string;
   payload?: unknown;
 }): Promise<{ accepted: true; policyEpoch: number; failClosed: boolean }> {
   return tx(db, async (client) => {
-    const current = await client.query("select policy_epoch from component where id=$1 for update", [componentId]);
+    const current = await client.query("select policy_epoch,code,activation_state,recertification_state from component where id=$1 for update", [componentId]);
     if (!current.rowCount) throw Object.assign(new Error("not_found"), { statusCode: 404 });
     const policyEpoch = Number(current.rows[0].policy_epoch);
+    const heartbeatAtMs = Date.parse(heartbeat.heartbeatAt);
+    const skewMs = Math.abs(Date.now() - heartbeatAtMs);
+    let validationState: "ACCEPTED" | "REJECTED" = "ACCEPTED";
+    let rejectionReason: string | null = null;
+    if (!Number.isFinite(heartbeatAtMs) || skewMs > 120_000) {
+      validationState = "REJECTED";
+      rejectionReason = "heartbeat_clock_skew";
+    } else if (heartbeat.policyEpoch !== policyEpoch) {
+      validationState = "REJECTED";
+      rejectionReason = "policy_epoch_mismatch";
+    } else if (heartbeat.declaredComponentCode !== String(current.rows[0].code)) {
+      validationState = "REJECTED";
+      rejectionReason = "component_identity_mismatch";
+    }
+    if (heartbeat.challengeId || heartbeat.challengeNonce) {
+      const challenge = await client.query(
+        `select * from component_heartbeat_challenge
+          where id=$1 and component_id=$2
+          for update`,
+        [heartbeat.challengeId ?? null, componentId]
+      );
+      if (!challenge.rowCount || heartbeat.challengeNonce !== String(challenge.rows[0].challenge_nonce)) {
+        validationState = "REJECTED";
+        rejectionReason = "heartbeat_challenge_mismatch";
+      } else if (validationState === "ACCEPTED") {
+        await client.query(
+          `update component_heartbeat_challenge
+              set status='RESPONDED',response_digest=$2,responded_at=now(),response_payload=$3::jsonb
+            where id=$1`,
+          [challenge.rows[0].id, heartbeat.stateDigest ?? evidenceDigest(heartbeat.payload ?? {}), JSON.stringify(heartbeat.payload ?? {})]
+        );
+      }
+    }
     await client.query(
-      `insert into component_heartbeat(component_id,heartbeat_at,policy_epoch,operational_state,state_digest,correlation_id,payload)
-       values ($1,$2,$3,$4,$5,$6,$7::jsonb)`,
-      [componentId, heartbeat.heartbeatAt, policyEpoch, heartbeat.operationalState, heartbeat.stateDigest ?? null, heartbeat.correlationId, JSON.stringify(heartbeat.payload ?? {})]
+      `insert into component_heartbeat(
+        component_id,heartbeat_at,policy_epoch,operational_state,state_digest,correlation_id,payload,
+        challenge_id,challenge_nonce,declared_client_id,declared_component_code,validation_state,rejection_reason
+      ) values ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10,$11,$12,$13)`,
+      [
+        componentId,
+        heartbeat.heartbeatAt,
+        policyEpoch,
+        heartbeat.operationalState,
+        heartbeat.stateDigest ?? null,
+        heartbeat.correlationId,
+        JSON.stringify(heartbeat.payload ?? {}),
+        heartbeat.challengeId ?? null,
+        heartbeat.challengeNonce ?? null,
+        heartbeat.declaredClientId,
+        heartbeat.declaredComponentCode,
+        validationState,
+        rejectionReason
+      ]
     );
-    await client.query(
-      `update component
-          set monitoring_state='HEALTHY',
-              operational_state=case when $2 in ('HEALTHY','DEGRADED','UNHEALTHY','MAINTENANCE') then $2 else operational_state end,
-              updated_at=now()
-        where id=$1`,
-      [componentId, heartbeat.operationalState]
-    );
+    if (validationState === "REJECTED") {
+      await client.query("update component set monitoring_state='DEGRADED',updated_at=now() where id=$1", [componentId]);
+      return { accepted: true, policyEpoch, failClosed: true };
+    }
+    if (current.rows[0].activation_state === "ENABLE_REQUESTED" && heartbeat.challengeId) {
+      const dispatch = await client.query("select dispatch_id from component_heartbeat_challenge where id=$1", [heartbeat.challengeId]);
+      if (dispatch.rowCount && dispatch.rows[0].dispatch_id) {
+        await finalizeDispatchFromEvidence(client, String(dispatch.rows[0].dispatch_id), heartbeat.correlationId);
+      }
+    }
     return { accepted: true, policyEpoch, failClosed: false };
   });
 }
@@ -970,9 +1397,15 @@ export async function recordComponentStateObservation(db: Db, componentId: strin
   stateKey: string;
   observedAt: string;
   correlationId: string;
+  declaredClientId: string;
+  declaredComponentCode: string;
+  policyEpoch: number;
+  queryId?: string;
   statePayload: unknown;
 }): Promise<{ accepted: boolean; validationState: "ACCEPTED" | "REJECTED" }> {
   return tx(db, async (client) => {
+    const component = await client.query("select policy_epoch,code from component where id=$1", [componentId]);
+    if (!component.rowCount) throw Object.assign(new Error("not_found"), { statusCode: 404 });
     const contract = await client.query(
       "select state_schema from component_state_contract where component_id=$1 and state_key=$2",
       [componentId, input.stateKey]
@@ -986,33 +1419,98 @@ export async function recordComponentStateObservation(db: Db, componentId: strin
       validationState = "REJECTED";
       rejectionReason = error instanceof Error ? error.message : "state_schema_invalid";
     }
+    if (input.policyEpoch !== Number(component.rows[0].policy_epoch)) {
+      validationState = "REJECTED";
+      rejectionReason = "policy_epoch_mismatch";
+    }
+    if (input.declaredComponentCode !== String(component.rows[0].code)) {
+      validationState = "REJECTED";
+      rejectionReason = "component_identity_mismatch";
+    }
     await client.query(
-      `insert into component_state_observation(component_id,state_key,observed_at,correlation_id,state_payload,validation_state,rejection_reason)
-       values ($1,$2,$3,$4,$5::jsonb,$6,$7)`,
-      [componentId, input.stateKey, input.observedAt, input.correlationId, JSON.stringify(input.statePayload), validationState, rejectionReason]
+      `insert into component_state_observation(
+        component_id,state_key,observed_at,correlation_id,state_payload,validation_state,rejection_reason,
+        query_run_id,declared_client_id,declared_component_code,policy_epoch
+      ) values ($1,$2,$3,$4,$5::jsonb,$6,$7,$8,$9,$10,$11)`,
+      [
+        componentId,
+        input.stateKey,
+        input.observedAt,
+        input.correlationId,
+        JSON.stringify(input.statePayload),
+        validationState,
+        rejectionReason,
+        input.queryId ?? null,
+        input.declaredClientId,
+        input.declaredComponentCode,
+        input.policyEpoch
+      ]
     );
-    if (validationState === "REJECTED") throw Object.assign(new Error("state_schema_invalid"), { statusCode: 422 });
+    if (input.queryId && validationState === "ACCEPTED") {
+      await client.query(
+        `update component_state_query_run
+            set status='RESPONDED',response_state_key=$2,response_digest=$3,response_payload=$4::jsonb,observed_at=$5
+          where id=$1 and component_id=$6`,
+        [input.queryId, input.stateKey, evidenceDigest(input.statePayload), JSON.stringify(input.statePayload), input.observedAt, componentId]
+      );
+      const dispatch = await client.query("select dispatch_id from component_state_query_run where id=$1", [input.queryId]);
+      if (dispatch.rowCount && dispatch.rows[0].dispatch_id) {
+        await finalizeDispatchFromEvidence(client, String(dispatch.rows[0].dispatch_id), input.correlationId);
+      }
+    }
+    if (validationState === "REJECTED") throw Object.assign(new Error(rejectionReason ?? "state_schema_invalid"), { statusCode: 422 });
     return { accepted: true, validationState };
   });
 }
 
 export async function recordComponentControlAck(db: Db, componentId: string, input: {
+  commandId: string;
   commandType: "enable" | "disable" | "state" | "heartbeat";
   status: "ACKED" | "FAILED";
   ackPayload: unknown;
   correlationId: string;
+  declaredClientId: string;
+  declaredComponentCode: string;
+  policyEpoch: number;
 }): Promise<{ accepted: true }> {
   return tx(db, async (client) => {
-    const revisionId = await componentActiveRevision(client, componentId);
+    const component = await client.query("select code,policy_epoch from component where id=$1", [componentId]);
+    if (!component.rowCount) throw Object.assign(new Error("not_found"), { statusCode: 404 });
+    if (input.policyEpoch !== Number(component.rows[0].policy_epoch)) throw Object.assign(new Error("policy_epoch_mismatch"), { statusCode: 409 });
+    if (input.declaredComponentCode !== String(component.rows[0].code)) throw Object.assign(new Error("component_identity_mismatch"), { statusCode: 403 });
     const result = await client.query(
-      `update component_control_command
-          set status=$4,ack_payload=$5::jsonb,acknowledged_at=now()
-        where component_id=$1 and revision_id=$2 and command_type=$3
-        returning response_schema`,
-      [componentId, revisionId, input.commandType, input.status, JSON.stringify(input.ackPayload)]
+      `select d.id,contract.response_schema
+         from component_control_dispatch d
+         join component_control_command contract on contract.id=d.command_contract_id
+        where d.id=$1 and d.component_id=$2 and d.command_type=$3
+        for update of d`,
+      [input.commandId, componentId, input.commandType]
     );
     if (!result.rowCount) throw Object.assign(new Error("control_command_unknown"), { statusCode: 409 });
     validateAgainstStoredSchema(result.rows[0].response_schema, input.ackPayload, "control_ack_schema_invalid");
+    const nextState = input.status === "ACKED" ? "ACKED" : "FAILED";
+    await client.query(
+      `update component_control_dispatch
+          set state=$2,ack_digest=$3,final_result=$4::jsonb,final_error_code=$5,updated_at=now()
+        where id=$1`,
+      [input.commandId, nextState, evidenceDigest(input.ackPayload), JSON.stringify(input.ackPayload), input.status === "FAILED" ? "component_ack_failed" : null]
+    );
+    if (input.status === "FAILED") {
+      await client.query(
+        `update component
+            set activation_state=case when $2='disable' then 'DISABLE_UNCONFIRMED' else 'BLOCKED' end,
+                monitoring_state='DEGRADED',
+                ingress_enabled=false,
+                pulse_enabled=false,
+                egress_enabled=false,
+                enabled=false,
+                updated_at=now()
+          where id=$1`,
+        [componentId, input.commandType]
+      );
+    } else {
+      await finalizeDispatchFromEvidence(client, input.commandId, input.correlationId);
+    }
     await appendAudit(client, {
       eventType: `component.control.${input.commandType}.${input.status.toLowerCase()}`,
       actorType: "component",
@@ -1031,7 +1529,7 @@ export async function recordComponentE2EResult(db: Db, params: {
   integrationTokenId: string;
   scenarioKey: string;
   generatedOutput: unknown;
-  generatedOutputDigest: string;
+  generatedOutputDigest?: string;
   correlationId: string;
 }): Promise<{ status: "PASS" | "FAIL" }> {
   return tx(db, async (client) => {
@@ -1046,13 +1544,34 @@ export async function recordComponentE2EResult(db: Db, params: {
     );
     if (!scenario.rowCount) throw Object.assign(new Error("e2e_scenario_unknown"), { statusCode: 404 });
     const generatedCanonicalDigest = `sha256:${digestPayload(params.generatedOutput)}`;
-    const status = generatedCanonicalDigest === String(scenario.rows[0].expected_output_digest) || params.generatedOutputDigest === String(scenario.rows[0].expected_output_digest)
-      ? "PASS"
-      : "FAIL";
+    const expectedCanonical = canonicalJson(scenario.rows[0].expected_output);
+    const generatedCanonical = canonicalJson(params.generatedOutput);
+    const digestMatch = generatedCanonicalDigest === String(scenario.rows[0].expected_output_digest);
+    const payloadMatch = generatedCanonical === expectedCanonical;
+    const status = digestMatch && payloadMatch ? "PASS" : "FAIL";
     await client.query(
       `insert into component_e2e_result(component_id,revision_id,scenario_id,status,generated_output_digest,generated_output,correlation_id)
        values ($1,$2,$3,$4,$5,$6::jsonb,$7)`,
       [job.rows[0].component_id, scenario.rows[0].revision_id, scenario.rows[0].id, status, generatedCanonicalDigest, JSON.stringify(params.generatedOutput), params.correlationId]
+    );
+    await client.query(
+      `insert into component_e2e_execution_run(
+        component_id,revision_id,scenario_id,onboarding_job_id,executor_kind,caller_generated_output_digest,computed_output_digest,
+        expected_output_digest,canonical_output_match,digest_match,generated_output,correlation_id
+      ) values ($1,$2,$3,$4,'component.report',$5,$6,$7,$8,$9,$10::jsonb,$11)`,
+      [
+        job.rows[0].component_id,
+        scenario.rows[0].revision_id,
+        scenario.rows[0].id,
+        params.jobId,
+        params.generatedOutputDigest ?? null,
+        generatedCanonicalDigest,
+        String(scenario.rows[0].expected_output_digest),
+        payloadMatch,
+        digestMatch,
+        JSON.stringify(params.generatedOutput),
+        params.correlationId
+      ]
     );
     return { status };
   });
@@ -1063,7 +1582,8 @@ export async function listComponents(db: Db): Promise<Record<string, unknown>[]>
     select c.*,r.revision,r.capabilities,r.protocols,r.transports,
       (select count(*)::int from component_permission p where (p.source_component_id=c.id or p.target_component_id=c.id) and p.revoked_at is null) permission_count,
       (select count(*)::int from component_credential cr where cr.component_id=c.id and cr.status='ACTIVE') credential_count,
-      stream.gap_state,stream.highest_received_sequence,stream.highest_acknowledged_sequence
+      stream.gap_state,stream.highest_received_sequence,stream.highest_acknowledged_sequence,
+      stream.current_event_hash,stream.integrity_state,stream.integrity_reason
     from component c
     left join component_revision r on r.id=c.active_revision_id
     left join component_audit_stream stream on stream.component_id=c.id
@@ -1075,7 +1595,8 @@ export async function listComponents(db: Db): Promise<Record<string, unknown>[]>
 export async function getComponent(db: Db, id: string): Promise<Record<string, unknown>> {
   const result = await db.query(`
     select c.*,r.revision,r.capabilities,r.protocols,r.transports,r.derived_gates,
-      stream.gap_state,stream.highest_received_sequence,stream.highest_acknowledged_sequence
+      stream.gap_state,stream.highest_received_sequence,stream.highest_acknowledged_sequence,
+      stream.current_event_hash,stream.integrity_state,stream.integrity_reason
     from component c
     left join component_revision r on r.id=c.active_revision_id
     left join component_audit_stream stream on stream.component_id=c.id
@@ -1083,7 +1604,50 @@ export async function getComponent(db: Db, id: string): Promise<Record<string, u
   if (!result.rowCount) throw Object.assign(new Error("not_found"), { statusCode: 404 });
   const permissions = await db.query(`select id,source_component_id,target_component_id,route_pattern,scope_name,access_level,granted_at,revoked_at from component_permission where source_component_id=$1 or target_component_id=$1 order by granted_at desc`, [id]);
   const credentials = await db.query(`select id,public_id,secret_fingerprint,status,issued_at,expires_at,last_used_at,revoked_at from component_credential where component_id=$1 order by issued_at desc`, [id]);
-  return { ...componentView(result.rows[0]), permissions: permissions.rows, credentials: credentials.rows };
+  const [readinessGates, controlDispatches, stateObservations, heartbeats] = await Promise.all([
+    db.query(
+      `select gate_key,status,reason_code,evaluator_version,evidence,evidence_digest,correlation_id,executed_at,expires_at
+         from component_readiness_gate_evidence
+        where component_id=$1
+        order by executed_at desc, gate_key`,
+      [id]
+    ),
+    db.query(
+      `select id,command_type,target_hostname,endpoint_path,request_body,request_digest,requested_policy_epoch,expected_state_key,
+              correlation_id,deadline_at,state,final_result,final_error_code,attempt_count,last_attempt_at,ack_digest,created_at,updated_at
+         from component_control_dispatch
+        where component_id=$1
+        order by created_at desc
+        limit 20`,
+      [id]
+    ),
+    db.query(
+      `select id,state_key,observed_at,correlation_id,validation_state,rejection_reason,declared_client_id,declared_component_code,policy_epoch,state_payload
+         from component_state_observation
+        where component_id=$1
+        order by observed_at desc
+        limit 20`,
+      [id]
+    ),
+    db.query(
+      `select id,heartbeat_at,policy_epoch,operational_state,state_digest,correlation_id,declared_client_id,declared_component_code,
+              validation_state,rejection_reason,challenge_id,challenge_nonce
+         from component_heartbeat
+        where component_id=$1
+        order by heartbeat_at desc
+        limit 20`,
+      [id]
+    )
+  ]);
+  return {
+    ...componentView(result.rows[0]),
+    permissions: permissions.rows,
+    credentials: credentials.rows,
+    readinessGates: readinessGates.rows,
+    controlDispatches: controlDispatches.rows,
+    stateObservations: stateObservations.rows,
+    heartbeatHistory: heartbeats.rows
+  };
 }
 
 export async function getComponentDiscovery(db: Db, hostname: string): Promise<Record<string, unknown>> {
@@ -1119,7 +1683,14 @@ function componentView(row: Record<string, unknown>): Record<string, unknown> {
     ingressEnabled: Boolean(row.ingress_enabled), pulseEnabled: Boolean(row.pulse_enabled), egressEnabled: Boolean(row.egress_enabled),
     revision: optionalText(row.revision), capabilities: row.capabilities ?? [], protocols: row.protocols ?? [], transports: row.transports ?? [],
     permissionCount: Number(row.permission_count ?? 0), credentialCount: Number(row.credential_count ?? 0), policyEpoch: Number(row.policy_epoch),
-    audit: { gapState: optionalText(row.gap_state) ?? "UNAVAILABLE", highestReceivedSequence: Number(row.highest_received_sequence ?? 0), highestAcknowledgedSequence: Number(row.highest_acknowledged_sequence ?? 0) },
+    audit: {
+      gapState: optionalText(row.gap_state) ?? "UNAVAILABLE",
+      highestReceivedSequence: Number(row.highest_received_sequence ?? 0),
+      highestAcknowledgedSequence: Number(row.highest_acknowledged_sequence ?? 0),
+      currentEventHash: optionalText(row.current_event_hash),
+      integrityState: optionalText(row.integrity_state) ?? "UNAVAILABLE",
+      integrityReason: optionalText(row.integrity_reason)
+    },
     releaseVersion: String(row.release_version), releaseWaveKey: optionalText(row.release_wave_key),
     blueprintComponentId: optionalText(row.blueprint_component_id),
     createdAt: String(row.created_at), updatedAt: String(row.updated_at)
@@ -1159,20 +1730,57 @@ export async function setComponentActivation(db: Db, params: { componentId: stri
       if (component.gap_state !== "CONTIGUOUS") throw Object.assign(new Error("audit_gap"), { statusCode: 409 });
       if (!["NOT_DUE", "PASSED"].includes(String(component.recertification_state))) throw Object.assign(new Error("recertification_required"), { statusCode: 409 });
     }
+    const requestedPolicyEpoch = Number(component.policy_epoch) + 1;
+    const dispatch = await enqueueControlDispatch(client, {
+      componentId: params.componentId,
+      commandType: params.enabled ? "enable" : "disable",
+      requestedPolicyEpoch,
+      expectedStateKey: params.enabled ? "ENABLED" : "DISABLED",
+      correlationId: params.correlationId
+    });
+    const stateRun = await createStateQueryRun(client, {
+      componentId: params.componentId,
+      revisionId: String(component.active_revision_id),
+      dispatchId: String(dispatch.id),
+      requestedPolicyEpoch,
+      expectedStateKey: params.enabled ? "ENABLED" : "DISABLED",
+      correlationId: params.correlationId
+    });
+    const heartbeatChallenge = params.enabled ? await createHeartbeatChallenge(client, {
+      componentId: params.componentId,
+      revisionId: String(component.active_revision_id),
+      dispatchId: String(dispatch.id),
+      requestedPolicyEpoch,
+      correlationId: params.correlationId
+    }) : null;
     const updated = await client.query(
-      `update component set enabled=$2,ingress_enabled=$2,pulse_enabled=$2,egress_enabled=$2,
-        activation_state=case when $2 then 'ACTIVE' else 'READY' end,
-        lifecycle_state=case when $2 then 'ACTIVE' else case when lifecycle_state='ACTIVE' then 'APPROVED' else lifecycle_state end end,
-        operational_state=case when $2 then 'HEALTHY' else 'DISABLED' end,
-        lock_version=lock_version+1 where id=$1 returning id`,
-      [params.componentId, params.enabled]
+      `update component
+          set enabled=false,
+              ingress_enabled=false,
+              pulse_enabled=false,
+              egress_enabled=false,
+              activation_state=$2,
+              lifecycle_state=case when $3 then lifecycle_state else case when lifecycle_state='ACTIVE' then 'APPROVED' else lifecycle_state end end,
+              operational_state=case when $3 then 'DISABLED' else 'DISABLED' end,
+              policy_epoch=$4,
+              lock_version=lock_version+1
+        where id=$1 returning id`,
+      [params.componentId, params.enabled ? "ENABLE_REQUESTED" : "DISABLE_REQUESTED", params.enabled, requestedPolicyEpoch]
     );
     const revokedTokens = params.enabled ? 0 : await revokeComponentRuntimeTokens(client, params.componentId);
     await appendAudit(client, {
-      eventType: params.enabled ? "component.activated" : "component.deactivated", actorType: "admin", actorId: params.actorId,
+      eventType: params.enabled ? "component.activation_requested" : "component.deactivation_requested", actorType: "admin", actorId: params.actorId,
       objectType: "component", objectId: params.componentId,
       before: { enabled: component.enabled, revocationEpoch: component.revocation_epoch, policyEpoch: component.policy_epoch },
-      after: { enabled: params.enabled, accessTokensRevoked: revokedTokens }, correlationId: params.correlationId
+      after: {
+        enabled: false,
+        accessTokensRevoked: revokedTokens,
+        dispatchId: dispatch.id,
+        stateQueryId: stateRun.id,
+        heartbeatChallengeId: heartbeatChallenge?.id ?? null,
+        heartbeatNonce: heartbeatChallenge?.challenge_nonce ?? null
+      },
+      correlationId: params.correlationId
     });
     return getComponent(client as unknown as Db, String(updated.rows[0].id));
   });

@@ -45,7 +45,7 @@ describe("buildMetadata", () => {
 describe("release descriptor", () => {
   it("separates normative label, technical catalog version and MCP protocol", () => {
     expect(KCML_RELEASE.normativeLabel).toBe("2026.07.19-NR");
-    expect(KCML_RELEASE.catalogVersion).toBe("2026.07.23");
+    expect(KCML_RELEASE.catalogVersion).toBe("2026.07.24");
     expect(KCML_RELEASE.mcpProtocolVersion).toBe("2025-11-25");
     expect(KCML_RELEASE.auditedBaselineCommit).toMatch(/^[a-f0-9]{40}$/);
   });

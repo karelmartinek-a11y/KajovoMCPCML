@@ -36,6 +36,7 @@ import { AuditPage, auditQueryParams, type AuditFilters } from "./audit-page.js"
 import { BootstrapPage, Login, ReauthModal } from "./auth-pages.js";
 import { IconButton, MetricCard, Modal, PageHeader } from "./common.js";
 import { ComponentCatalogPage } from "./component-page.js";
+import { ExternalComponentsPage } from "./external-components-page.js";
 import {
   CreateCredentialModal,
   CredentialConfirmModal,
@@ -77,6 +78,9 @@ import {
   type AuditIntegrity,
   type AuditResponse,
   type Component,
+  type ExternalPrincipal,
+  type ExternalPermission,
+  type ExternalTarget,
   type IntegrationSecret,
   type IntegrationToken,
   type AccessTokenCredential,
@@ -99,7 +103,7 @@ import {
 import { ApiRequestError, api, csrf, describeApiError, formatDate, formatLocalDateTimeInput, prettyJson, setUiTimeZone } from "./ui-helpers.js";
 
 const integrationTokenActionLabel = "Vygenerovat Integrační token";
-const releaseWaveKey = "baseline-2026-07-23";
+const releaseWaveKey = "baseline-2026-07-24";
 
 function recertificationTone(phase: Server["recertification"]["phase"]): "ok" | "warn" | "danger" | "neutral" {
   if (phase === "VALID") return "ok";
@@ -1079,6 +1083,9 @@ function IntegrationTokensPage({ tokens, jobs, onCreate, onOpenJob, onRevoke, on
 function Dashboard({ accountName, role, releaseInfo, onLogout }: { accountName: string | null; role: AdminRole; releaseInfo: ReleaseInfo | null; onLogout: () => void }) {
   const [page, setPage] = useState<Page>("components");
   const [components, setComponents] = useState<Component[]>([]);
+  const [externalPrincipals, setExternalPrincipals] = useState<ExternalPrincipal[]>([]);
+  const [externalTargets, setExternalTargets] = useState<ExternalTarget[]>([]);
+  const [externalPermissions, setExternalPermissions] = useState<ExternalPermission[]>([]);
   const [servers, setServers] = useState<Server[]>([]);
   const [credentials, setCredentials] = useState<AccessTokenCredential[]>([]);
   const [events, setEvents] = useState<AuditEvent[]>([]);
@@ -1109,8 +1116,11 @@ function Dashboard({ accountName, role, releaseInfo, onLogout }: { accountName: 
   async function load() {
     setError("");
     try {
-      const [componentRes, serverRes, credentialRes, auditRes, integrationRes, jobsRes, probesRes, monitoringRes, securityRes, integrityRes, adminAccountsRes, configRes, secretsRes] = await Promise.all([
+      const [componentRes, externalPrincipalRes, externalTargetRes, externalPermissionRes, serverRes, credentialRes, auditRes, integrationRes, jobsRes, probesRes, monitoringRes, securityRes, integrityRes, adminAccountsRes, configRes, secretsRes] = await Promise.all([
         api<{ components: Component[] }>("/api/components"),
+        api<{ principals: ExternalPrincipal[] }>("/api/external-principals"),
+        api<{ targets: ExternalTarget[] }>("/api/external-targets"),
+        api<{ permissions: ExternalPermission[] }>("/api/external-permissions"),
         api<{ servers: Server[] }>("/api/mcp-servers"),
         api<{ credentials: AccessTokenCredential[] }>("/api/kaja"),
         api<AuditResponse>("/api/audit"),
@@ -1125,6 +1135,9 @@ function Dashboard({ accountName, role, releaseInfo, onLogout }: { accountName: 
         role !== "AUDITOR" ? api<{ secrets: ManagedSecret[] }>("/api/secrets") : Promise.resolve({ secrets: [] })
       ]);
       setComponents(componentRes.components);
+      setExternalPrincipals(externalPrincipalRes.principals);
+      setExternalTargets(externalTargetRes.targets);
+      setExternalPermissions(externalPermissionRes.permissions);
       setServers(serverRes.servers);
       setCredentials(credentialRes.credentials);
       setEvents(auditRes.events);
@@ -1499,6 +1512,13 @@ function Dashboard({ accountName, role, releaseInfo, onLogout }: { accountName: 
             setComponents((current) => current.map((entry) => entry.id === result.component.id ? result.component : entry));
             return result;
           }} />,
+        external: <ExternalComponentsPage principals={externalPrincipals} targets={externalTargets} permissions={externalPermissions} components={components} role={role} onRefresh={() => { void load(); }}
+          onCreatePrincipal={async (input) => { await api("/api/external-principals", { method: "POST", headers: { "x-csrf-token": csrf() }, body: JSON.stringify(input) }); await load(); }}
+          onCreateTarget={async (input) => { await api("/api/external-targets", { method: "POST", headers: { "x-csrf-token": csrf() }, body: JSON.stringify(input) }); await load(); }}
+          onRotatePrincipal={async (principal) => { const result = await api<{ credential: { clientId: string; clientSecret: string; fingerprint: string } }>(`/api/external-principals/${principal.id}/credentials/rotate`, { method: "POST", headers: { "x-csrf-token": csrf() }, body: "{}" }); await load(); return result.credential; }}
+          onSetPrincipalStatus={async (principal, status) => { await api(`/api/external-principals/${principal.id}/status`, { method: "POST", headers: { "x-csrf-token": csrf() }, body: JSON.stringify({ status }) }); await load(); }}
+          onSetTargetStatus={async (target, status) => { await api(`/api/external-targets/${target.id}/status`, { method: "POST", headers: { "x-csrf-token": csrf() }, body: JSON.stringify({ status }) }); await load(); }}
+          onSetPermission={async (input) => { await api("/api/external-permissions", { method: "PUT", headers: { "x-csrf-token": csrf() }, body: JSON.stringify(input) }); await load(); }} />,
         monitoring: <MonitoringPage servers={servers} accountName={accountName} catalogVersion={catalogVersion} probes={probes} overview={monitoringOverview} onRefresh={() => { void load(); }} onAutomatedOnboarding={() => setIntegrationCreate(true)} onToggleEnabled={toggleServerEnabled} onRunTest={runServerTest} onLoadMonitoringProfile={loadMonitoringProfile} onSaveMonitoringProfile={saveMonitoringProfile} onStartRevision={startServerRevision} onDeleteServer={deleteServerRegistration} onTestWebhook={testAlertWebhooks} onAcknowledgeAlert={acknowledgeAlert} onSuppressAlert={suppressAlert} onRetryDelivery={retryAlertDelivery} />,
         integration: <IntegrationTokensPage tokens={integrationTokens} jobs={onboardingJobs} onCreate={() => setIntegrationCreate(true)} onOpenJob={setSelectedJobId} onRevoke={(token) => setIntegrationConfirm({ token, action: "revoke" })} onDelete={(token) => setIntegrationConfirm({ token, action: "delete" })} onRefresh={() => { void load(); }} />,
         secrets: role !== "AUDITOR" ? <SecretsPage secrets={managedSecrets} accountName={accountName} onRefresh={() => { void refreshSecrets(); }} /> : null,
