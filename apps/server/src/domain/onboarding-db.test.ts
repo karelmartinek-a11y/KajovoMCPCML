@@ -14,6 +14,7 @@ import {
   revokeIntegrationToken,
   transitionJob
 } from "./onboarding.js";
+import { KCML_RELEASE } from "./release.js";
 import { validateOnboardingManifest } from "./registration.js";
 
 const enabled = process.env.KCML_TEST_DATABASE === "1";
@@ -28,7 +29,7 @@ const descriptor = {
 
 const manifestInput = {
   ...(JSON.parse(
-    readFileSync(new URL("../../../../docs/onboarding-manifest-2026.07.23.example.json", import.meta.url), "utf8")
+    readFileSync(new URL(`../../../../docs/onboarding-manifest-${KCML_RELEASE.manifestSchemaVersion}.example.json`, import.meta.url), "utf8")
   ) as Record<string, unknown>),
   registrationRevision: "db-test-1"
 };

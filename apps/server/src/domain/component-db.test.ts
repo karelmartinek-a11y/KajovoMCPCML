@@ -10,22 +10,25 @@ import {
   claimComponentCredential,
   createComponentOnboarding,
   evaluateComponentReadiness,
+  recordComponentE2EResult,
   revokeComponentCredential,
   rotateComponentCredential,
   setComponentLifecycle,
   setComponentPermissionEnabled,
   validateComponentManifest
 } from "./component.js";
-import { KCML_RELEASE } from "./release.js";
+import { KCML_RELEASE, KCML_RELEASE_WAVE_KEY } from "./release.js";
 
 const sourceId = "91000000-0000-4000-8000-000000000001";
 const targetId = "91000000-0000-4000-8000-000000000002";
 const credentialId = "91000000-0000-4000-8000-000000000003";
 const permissionId = "91000000-0000-4000-8000-000000000004";
 const revisionId = "91000000-0000-4000-8000-000000000005";
+const auditComponentId = "91000000-0000-4000-8000-000000000006";
+const auditRevisionId = "91000000-0000-4000-8000-000000000007";
 const clientSecret = "component-secret-for-current-policy-tests";
 const enabled = process.env.KCML_TEST_DATABASE === "1";
-const exampleManifest = JSON.parse(readFileSync(new URL("../../../../docs/onboarding-manifest-2026.07.23.example.json", import.meta.url), "utf8")) as Record<string, unknown>;
+const exampleManifest = JSON.parse(readFileSync(new URL(`../../../../docs/onboarding-manifest-${KCML_RELEASE.manifestSchemaVersion}.example.json`, import.meta.url), "utf8")) as Record<string, unknown>;
 let db: Db;
 let accessHmacKey: Buffer;
 
@@ -58,11 +61,23 @@ describe.skipIf(!enabled)("component authorization and audit persistence", () =>
         enabled=true,ingress_enabled=true,pulse_enabled=true,egress_enabled=true,release_version=excluded.release_version`,
       [sourceId, targetId, KCML_RELEASE.catalogVersion]
     );
+    await db.query(
+      `insert into component(id,kcml_number,code,hostname,display_name,category,registration_type,component_role,lifecycle_state,activation_state,operational_state,monitoring_state,enabled,ingress_enabled,pulse_enabled,egress_enabled,release_version)
+      values
+        ($1,91003,'KCML91003','kcml91003.component.test','Auditní cíl','MCP_SERVER','MCP_SERVER','SERVICE','ACTIVE','ACTIVE','HEALTHY','HEALTHY',true,true,true,true,$2)
+      on conflict (id) do update set lifecycle_state='ACTIVE',activation_state='ACTIVE',operational_state='HEALTHY',monitoring_state='HEALTHY',
+        enabled=true,ingress_enabled=true,pulse_enabled=true,egress_enabled=true,release_version=excluded.release_version`,
+      [auditComponentId, KCML_RELEASE.catalogVersion]
+    );
     await db.query(`insert into component_revision(id,component_id,revision,validation_state,manifest,manifest_digest,capabilities,protocols,transports)
       values ($1,$2,'1.0.0','APPROVED','{}','sha256:test',array['component.pulse','component.audit.write'],array['HTTPS'],array['HTTPS'])
       on conflict (id) do update set validation_state='APPROVED'`, [revisionId, targetId]);
+    await db.query(`insert into component_revision(id,component_id,revision,validation_state,manifest,manifest_digest,capabilities,protocols,transports)
+      values ($1,$2,'1.0.0','APPROVED','{}','sha256:test-audit',array['component.audit.write'],array['HTTPS'],array['HTTPS'])
+      on conflict (id) do update set validation_state='APPROVED'`, [auditRevisionId, auditComponentId]);
     await db.query("update component set active_revision_id=$2 where id=$1", [targetId, revisionId]);
-    await db.query("insert into component_audit_stream(component_id) values ($1),($2) on conflict (component_id) do nothing", [sourceId, targetId]);
+    await db.query("update component set active_revision_id=$2 where id=$1", [auditComponentId, auditRevisionId]);
+    await db.query("insert into component_audit_stream(component_id) values ($1),($2),($3) on conflict (component_id) do nothing", [sourceId, targetId, auditComponentId]);
     await db.query(`insert into component_credential(id,component_id,public_id,key_id,secret_digest,secret_fingerprint)
       values ($1,$2,'KCML91001-C01','test',$3,'fingerprint-test')`, [credentialId, sourceId, hmacToken(clientSecret, accessHmacKey)]);
     await db.query(`insert into component_permission(id,source_component_id,target_component_id,route_pattern,scope_name)
@@ -86,7 +101,7 @@ describe.skipIf(!enabled)("component authorization and audit persistence", () =>
               deregistered_at=coalesce(deregistered_at,now())
         where blueprint_component_id='MCP-RX-WA-001'`
     );
-    await db.query("update component set enabled=false,ingress_enabled=false,pulse_enabled=false,egress_enabled=false,activation_state='INACTIVE',operational_state='RETIRED',lifecycle_state='DEREGISTERED',deregistered_at=now() where id=any($1::uuid[])", [[sourceId, targetId]]);
+    await db.query("update component set enabled=false,ingress_enabled=false,pulse_enabled=false,egress_enabled=false,activation_state='INACTIVE',operational_state='RETIRED',lifecycle_state='DEREGISTERED',deregistered_at=now() where id=any($1::uuid[])", [[sourceId, targetId, auditComponentId]]);
     await db.end();
   });
 
@@ -126,6 +141,99 @@ describe.skipIf(!enabled)("component authorization and audit persistence", () =>
     expect((await ingestComponentAuditEvent(db, targetId, event(base + 2))).expectedNextSequence).toBe(base + 3);
   });
 
+  it("accepts an exact duplicate audit event idempotently and fail-closes on conflicting duplicate content", async () => {
+    await db.query(
+      "delete from component_audit_event where stream_id=(select id from component_audit_stream where component_id=$1)",
+      [auditComponentId]
+    );
+    await db.query(
+      `update component_audit_stream
+          set expected_next_sequence=1,
+              highest_received_sequence=0,
+              highest_acknowledged_sequence=0,
+              gap_state='CONTIGUOUS',
+              gap_from_sequence=null,
+              gap_to_sequence=null,
+              last_event_at=null,
+              last_acknowledged_at=null,
+              current_event_hash=null,
+              integrity_state='VALID',
+              integrity_reason=null,
+              broken_at=null,
+              updated_at=now(),
+              lock_version=lock_version+1
+        where component_id=$1`,
+      [auditComponentId]
+    );
+    await db.query(
+      `update component
+          set lifecycle_state='ACTIVE',
+              activation_state='ACTIVE',
+              operational_state='HEALTHY',
+              enabled=true,
+              ingress_enabled=true,
+              pulse_enabled=true,
+              egress_enabled=true,
+              updated_at=now()
+        where id=$1`,
+      [auditComponentId]
+    );
+    const exact = {
+      sequenceNumber: 1,
+      eventType: "runtime.ack",
+      initiatedByType: "component",
+      occurredAt: "2026-07-24T12:00:00.000Z",
+      correlationId: "91000000-0000-4000-8000-000000000010",
+      catalogVersion: KCML_RELEASE.catalogVersion,
+      payload: { state: "ok", counter: 1 }
+    };
+    const first = await ingestComponentAuditEvent(db, auditComponentId, exact);
+    expect(first).toMatchObject({ accepted: true, duplicate: false, expectedNextSequence: 2 });
+    const duplicate = await ingestComponentAuditEvent(db, auditComponentId, exact);
+    expect(duplicate).toMatchObject({ accepted: true, duplicate: true, expectedNextSequence: 2 });
+
+    const stored = await db.query(
+      `select event_hash,previous_event_hash,canonical_payload_digest,revision_id
+         from component_audit_event
+        where stream_id=(select id from component_audit_stream where component_id=$1)
+          and sequence_number=1`,
+      [auditComponentId]
+    );
+    expect(stored.rows[0].event_hash).toMatch(/^sha256:[a-f0-9]{64}$/);
+    expect(stored.rows[0].previous_event_hash).toBeNull();
+    expect(stored.rows[0].canonical_payload_digest).toMatch(/^sha256:[a-f0-9]{64}$/);
+    expect(String(stored.rows[0].revision_id)).toBe(auditRevisionId);
+
+    await expect(ingestComponentAuditEvent(db, auditComponentId, {
+      ...exact,
+      payload: { state: "tampered", counter: 1 }
+    })).rejects.toThrow("audit_stream_conflict");
+
+    const stream = await db.query(
+      "select integrity_state,integrity_reason,current_event_hash from component_audit_stream where component_id=$1",
+      [auditComponentId]
+    );
+    expect(stream.rows[0]).toMatchObject({
+      integrity_state: "CONFLICT",
+      integrity_reason: "duplicate_event_hash_conflict"
+    });
+    expect(stream.rows[0].current_event_hash).toMatch(/^sha256:[a-f0-9]{64}$/);
+
+    const component = await db.query(
+      "select lifecycle_state,activation_state,operational_state,enabled,ingress_enabled,pulse_enabled,egress_enabled from component where id=$1",
+      [auditComponentId]
+    );
+    expect(component.rows[0]).toMatchObject({
+      lifecycle_state: "QUARANTINED",
+      activation_state: "BLOCKED",
+      operational_state: "QUARANTINED",
+      enabled: false,
+      ingress_enabled: false,
+      pulse_enabled: false,
+      egress_enabled: false
+    });
+  });
+
   it("keeps onboarding idempotent and consumes the integration token after revealing an access token", async () => {
     const integrationTokenId = randomUUID();
     const admin = await db.query("select id from admin_account order by created_at limit 1");
@@ -133,12 +241,12 @@ describe.skipIf(!enabled)("component authorization and audit persistence", () =>
       id,label,lookup_digest,key_id,fingerprint,created_by,initial_expires_at,expires_at,max_expires_at,descriptor,
       token_kind,release_version,release_wave_key,blueprint_release_version,max_child_jobs
     ) values ($1,'Component DB test',$2,'test','component-db-test',$3,now()+interval '1 hour',now()+interval '1 hour',now()+interval '1 hour',$4::jsonb,
-      'BLUEPRINT_RELEASE','2026.07.23','baseline-2026-07-23','2026.07.23',1)`,
-    [integrationTokenId, hmacToken(integrationTokenId, accessHmacKey), admin.rows[0].id, JSON.stringify({ summary: "Component test", businessPurpose: "Validate component onboarding credential issuance safely.", serviceOwner: "KCML", technicalOwner: "KCML", criticality: "LOW" })]);
+      'BLUEPRINT_RELEASE',$5,$6,$7,1)`,
+    [integrationTokenId, hmacToken(integrationTokenId, accessHmacKey), admin.rows[0].id, JSON.stringify({ summary: "Component test", businessPurpose: "Validate component onboarding credential issuance safely.", serviceOwner: "KCML", technicalOwner: "KCML", criticality: "LOW" }), KCML_RELEASE.catalogVersion, KCML_RELEASE_WAVE_KEY, KCML_RELEASE.catalogVersion]);
     await db.query(
       `insert into integration_token_allowed_component(token_id,blueprint_component_id,registration_type,release_version,release_wave_key)
-       values ($1,'MCP-RX-WA-001','MCP_SERVER','2026.07.23','baseline-2026-07-23')`,
-      [integrationTokenId]
+       values ($1,'MCP-RX-WA-001','MCP_SERVER',$2,$3)`,
+      [integrationTokenId, KCML_RELEASE.catalogVersion, KCML_RELEASE_WAVE_KEY]
     );
     const manifest = validateComponentManifest({
       ...structuredClone(exampleManifest),
@@ -148,16 +256,24 @@ describe.skipIf(!enabled)("component authorization and audit persistence", () =>
     const input = { integrationTokenId, idempotencyKey: `component-${integrationTokenId}`, manifest, claimHmacKey: accessHmacKey, baseDomain: "component.test", correlationId: randomUUID() };
     const created = await createComponentOnboarding(db, input);
     expect((await createComponentOnboarding(db, input)).id).toBe(created.id);
+    const mcpPermissions = await db.query("select scope_name from component_permission where source_component_id=$1 and target_component_id=$1 and route_pattern='/v2/component-mcp' and revoked_at is null order by scope_name", [created.componentId]);
+    expect(mcpPermissions.rows.map((row) => String(row.scope_name))).toEqual(["mcp.initialize", "mcp.notifications.initialized", "mcp.tools.call", "mcp.tools.list"]);
     await db.query("update component set monitoring_state='HEALTHY', recertification_state='NOT_DUE' where id=$1", [created.componentId]);
-    await db.query(
-      `insert into component_e2e_result(component_id,revision_id,scenario_id,status,generated_output_digest,generated_output,correlation_id)
-       select component_id,revision_id,id,'PASS',expected_output_digest,expected_output,$2
-         from component_e2e_scenario
-        where component_id=$1`,
-      [created.componentId, randomUUID()]
+    const scenarios = await db.query(
+      "select scenario_key, expected_output from component_e2e_scenario where component_id=$1",
+      [created.componentId]
     );
+    for (const scenario of scenarios.rows) {
+      await recordComponentE2EResult(db, {
+        jobId: String(created.id),
+        integrationTokenId,
+        scenarioKey: String(scenario.scenario_key),
+        generatedOutput: scenario.expected_output,
+        correlationId: randomUUID()
+      });
+    }
     const readiness = await evaluateComponentReadiness(db, { jobId: String(created.id), integrationTokenId, claimHmacKey: accessHmacKey, correlationId: randomUUID() });
-    expect(readiness.job.state).toBe("READY");
+    expect(readiness.job.state).toBe("READY_FOR_ACTIVATION");
     expect(readiness.credentialClaimToken).toBeTypeOf("string");
     const credential = await claimComponentCredential(db, {
       jobId: String(created.id), integrationTokenId, claimToken: readiness.credentialClaimToken!, claimHmacKey: accessHmacKey,

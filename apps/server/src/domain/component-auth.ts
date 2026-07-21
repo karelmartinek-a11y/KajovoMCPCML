@@ -24,6 +24,10 @@ export type ComponentAuthorizationDecision = {
   correlationId: string;
   sourceComponentId: string | null;
   targetComponentId: string | null;
+  sourceClientId: string | null;
+  sourceComponentCode: string | null;
+  targetComponentCode: string | null;
+  audience: string | null;
   scopes: string[];
   policyEpoch: number | null;
 };
@@ -36,6 +40,10 @@ function denied(reasonCode: ComponentAuthorizationReason, correlationId: string,
     correlationId,
     sourceComponentId: null,
     targetComponentId: null,
+    sourceClientId: null,
+    sourceComponentCode: null,
+    targetComponentCode: null,
+    audience: null,
     scopes: [],
     policyEpoch: null,
     ...values
@@ -115,10 +123,11 @@ export async function authorizeComponentCall(db: Db, params: {
     const tokenDigest = hmacToken(params.token, params.hmacKey);
     const result = await client.query(`
       select token.*,credential.status credential_status,credential.revoked_at credential_revoked_at,
+        credential.public_id as source_client_id,
         credential.expires_at credential_expires_at,credential.revocation_epoch current_credential_epoch,
-        source.enabled source_enabled,source.lifecycle_state source_lifecycle_state,
+        source.enabled source_enabled,source.lifecycle_state source_lifecycle_state,source.code as source_component_code,
         target.enabled target_enabled,target.ingress_enabled as target_ingress_enabled,target.lifecycle_state target_lifecycle_state,
-        target.operational_state target_operational_state,target.hostname target_hostname,target.release_version,target.policy_epoch,
+        target.operational_state target_operational_state,target.hostname target_hostname,target.code as target_component_code,target.release_version,target.policy_epoch,
         target.revocation_epoch current_target_epoch
       from component_access_token token
       join component_credential credential on credential.id=token.credential_id
@@ -131,7 +140,16 @@ export async function authorizeComponentCall(db: Db, params: {
       decision = denied("invalid_token", params.correlationId);
     } else {
       const row = result.rows[0];
-      const base = { sourceComponentId: String(row.source_component_id), targetComponentId: String(row.target_component_id), scopes: row.scope_names as string[], policyEpoch: Number(row.policy_epoch) };
+      const base = {
+        sourceComponentId: String(row.source_component_id),
+        targetComponentId: String(row.target_component_id),
+        sourceClientId: String(row.source_client_id),
+        sourceComponentCode: String(row.source_component_code),
+        targetComponentCode: String(row.target_component_code),
+        audience: String(row.audience),
+        scopes: row.scope_names as string[],
+        policyEpoch: Number(row.policy_epoch)
+      };
       if (row.revoked_at || row.credential_status === "REVOKED" || row.credential_revoked_at
         || String(row.credential_revocation_epoch) !== String(row.current_credential_epoch)
         || String(row.target_revocation_epoch) !== String(row.current_target_epoch)) {

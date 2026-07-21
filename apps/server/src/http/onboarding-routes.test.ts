@@ -122,8 +122,8 @@ describe("machine-readable onboarding catalogs", () => {
 
   beforeEach(async () => {
     allowedBlueprintComponents = [
-      { componentId: "AI-CLS-001", registrationType: "KCML_ACCESS_CLIENT", releaseVersion: KCML_RELEASE.catalogVersion, releaseWaveKey: "baseline-2026-07-23" },
-      { componentId: "MCP-RX-WA-001", registrationType: "MCP_SERVER", releaseVersion: KCML_RELEASE.catalogVersion, releaseWaveKey: "baseline-2026-07-23" }
+      { componentId: "AI-CLS-001", registrationType: "KCML_ACCESS_CLIENT", releaseVersion: KCML_RELEASE.catalogVersion, releaseWaveKey: "baseline-2026-07-24" },
+      { componentId: "MCP-RX-WA-001", registrationType: "MCP_SERVER", releaseVersion: KCML_RELEASE.catalogVersion, releaseWaveKey: "baseline-2026-07-24" }
     ];
     config = loadConfig({
       NODE_ENV: "test",
@@ -150,7 +150,7 @@ describe("machine-readable onboarding catalogs", () => {
               allowed_pipeline: "MCP_ONBOARDING",
               token_kind: "BLUEPRINT_RELEASE",
               release_version: KCML_RELEASE.catalogVersion,
-              release_wave_key: "baseline-2026-07-23",
+              release_wave_key: "baseline-2026-07-24",
               max_child_jobs: 20,
               allowed_blueprint_components: allowedBlueprintComponents
             }]

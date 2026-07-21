@@ -1,4 +1,4 @@
-export type Page = "components" | "monitoring" | "integration" | "secrets" | "tokens" | "permissions" | "audit" | "config" | "security" | "admins";
+export type Page = "components" | "external" | "monitoring" | "integration" | "secrets" | "tokens" | "permissions" | "audit" | "config" | "security" | "admins";
 export type AdminRole = "OWNER" | "ADMIN" | "AUDITOR";
 export type Session = { authenticated: boolean; account: string | null; role: AdminRole | null; bootstrapRequired?: boolean };
 export type ReleaseInfo = {
@@ -106,13 +106,80 @@ export type Component = {
   permissionCount: number;
   credentialCount: number;
   policyEpoch: number;
-  audit: { gapState: string; highestReceivedSequence: number; highestAcknowledgedSequence: number };
+  audit: {
+    gapState: string;
+    highestReceivedSequence: number;
+    highestAcknowledgedSequence: number;
+    currentEventHash: string | null;
+    integrityState: string;
+    integrityReason: string | null;
+  };
   releaseVersion: string;
   createdAt: string;
   updatedAt: string;
   permissions?: ComponentPermission[];
   credentials?: ComponentCredential[];
+  readinessGates?: Array<{
+    gate_key: string;
+    status: string;
+    reason_code: string;
+    evaluator_version: string;
+    evidence: Record<string, unknown>;
+    evidence_digest: string;
+    correlation_id: string;
+    executed_at: string;
+    expires_at: string | null;
+  }>;
+  controlDispatches?: Array<{
+    id: string;
+    command_type: string;
+    target_hostname: string;
+    endpoint_path: string;
+    request_body: Record<string, unknown>;
+    request_digest: string;
+    requested_policy_epoch: number;
+    expected_state_key: string | null;
+    correlation_id: string;
+    deadline_at: string;
+    state: string;
+    final_result: Record<string, unknown> | null;
+    final_error_code: string | null;
+    attempt_count: number;
+    last_attempt_at: string | null;
+    ack_digest: string | null;
+    created_at: string;
+    updated_at: string;
+  }>;
+  stateObservations?: Array<{
+    id: string;
+    state_key: string;
+    observed_at: string;
+    correlation_id: string;
+    validation_state: string;
+    rejection_reason: string | null;
+    declared_client_id: string | null;
+    declared_component_code: string | null;
+    policy_epoch: number | null;
+    state_payload: Record<string, unknown>;
+  }>;
+  heartbeatHistory?: Array<{
+    id: string;
+    heartbeat_at: string;
+    policy_epoch: number;
+    operational_state: string;
+    state_digest: string | null;
+    correlation_id: string;
+    declared_client_id: string | null;
+    declared_component_code: string | null;
+    validation_state: string;
+    rejection_reason: string | null;
+    challenge_id: string | null;
+    challenge_nonce: string | null;
+  }>;
 };
+export type ExternalPrincipal = { id: string; publicId: string; displayName: string; description: string; status: string; createdAt: string; revokedAt: string | null; credentialCount: number };
+export type ExternalTarget = { id: string; targetKey: string; displayName: string; baseUrl: string; auditRequired: boolean; allowedPathPrefixes: string[]; connectTimeoutMs: number; requestTimeoutMs: number; maxRetries: number; circuitState: string; circuitFailureCount: number; circuitFailureThreshold: number; circuitOpenSeconds: number; status: string; createdAt: string; revokedAt: string | null };
+export type ExternalPermission = { id: string; component_id: string | null; external_principal_id: string | null; external_target_id: string; route_pattern: string; scope_name: string; granted_at: string; revoked_at: string | null; target_key: string; target_display_name: string; component_code: string | null; external_principal_public_id: string | null };
 export type ManagedSecret = {
   id: string;
   stableName: string;
@@ -394,6 +461,7 @@ export type OnboardingDescriptor = {
 
 export const pageNames: Record<Page, string> = {
   components: "Katalog komponent",
+  external: "Externí strany",
   monitoring: "Monitoring komponent",
   integration: "Integrační tokeny",
   secrets: "Správa tajemství",

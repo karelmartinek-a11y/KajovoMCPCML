@@ -40,27 +40,27 @@ describe("onboarding handoff", () => {
         criticality: "HIGH"
       },
       token: "kci_blueprint",
-      initialExpiresAt: "2026-07-23T14:00:00.000Z",
+      initialExpiresAt: "2026-07-24T14:00:00.000Z",
       programmerApiUrl: "https://register.hcasc.cz/v2/component-onboardings",
-      releaseWaveKey: "baseline-2026-07-23",
+      releaseWaveKey: "baseline-2026-07-24",
       allowedBlueprintComponents: [
-        { componentId: "AI-CLS-001", registrationType: "KCML_ACCESS_CLIENT", releaseVersion: "2026.07.23", releaseWaveKey: "baseline-2026-07-23" },
-        { componentId: "MCP-RX-WA-001", registrationType: "MCP_SERVER", releaseVersion: "2026.07.23", releaseWaveKey: "baseline-2026-07-23" }
+        { componentId: "AI-CLS-001", registrationType: "KCML_ACCESS_CLIENT", releaseVersion: "2026.07.24", releaseWaveKey: "baseline-2026-07-24" },
+        { componentId: "MCP-RX-WA-001", registrationType: "MCP_SERVER", releaseVersion: "2026.07.24", releaseWaveKey: "baseline-2026-07-24" }
       ],
       intakeUrls: {
         recommendedIntakeUrl: "https://register.hcasc.cz/v2/component-onboardings",
         nativeComponentIntakeUrl: "https://register.hcasc.cz/v2/component-onboardings",
         legacyServiceIntakeUrl: "https://register.hcasc.cz/v1/service-onboardings",
         externalApiIntakeUrl: "https://register.hcasc.cz/v1/service-onboardings",
-        componentCatalogUrl: "https://register.hcasc.cz/api/onboarding-catalogs/component/2026.07.23",
+        componentCatalogUrl: "https://register.hcasc.cz/api/onboarding-catalogs/component/2026.07.24",
         externalApiCatalogUrl: "https://register.hcasc.cz/api/onboarding-catalogs/external-api/1.0"
       },
-      catalogVersion: "2026.07.23"
+      catalogVersion: "2026.07.24"
     });
 
     expect(text).toContain("Automatická integrace prvku");
     expect(text).toContain("Doporučené programátorské API: https://register.hcasc.cz/v2/component-onboardings");
-    expect(text).toContain("Release wave: baseline-2026-07-23");
+    expect(text).toContain("Release wave: baseline-2026-07-24");
     expect(text).toContain("AI-CLS-001:KCML_ACCESS_CLIENT");
     expect(text).toContain("MCP-RX-WA-001:MCP_SERVER");
     expect(text).toContain("Legacy service intake pouze pro kompatibilitu: https://register.hcasc.cz/v1/service-onboardings");

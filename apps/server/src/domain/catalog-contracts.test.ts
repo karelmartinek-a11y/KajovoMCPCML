@@ -173,6 +173,12 @@ describe(`component onboarding catalog ${KCML_RELEASE.catalogVersion}`, () => {
     expect(catalog.capabilityContracts).toEqual(expect.objectContaining({
       "mcp.initialize": expect.any(Object), "mcp.tools.call": expect.any(Object), "component.audit.write": expect.any(Object)
     }));
+    const capabilityContracts = catalog.capabilityContracts as Record<string, Record<string, unknown>>;
+    expect(capabilityContracts["component.pulse"]).toMatchObject({ protocol: "MCP", transport: "streamable-http", toolName: "kcml.pulse.accept" });
+    expect(capabilityContracts["component.audit.write"]).toMatchObject({ protocol: "MCP", transport: "streamable-http", toolName: "kcml.audit.append" });
+    expect(capabilityContracts["component.heartbeat"]).toMatchObject({ protocol: "MCP", transport: "streamable-http", toolName: "kcml.heartbeat.push" });
+    expect(capabilityContracts["component.state.query"]).toMatchObject({ protocol: "MCP", transport: "streamable-http", toolName: "kcml.state.query" });
+    expect(capabilityContracts["component.outbound.pulse"]).toMatchObject({ protocol: "MCP", transport: "streamable-http", toolName: "kcml.pulse.emit" });
     expect((catalog.compatibility as { breakingManifestChange: boolean; legacyAdapters: string[] })).toMatchObject({
       breakingManifestChange: false,
       legacyAdapters: expect.arrayContaining(["/v1/onboardings", "/v1/service-onboardings", "/api/mcp-servers", "/api/managed-services"])

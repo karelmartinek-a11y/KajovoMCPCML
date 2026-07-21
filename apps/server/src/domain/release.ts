@@ -1,16 +1,16 @@
 export const KCML_RELEASE = {
   normativeLabel: "2026.07.19-NR",
   auditedBaselineCommit: "e2589ca4dc0b4ecb442aa8ef36141609b3b4dd76",
-  applicationVersion: "2026.07.23",
-  blueprintVersion: "2026.07.23",
-  catalogVersion: "2026.07.23",
-  manifestSchemaVersion: "2026.07.23",
-  pulseEnvelopeVersion: "2026.07.23",
-  policyBaseline: "2026-07-23",
+  applicationVersion: "2026.07.24",
+  blueprintVersion: "2026.07.24",
+  catalogVersion: "2026.07.24",
+  manifestSchemaVersion: "2026.07.24",
+  pulseEnvelopeVersion: "2026.07.24",
+  policyBaseline: "2026-07-24",
   mcpProtocolVersion: "2025-11-25"
 } as const;
 
-export const KCML_RELEASE_WAVE_KEY = "baseline-2026-07-23";
+export const KCML_RELEASE_WAVE_KEY = "baseline-2026-07-24";
 export const KCML_RELEASE_WAVE_LABEL = "Prvni release vlna 9 AI / 11 MCP / 5 managed";
 
 export const KCML_MANAGED_SERVICE_IDS = [
