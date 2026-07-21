@@ -184,7 +184,7 @@ insert into integration_token(
   '20000000-0000-0000-0000-000000000024','Legacy blueprint platform grant',digest('legacy-blueprint-platform-grant','sha256'),'v1','legacyplatform24',id,
   now()+interval '1 hour',now()+interval '1 hour',now()+interval '1 day',
   '{"summary":"Legacy platform grant","businessPurpose":"Exercise upgrade cleanup for forbidden platform scope.","serviceOwner":"KCML","technicalOwner":"KCML","criticality":"HIGH"}'::jsonb,
-  'BLUEPRINT_RELEASE','2026.07.23','baseline-2026-07-23','2026.07.23',20
+  'BLUEPRINT_RELEASE','2026.07.23','baseline-2026-07-23','2026.07.23',1
 from admin_account order by created_at limit 1;
 
 alter table integration_token_allowed_component disable trigger integration_token_allowed_component_generated_scope_tg;
