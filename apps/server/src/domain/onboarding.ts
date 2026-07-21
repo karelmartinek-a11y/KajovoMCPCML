@@ -9,9 +9,7 @@ import { kcmlCodeFromNumber, kcmlHostnameForCode } from "./hostnames.js";
 import type { OnboardingManifest } from "./registration.js";
 import {
   blueprintComponentContract,
-  isGeneratedBlueprintComponentId,
-  KCML_BLUEPRINT_RELEASE_MAX_CHILD_JOBS,
-  KCML_GENERATED_BLUEPRINT_COMPONENT_IDS,
+  KCML_BLUEPRINT_COMPONENT_IDS,
   KCML_RELEASE,
   KCML_RELEASE_WAVE_KEY
 } from "./release.js";
@@ -56,9 +54,7 @@ async function disableOnboardingServer(client: pg.PoolClient, serverId: string, 
 }
 
 export const TERMINAL_JOB_STATES = new Set<OnboardingJobState>(["REGISTERED_DISABLED", "ACTIVE", "FAILED", "QUARANTINED", "CANCELLED"]);
-const HEARTBEAT_EXTENSION_MS = 24 * 60 * 60 * 1000;
 const INITIAL_TTL_MS = 24 * 60 * 60 * 1000;
-const MAX_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
 const TRANSITIONS: Record<OnboardingJobState, ReadonlySet<OnboardingJobState>> = {
   CREATED: new Set(["SOURCE_UPLOADED", "CANCELLED", "FAILED", "QUARANTINED"]),
@@ -164,13 +160,14 @@ export function tokenDeadlines(issuedAt = new Date()): { issuedAt: Date; initial
     issuedAt,
     initialExpiresAt,
     expiresAt: initialExpiresAt,
-    maxExpiresAt: new Date(issuedAt.getTime() + MAX_TTL_MS)
+    maxExpiresAt: initialExpiresAt
   };
 }
 
 export function nextHeartbeatExpiry(now: Date, current: Date, maximum: Date): Date {
-  const candidate = new Date(Math.min(now.getTime() + HEARTBEAT_EXTENSION_MS, maximum.getTime()));
-  return candidate.getTime() > current.getTime() ? candidate : current;
+  void now;
+  void maximum;
+  return current;
 }
 
 export function requestDigest(manifestDigest: string, sourceDigest: string): string {
@@ -230,31 +227,18 @@ function mapToken(row: Record<string, unknown>) {
 }
 
 function normalizeTokenOptions(options?: CreateIntegrationTokenOptions): Required<Pick<CreateIntegrationTokenOptions, "serviceKind" | "allowedPipeline" | "tokenKind" | "releaseVersion" | "releaseWaveKey" | "maxChildJobs">> & { allowedBlueprintComponentIds: string[] } {
-  const tokenKind = options?.tokenKind ?? "SINGLE_COMPONENT";
+  const tokenKind = "BLUEPRINT_RELEASE";
   const releaseVersion = options?.releaseVersion ?? KCML_RELEASE.catalogVersion;
   const releaseWaveKey = options?.releaseWaveKey ?? KCML_RELEASE_WAVE_KEY;
-  const selected = options?.allowedBlueprintComponentIds?.length
-    ? [...new Set(options.allowedBlueprintComponentIds)]
-    : tokenKind === "BLUEPRINT_RELEASE"
-      ? [...KCML_GENERATED_BLUEPRINT_COMPONENT_IDS]
-      : [];
-  const maxChildJobs = options?.maxChildJobs ?? (tokenKind === "BLUEPRINT_RELEASE" ? selected.length : 1);
-  if (tokenKind === "BLUEPRINT_RELEASE" && selected.length === 0) {
+  const selected = [...KCML_BLUEPRINT_COMPONENT_IDS];
+  const maxChildJobs = 1;
+  if (selected.length === 0) {
     throw Object.assign(new Error("blueprint_components_required"), { statusCode: 400 });
-  }
-  if (maxChildJobs < 1 || maxChildJobs > KCML_BLUEPRINT_RELEASE_MAX_CHILD_JOBS) {
-    throw Object.assign(new Error("max_child_jobs_out_of_range"), { statusCode: 400 });
-  }
-  if (tokenKind === "BLUEPRINT_RELEASE" && maxChildJobs > selected.length) {
-    throw Object.assign(new Error("max_child_jobs_above_allowed_components"), { statusCode: 400 });
   }
   for (const componentId of selected) {
     const contract = blueprintComponentContract(componentId);
     if (!contract || contract.releaseVersion !== releaseVersion || contract.releaseWaveKey !== releaseWaveKey) {
       throw Object.assign(new Error("unknown_blueprint_component"), { statusCode: 400 });
-    }
-    if (tokenKind === "BLUEPRINT_RELEASE" && !isGeneratedBlueprintComponentId(componentId)) {
-      throw Object.assign(new Error("platform_prerequisite_not_allowed"), { statusCode: 400 });
     }
   }
   return {
@@ -278,29 +262,12 @@ export async function createIntegrationToken(
   resumeJobId?: string,
   options?: CreateIntegrationTokenOptions
 ) {
+  if (resumeJobId) throw Object.assign(new Error("resume_token_not_supported"), { statusCode: 410 });
   const secret = issueIntegrationSecret();
   const deadlines = tokenDeadlines();
   const digest = hmacToken(secret.value, config.INTEGRATION_TOKEN_HMAC_KEY_BASE64);
   const normalizedOptions = normalizeTokenOptions(options);
   const result = await tx(db, async (client) => {
-    let resumeState: OnboardingJobState | null = null;
-    let resumeHasServer = false;
-    if (resumeJobId) {
-      const job = await client.query(
-        `select oj.id, oj.state, oj.archived_at, ms.enabled
-           from onboarding_job oj
-           left join mcp_server ms on ms.id=oj.server_id
-          where oj.id=$1 for update of oj`,
-        [resumeJobId]
-      );
-      if (!job.rowCount) throw Object.assign(new Error("job_not_found"), { statusCode: 404 });
-      if (job.rows[0].archived_at) throw Object.assign(new Error("job_not_found"), { statusCode: 404 });
-      if (["ACTIVE", "QUARANTINED", "CANCELLED"].includes(String(job.rows[0].state))) {
-        throw Object.assign(new Error("job_not_resumable"), { statusCode: 409 });
-      }
-      resumeState = job.rows[0].state as OnboardingJobState;
-      resumeHasServer = job.rows[0].enabled !== null;
-    }
     const inserted = await client.query(
       `insert into integration_token
         (label, lookup_digest, key_id, fingerprint, created_by, onboarding_job_id,
@@ -312,8 +279,8 @@ export async function createIntegrationToken(
       [label, digest, config.INTEGRATION_TOKEN_HMAC_KEY_ID, secret.fingerprint, actorId, resumeJobId ?? null, descriptor,
         normalizedOptions.serviceKind, normalizedOptions.allowedPipeline, normalizedOptions.tokenKind,
         normalizedOptions.releaseVersion, normalizedOptions.releaseWaveKey, normalizedOptions.releaseVersion,
-        normalizedOptions.maxChildJobs, normalizedOptions.tokenKind === "BLUEPRINT_RELEASE",
-        normalizedOptions.tokenKind !== "BLUEPRINT_RELEASE",
+        normalizedOptions.maxChildJobs, false,
+        false,
         deadlines.issuedAt, deadlines.initialExpiresAt, deadlines.expiresAt, deadlines.maxExpiresAt]
     );
     for (const componentId of normalizedOptions.allowedBlueprintComponentIds) {
@@ -330,28 +297,8 @@ export async function createIntegrationToken(
         [inserted.rows[0].id, componentId, contract.registrationType, normalizedOptions.releaseVersion, normalizedOptions.releaseWaveKey]
       );
     }
-    if (resumeJobId) {
-      await client.query(
-        `update integration_token set revoked_at=coalesce(revoked_at, now()), lock_version=lock_version+1
-          where onboarding_job_id=$1 and id<>$2 and revoked_at is null`,
-        [resumeJobId, inserted.rows[0].id]
-      );
-      const resumeDeployment = resumeHasServer && !["AWAITING_REVISION", "FAILED"].includes(String(resumeState));
-      await client.query(
-        `update onboarding_job
-            set token_id=$2, state=case when $3 then 'DEPLOYING' else state end,
-                runtime_stopped_at=case when $3 then null else runtime_stopped_at end,
-                next_run_at=now(), blocking_error_code=null,
-                blocking_error_detail=null, lock_version=lock_version+1
-          where id=$1`,
-        [resumeJobId, inserted.rows[0].id, resumeDeployment]
-      );
-      if (resumeState && resumeDeployment) {
-        await recordTransition(client, resumeJobId, resumeState, "DEPLOYING", "job.resumed", {}, correlationId);
-      }
-    }
     await appendAudit(client, {
-      eventType: resumeJobId ? "integration_token.resumed" : "integration_token.created",
+      eventType: "integration_token.created",
       actorType: "admin",
       actorId,
       objectType: "integration_token",
@@ -361,13 +308,12 @@ export async function createIntegrationToken(
          descriptor,
          serviceKind: normalizedOptions.serviceKind,
          allowedPipeline: normalizedOptions.allowedPipeline,
-         tokenKind: normalizedOptions.tokenKind,
+         tokenKind: "LEGACY_INTERNAL_METADATA",
          releaseVersion: normalizedOptions.releaseVersion,
          releaseWaveKey: normalizedOptions.releaseWaveKey,
          allowedBlueprintComponentIds: normalizedOptions.allowedBlueprintComponentIds,
          maxChildJobs: normalizedOptions.maxChildJobs,
          fingerprint: secret.fingerprint,
-         resumeJobId: resumeJobId ?? null,
          initialExpiresAt: deadlines.initialExpiresAt,
          maxExpiresAt: deadlines.maxExpiresAt
        },
@@ -778,7 +724,7 @@ export async function setGate(db: Db, jobId: string, gateName: string, status: G
 export async function heartbeatJob(db: Db, jobId: string, workerId: string): Promise<{ expiresAt: string; extended: boolean }> {
   return tx(db, async (client) => {
     const result = await client.query(
-      `select oj.state, oj.token_id, oj.token_extended_at, oj.correlation_id, it.expires_at, it.max_expires_at
+      `select it.expires_at
          from onboarding_job oj join integration_token it on it.id=oj.token_id
         where oj.id=$1 and oj.lease_owner=$2 and it.expires_at>now() and it.revoked_at is null
         for update of oj, it`,
@@ -787,26 +733,8 @@ export async function heartbeatJob(db: Db, jobId: string, workerId: string): Pro
     if (!result.rowCount) throw Object.assign(new Error("job_lease_lost"), { statusCode: 409 });
     const row = result.rows[0];
     const current = new Date(row.expires_at);
-    const lastExtended = row.token_extended_at ? new Date(row.token_extended_at).getTime() : 0;
-    if (lastExtended > Date.now() - 15 * 60 * 1000) {
-      await client.query("update onboarding_job set heartbeat_at=now(), lease_expires_at=now()+interval '1 minute' where id=$1", [jobId]);
-      return { expiresAt: current.toISOString(), extended: false };
-    }
-    if (TERMINAL_JOB_STATES.has(row.state as OnboardingJobState) || current.getTime() >= new Date(row.max_expires_at).getTime()) {
-      return { expiresAt: current.toISOString(), extended: false };
-    }
-    const next = nextHeartbeatExpiry(new Date(), current, new Date(row.max_expires_at));
-    await client.query(
-      "update integration_token set expires_at=$2, lock_version=lock_version+1 where id=$1 and revoked_at is null",
-      [row.token_id, next]
-    );
-    await client.query("update onboarding_job set heartbeat_at=now(), token_extended_at=now(), lease_expires_at=now()+interval '1 minute' where id=$1", [jobId]);
-    await appendAudit(client, {
-      eventType: "integration_token.extended", actorType: "system", objectType: "integration_token", objectId: String(row.token_id),
-      after: { jobId, expiresAt: next.toISOString(), maxExpiresAt: new Date(row.max_expires_at).toISOString() },
-      correlationId: String(row.correlation_id)
-    });
-    return { expiresAt: next.toISOString(), extended: next.getTime() > current.getTime() };
+    await client.query("update onboarding_job set heartbeat_at=now(), lease_expires_at=now()+interval '1 minute' where id=$1", [jobId]);
+    return { expiresAt: current.toISOString(), extended: false };
   });
 }
 
@@ -1060,28 +988,37 @@ export async function pauseExpiredOnboardingJobs(db: Db): Promise<Array<{ id: st
          from onboarding_job oj join integration_token it on it.id=oj.token_id
         where it.expires_at<=now()
           and oj.state not in ('ACTIVE','FAILED','QUARANTINED','CANCELLED')
-          and oj.blocking_error_code is distinct from 'integration_token_expired'
         for update of oj`
     );
     for (const row of expired.rows) {
       await client.query(
-        `update onboarding_job set blocking_error_code='integration_token_expired',
-                blocking_error_detail='The current integration token expired; issue a resume token for this job.',
-                lease_owner=null,lease_expires_at=null,lock_version=lock_version+1 where id=$1`,
+        `update onboarding_job
+            set state='CANCELLED',
+                completed_at=now(),
+                archived_at=coalesce(archived_at,now()),
+                archive_reason='integration_token_expired',
+                blocking_error_code=null,
+                blocking_error_detail=null,
+                lease_owner=null,
+                lease_expires_at=null,
+                runtime_stopped_at=coalesce(runtime_stopped_at,now()),
+                lock_version=lock_version+1
+          where id=$1`,
         [row.id]
       );
+      await client.query("update integration_token set revoked_at=coalesce(revoked_at,now()), lock_version=lock_version+1 where id=$1", [row.token_id]);
       await client.query("update egress_capability set revoked_at=coalesce(revoked_at,now()) where job_id=$1", [row.id]);
       if (row.server_id) {
         await disableOnboardingServer(client, String(row.server_id), "integration_token_expired", String(row.correlation_id));
       }
       await client.query(
         `insert into onboarding_event(job_id,from_state,to_state,event_type,detail,correlation_id)
-         values ($1,$2,$2,'integration_token.expired',$3,$4)`,
+         values ($1,$2,'CANCELLED','integration_token.expired_cleanup',$3,$4)`,
         [row.id, row.state, JSON.stringify({ tokenId: row.token_id, serverDisabled: Boolean(row.server_id) }), row.correlation_id]
       );
       await appendAudit(client, {
-        eventType: "onboarding.integration_token_expired", actorType: "system", objectType: "onboarding_job", objectId: String(row.id),
-        after: { tokenId: row.token_id, state: row.state, serverDisabled: Boolean(row.server_id) }, correlationId: String(row.correlation_id)
+        eventType: "onboarding.integration_token_expired_cleanup", actorType: "system", objectType: "onboarding_job", objectId: String(row.id),
+        after: { tokenId: row.token_id, previousState: row.state, runtimeVisible: false, serverDisabled: Boolean(row.server_id) }, correlationId: String(row.correlation_id)
       });
     }
     return expired.rows.map((row) => ({ id: String(row.id), code: String(row.code), serverId: row.server_id ? String(row.server_id) : null }));
@@ -1089,7 +1026,7 @@ export async function pauseExpiredOnboardingJobs(db: Db): Promise<Array<{ id: st
 }
 
 export async function listOnboardingJobs(db: Db) {
-  const result = await db.query("select * from onboarding_job order by created_at desc limit 200");
+  const result = await db.query("select * from onboarding_job where archived_at is null order by created_at desc limit 200");
   return result.rows.map(mapJob);
 }
 

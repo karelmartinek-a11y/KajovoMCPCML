@@ -54,9 +54,9 @@ export function AppLayout({
         <nav>
           {navigationButton("components", "Katalog komponent", <Boxes size={18} />)}
           {navigationButton("monitoring", "Monitoring komponent", <Activity size={18} />)}
-          {role !== "AUDITOR" ? navigationButton("integration", "Implementační tokeny", <Workflow size={18} />) : null}
+          {role !== "AUDITOR" ? navigationButton("integration", "Integrační tokeny", <Workflow size={18} />) : null}
           {role !== "AUDITOR" ? navigationButton("secrets", "Secrets", <Lock size={18} />) : null}
-          {role !== "AUDITOR" ? navigationButton("tokens", "Klientská pověření Kaja", <KeyRound size={18} />) : null}
+          {role !== "AUDITOR" ? navigationButton("tokens", "Přístupové tokeny", <KeyRound size={18} />) : null}
           {role !== "AUDITOR" ? navigationButton("permissions", "Správa oprávnění", <LockKeyhole size={18} />) : null}
           {navigationButton("audit", "Audit", <Terminal size={18} />)}
           {role !== "AUDITOR" ? navigationButton("config", "Konfigurace", <SlidersHorizontal size={18} />) : null}

@@ -190,7 +190,7 @@ from admin_account order by created_at limit 1;
 alter table integration_token_allowed_component disable trigger integration_token_allowed_component_generated_scope_tg;
 insert into integration_token_allowed_component(token_id,blueprint_component_id,registration_type,release_version,release_wave_key)
 values
-  ('20000000-0000-0000-0000-000000000024','AI-CLS-001','KAJA_CLIENT','2026.07.23','baseline-2026-07-23'),
+  ('20000000-0000-0000-0000-000000000024','AI-CLS-001','KCML_ACCESS_CLIENT','2026.07.23','baseline-2026-07-23'),
   ('20000000-0000-0000-0000-000000000024','KCML-AUTH-001','MANAGED_PLATFORM_SERVICE','2026.07.23','baseline-2026-07-23');
 alter table integration_token_allowed_component enable trigger integration_token_allowed_component_generated_scope_tg;
 SQL

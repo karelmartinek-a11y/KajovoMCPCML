@@ -25,7 +25,7 @@ describe("onboarding handoff", () => {
     expect(text).toContain("KajovoCML 2026.07.22");
     expect(text).not.toContain("KajovoCML 2026.07.21");
     expect(text).toContain("https://register.hcasc.cz/v1/service-onboardings");
-    expect(text).toContain("sám přidělí KCML identitu a HTTPS adresu");
+    expect(text).toContain("sám přidělí KCML identitu, hostname, authorization snapshot");
     expect(text).toContain("UPLOAD_REVISION");
   });
 
@@ -42,10 +42,9 @@ describe("onboarding handoff", () => {
       token: "kci_blueprint",
       initialExpiresAt: "2026-07-23T14:00:00.000Z",
       programmerApiUrl: "https://register.hcasc.cz/v2/component-onboardings",
-      tokenKind: "BLUEPRINT_RELEASE",
       releaseWaveKey: "baseline-2026-07-23",
       allowedBlueprintComponents: [
-        { componentId: "AI-CLS-001", registrationType: "KAJA_CLIENT", releaseVersion: "2026.07.23", releaseWaveKey: "baseline-2026-07-23" },
+        { componentId: "AI-CLS-001", registrationType: "KCML_ACCESS_CLIENT", releaseVersion: "2026.07.23", releaseWaveKey: "baseline-2026-07-23" },
         { componentId: "MCP-RX-WA-001", registrationType: "MCP_SERVER", releaseVersion: "2026.07.23", releaseWaveKey: "baseline-2026-07-23" }
       ],
       intakeUrls: {
@@ -59,10 +58,10 @@ describe("onboarding handoff", () => {
       catalogVersion: "2026.07.23"
     });
 
-    expect(text).toContain("Automatická integrace release blueprint komponent");
+    expect(text).toContain("Automatická integrace prvku");
     expect(text).toContain("Doporučené programátorské API: https://register.hcasc.cz/v2/component-onboardings");
     expect(text).toContain("Release wave: baseline-2026-07-23");
-    expect(text).toContain("AI-CLS-001:KAJA_CLIENT");
+    expect(text).toContain("AI-CLS-001:KCML_ACCESS_CLIENT");
     expect(text).toContain("MCP-RX-WA-001:MCP_SERVER");
     expect(text).toContain("Legacy service intake pouze pro kompatibilitu: https://register.hcasc.cz/v1/service-onboardings");
   });

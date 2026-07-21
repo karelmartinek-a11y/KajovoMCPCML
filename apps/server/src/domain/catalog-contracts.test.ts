@@ -61,7 +61,7 @@ describe(`component onboarding catalog ${KCML_RELEASE.catalogVersion}`, () => {
       mcpServers: Array<{ componentId: string; registrationType: string }>;
       managedServices: Array<{ componentId: string; registrationType: string }>;
     };
-    expect(components.aiAgents.map((item) => [item.componentId, item.registrationType])).toEqual(KCML_AI_COMPONENTS.map(([id]) => [id, "KAJA_CLIENT"]));
+    expect(components.aiAgents.map((item) => [item.componentId, item.registrationType])).toEqual(KCML_AI_COMPONENTS.map(([id]) => [id, "KCML_ACCESS_CLIENT"]));
     expect(components.mcpServers.map((item) => [item.componentId, item.registrationType])).toEqual(KCML_MCP_COMPONENTS.map(([id]) => [id, "MCP_SERVER"]));
     expect(components.managedServices.map((item) => [item.componentId, item.registrationType])).toEqual(KCML_MANAGED_SERVICE_IDS.map((id) => [id, "MANAGED_PLATFORM_SERVICE"]));
   });
@@ -90,14 +90,14 @@ describe(`component onboarding catalog ${KCML_RELEASE.catalogVersion}`, () => {
     });
     expect(blueprint.runtimeIdentityPolicy).toMatchObject({
       assignedBy: "KajovoCML onboarding only",
-      forbiddenInFactoryArtifacts: expect.arrayContaining(["KCML code", "hostname", "credential secret", "authorization snapshot"])
+      forbiddenInFactoryArtifacts: expect.arrayContaining(["KCML code", "hostname", "access token secret", "authorization snapshot"])
     });
     expect(blueprint.dependencyWaves.map((wave) => wave.wave)).toEqual([0, 1, 2, 3, 4, 5]);
     expect(blueprint.dependencyWaves[0]?.componentIds).toEqual([...KCML_MANAGED_SERVICE_IDS]);
     expect(blueprint.components).toHaveLength(20);
     expect(blueprint.components.filter((item) => item.componentType === "AI_AGENT").map((item) => item.componentId)).toEqual(KCML_AI_COMPONENTS.map(([id]) => id));
     expect(blueprint.components.filter((item) => item.componentType === "MCP_SERVER").map((item) => item.componentId).sort()).toEqual(KCML_MCP_COMPONENTS.map(([id]) => id).sort());
-    expect(blueprint.components.every((item) => item.registrationType === "KAJA_CLIENT" || item.registrationType === "MCP_SERVER")).toBe(true);
+    expect(blueprint.components.every((item) => item.registrationType === "KCML_ACCESS_CLIENT" || item.registrationType === "MCP_SERVER")).toBe(true);
     expect(blueprint.components.every((item) => /^([a-f0-9]{64})$/.test(item.zipSha256) && /^([a-f0-9]{64})$/.test(item.manifestSha256))).toBe(true);
     expect(blueprint.readiness).toMatchObject({
       releaseDryRunStatus: "PASS",
@@ -115,14 +115,14 @@ describe(`component onboarding catalog ${KCML_RELEASE.catalogVersion}`, () => {
     const releaseWave = (catalog.releaseWaves as Array<{ allowedBlueprintComponentIds: string[]; platformPrerequisiteComponentIds: string[] }>)[0];
     expect(releaseWave).toBeDefined();
     if (!releaseWave) throw new Error("release_wave_missing");
-    expect(releaseWave.allowedBlueprintComponentIds).toEqual([...KCML_GENERATED_BLUEPRINT_COMPONENT_IDS]);
+    expect(releaseWave.allowedBlueprintComponentIds).toEqual([...KCML_GENERATED_BLUEPRINT_COMPONENT_IDS, ...KCML_MANAGED_SERVICE_IDS]);
     expect(releaseWave.platformPrerequisiteComponentIds).toEqual([...KCML_MANAGED_SERVICE_IDS]);
-    expect((catalog.implementationTokens as { blueprintRelease: { maxChildJobs: number; allowedBlueprintComponentIds: string[]; platformPrerequisiteComponentIds: string[]; allowedRegistrationTypes: string[]; autoActivateAfterPass: boolean; manualApprovalRequiredAfterIssuance: boolean } }).blueprintRelease).toMatchObject({
-      maxChildJobs: 20,
-      allowedBlueprintComponentIds: [...KCML_GENERATED_BLUEPRINT_COMPONENT_IDS],
+    expect((catalog.integrationTokens as { blueprintRelease: { maxChildJobs: number; allowedBlueprintComponentIds: string[]; platformPrerequisiteComponentIds: string[]; allowedRegistrationTypes: string[]; autoActivateAfterPass: boolean; manualApprovalRequiredAfterIssuance: boolean } }).blueprintRelease).toMatchObject({
+      maxChildJobs: 1,
+      allowedBlueprintComponentIds: [...KCML_GENERATED_BLUEPRINT_COMPONENT_IDS, ...KCML_MANAGED_SERVICE_IDS],
       platformPrerequisiteComponentIds: [...KCML_MANAGED_SERVICE_IDS],
-      allowedRegistrationTypes: ["KAJA_CLIENT", "MCP_SERVER"],
-      autoActivateAfterPass: true,
+      allowedRegistrationTypes: ["KCML_ACCESS_CLIENT", "MCP_SERVER", "MANAGED_PLATFORM_SERVICE"],
+      autoActivateAfterPass: false,
       manualApprovalRequiredAfterIssuance: false
     });
     expect(catalog.pipelineGates).toEqual(expect.arrayContaining([
@@ -136,41 +136,36 @@ describe(`component onboarding catalog ${KCML_RELEASE.catalogVersion}`, () => {
     expect(catalog.requiredCiChecks).toEqual(expect.arrayContaining([...REQUIRED_ONBOARDING_CHECKS, "artifact-signature"]));
   });
 
-  it("keeps implementation token lifecycle metadata aligned with runtime deadlines", () => {
+  it("keeps integration token lifecycle metadata aligned with runtime deadlines", () => {
     const issuedAt = new Date("2026-07-19T10:29:45.182Z");
     const deadlines = tokenDeadlines(issuedAt);
     const maximum = deadlines.maxExpiresAt;
     const extended = nextHeartbeatExpiry(new Date("2026-07-20T10:29:45.182Z"), deadlines.expiresAt, maximum);
-    const tokenPolicy = (catalog.implementationTokens as {
+    const tokenPolicy = (catalog.integrationTokens as {
       blueprintRelease: {
         ttlHours: number;
-        maxTtlDays: number;
         lifecycle: {
           initialExpiresInHours: number;
-          heartbeatExtensionHours: number;
-          maxExpiresInDays: number;
+          maxExpiresInHours: number;
           currentExpiryField: string;
           maximumExpiryField: string;
-          terminalStatesStopExtension: string[];
-          pausedStatesStopExtension: string[];
+          successfulUseLimit: number;
         };
       };
     }).blueprintRelease;
 
     expect(tokenPolicy.ttlHours).toBe(24);
-    expect(tokenPolicy.maxTtlDays).toBe(30);
     expect(tokenPolicy.lifecycle).toMatchObject({
       initialExpiresInHours: 24,
-      heartbeatExtensionHours: 24,
-      maxExpiresInDays: 30,
+      maxExpiresInHours: 24,
       currentExpiryField: "expiresAt",
       maximumExpiryField: "maxExpiresAt",
-      terminalStatesStopExtension: ["ACTIVE", "FAILED", "QUARANTINED", "CANCELLED"],
-      pausedStatesStopExtension: ["AWAITING_REVISION"]
+      successfulUseLimit: 1
     });
+    expect(tokenPolicy.lifecycle).not.toHaveProperty("extensionTrigger");
     expect(deadlines.expiresAt.getTime() - issuedAt.getTime()).toBe(tokenPolicy.lifecycle.initialExpiresInHours * 60 * 60 * 1000);
-    expect(maximum.getTime() - issuedAt.getTime()).toBe(tokenPolicy.lifecycle.maxExpiresInDays * 24 * 60 * 60 * 1000);
-    expect(extended.getTime() - deadlines.expiresAt.getTime()).toBe(tokenPolicy.lifecycle.heartbeatExtensionHours * 60 * 60 * 1000);
+    expect(maximum.getTime() - issuedAt.getTime()).toBe(tokenPolicy.lifecycle.maxExpiresInHours * 60 * 60 * 1000);
+    expect(extended.getTime()).toBe(deadlines.expiresAt.getTime());
   });
 
   it("publishes general component and capability contract registries without removing legacy adapters", () => {

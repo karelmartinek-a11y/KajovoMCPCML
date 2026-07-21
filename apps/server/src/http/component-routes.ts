@@ -14,13 +14,20 @@ import {
   getComponent,
   getComponentDiscovery,
   getComponentOnboarding,
+  ingestComponentOperationEvent,
+  ingestComponentPulse,
   listComponents,
+  recordComponentControlAck,
+  recordComponentE2EResult,
+  recordComponentHeartbeat,
+  recordComponentStateObservation,
   revokeComponentCredential,
   reviseComponentOnboarding,
   rotateComponentCredential,
   setComponentActivation,
   setComponentLifecycle,
   setComponentPermissionEnabled,
+  type ComponentPulseEnvelope,
   validateComponentManifest
 } from "../domain/component.js";
 import { authenticateIntegrationToken } from "../domain/onboarding.js";
@@ -32,11 +39,67 @@ const claimSchema = z.object({ claimToken: z.string().min(32) }).strict();
 const activationSchema = z.object({ enabled: z.boolean() }).strict();
 const lifecycleSchema = z.object({ action: z.enum(["QUARANTINE", "RESTORE", "RETIRE", "DEREGISTER"]) }).strict();
 const permissionSchema = z.object({ enabled: z.boolean() }).strict();
+const requiredJson = z.custom<unknown>((value) => value !== undefined);
+const fullPulseSchema = z.object({
+  pulseType: z.string().min(3).max(160),
+  direction: z.enum(["INCOMING", "OUTGOING"]),
+  source: z.record(z.unknown()),
+  target: z.record(z.unknown()),
+  state: z.record(z.unknown()),
+  operation: z.record(z.unknown()),
+  input: requiredJson,
+  process: requiredJson,
+  output: requiredJson,
+  success: z.boolean(),
+  correlationId: z.string().uuid(),
+  causationId: z.string().uuid().optional(),
+  traceId: z.string().min(3).max(200).optional(),
+  accessTokenFingerprint: z.string().min(8).max(200),
+  occurredAt: z.string().datetime({ offset: true })
+}).strict();
+const heartbeatSchema = z.object({
+  heartbeatAt: z.string().datetime({ offset: true }),
+  operationalState: z.enum(["HEALTHY", "DEGRADED", "UNHEALTHY", "MAINTENANCE"]),
+  stateDigest: z.string().startsWith("sha256:").optional(),
+  correlationId: z.string().uuid(),
+  payload: z.unknown().optional()
+}).strict();
+const stateObservationSchema = z.object({
+  stateKey: z.string().min(2).max(160),
+  observedAt: z.string().datetime({ offset: true }),
+  correlationId: z.string().uuid(),
+  statePayload: requiredJson
+}).strict();
+const controlAckSchema = z.object({
+  commandType: z.enum(["enable", "disable", "state", "heartbeat"]),
+  status: z.enum(["ACKED", "FAILED"]),
+  ackPayload: requiredJson,
+  correlationId: z.string().uuid()
+}).strict();
+const e2eResultSchema = z.object({
+  scenarioKey: z.string().min(2).max(160),
+  generatedOutput: requiredJson,
+  generatedOutputDigest: z.string().startsWith("sha256:"),
+  correlationId: z.string().uuid()
+}).strict();
+type StateObservationBody = {
+  stateKey: string;
+  observedAt: string;
+  correlationId: string;
+  statePayload: unknown;
+};
+type ControlAckBody = {
+  commandType: "enable" | "disable" | "state" | "heartbeat";
+  status: "ACKED" | "FAILED";
+  ackPayload: unknown;
+  correlationId: string;
+};
 const auditEventSchema = z.object({
   sequenceNumber: z.number().int().positive(), eventType: z.string().min(2).max(160), workflow: z.string().max(160).optional(), workflowStep: z.string().max(160).optional(),
   initiatedByType: z.string().min(1).max(80), initiatedById: z.string().max(200).optional(), occurredAt: z.string().datetime({ offset: true }),
   modelName: z.string().max(200).optional(), toolName: z.string().max(200).optional(), serviceName: z.string().max(200).optional(),
-  inputClassification: z.string().max(80).optional(), outputClassification: z.string().max(80).optional(), inputSummary: z.unknown().optional(), outputSummary: z.unknown().optional(),
+  inputClassification: z.string().max(80).optional(), outputClassification: z.string().max(80).optional(),
+  inputDigest: z.string().startsWith("sha256:"), inputPayload: requiredJson, processTrace: requiredJson, outputDigest: z.string().startsWith("sha256:"), outputPayload: requiredJson, success: z.boolean(),
   principalId: z.string().max(200).optional(), principalFingerprint: z.string().max(200).optional(), scopeName: z.string().max(200).optional(), route: z.string().max(500).optional(),
   authorizationDecision: z.string().max(80).optional(), authorizationReason: z.string().max(160).optional(), protocolResult: z.string().max(160).optional(),
   httpStatus: z.number().int().min(100).max(599).optional(), retryCount: z.number().int().nonnegative().optional(), idempotencyKey: z.string().max(200).optional(),
@@ -198,6 +261,27 @@ export function registerComponentRoutes(app: FastifyInstance, db: Db, config: Ap
     }
   });
 
+  app.post("/v2/component-onboardings/:id/e2e-results", async (request, reply) => {
+    const correlationId = randomUUID();
+    if (hostOf(request.headers.host) !== config.REGISTER_HOST) return sendError(reply, 404, "not_found", undefined, correlationId);
+    const principal = await integrationPrincipal(db, config, request, reply, correlationId);
+    if (!principal) return;
+    try {
+      const body = e2eResultSchema.parse(request.body);
+      const result = await recordComponentE2EResult(db, {
+        jobId: (request.params as { id: string }).id,
+        integrationTokenId: principal.id,
+        scenarioKey: body.scenarioKey,
+        generatedOutput: body.generatedOutput,
+        generatedOutputDigest: body.generatedOutputDigest,
+        correlationId: body.correlationId
+      });
+      return reply.code(result.status === "PASS" ? 202 : 409).header("cache-control", "no-store").send({ ...result, correlationId: body.correlationId });
+    } catch (error) {
+      return routeError(reply, error, correlationId);
+    }
+  });
+
   app.delete("/v2/component-onboardings/:id", async (request, reply) => {
     const correlationId = randomUUID();
     if (hostOf(request.headers.host) !== config.REGISTER_HOST) return sendError(reply, 404, "not_found", undefined, correlationId);
@@ -310,13 +394,67 @@ export function registerComponentRoutes(app: FastifyInstance, db: Db, config: Ap
   app.post("/v2/component-pulse", { config: { rateLimit: { max: 120, timeWindow: "1 minute" } } }, async (request, reply) => {
     const correlationId = randomUUID();
     const decision = await authorizeRuntime(db, config, request, "component.pulse", "/v2/component-pulse", correlationId);
-    if (!decision?.allow) return sendError(reply, 403, decision?.reasonCode ?? "invalid_token", undefined, correlationId);
-    const body = z.object({ status: z.enum(["HEALTHY", "DEGRADED", "FAILED"]), observedAt: z.string().datetime({ offset: true }) }).strict().parse(request.body);
-    await db.query(
-      `update component set monitoring_state=$2,operational_state=case when $2='FAILED' then 'UNHEALTHY' else $2 end where id=$1`,
-      [decision.targetComponentId, body.status]
-    );
-    return reply.code(202).send({ accepted: true, policyEpoch: decision.policyEpoch, correlationId });
+    if (!decision?.allow || !decision.targetComponentId) return sendError(reply, 403, decision?.reasonCode ?? "invalid_token", undefined, correlationId);
+    try {
+      const body = fullPulseSchema.parse(request.body) as ComponentPulseEnvelope;
+      const receipt = await ingestComponentPulse(db, decision.targetComponentId, body);
+      return reply.code(202).send({ ...receipt, policyEpoch: decision.policyEpoch });
+    } catch (error) {
+      return routeError(reply, error, correlationId);
+    }
+  });
+
+  app.post("/v2/component-outbound-pulse", { config: { rateLimit: { max: 120, timeWindow: "1 minute" } } }, async (request, reply) => {
+    const correlationId = randomUUID();
+    const decision = await authorizeRuntime(db, config, request, "component.outbound.pulse", "/v2/component-outbound-pulse", correlationId);
+    if (!decision?.allow || !decision.sourceComponentId) return sendError(reply, 403, decision?.reasonCode ?? "invalid_token", undefined, correlationId);
+    try {
+      const body = fullPulseSchema.parse(request.body) as ComponentPulseEnvelope;
+      if (body.direction !== "OUTGOING") return sendError(reply, 400, "invalid_pulse_direction", undefined, correlationId);
+      const receipt = await ingestComponentPulse(db, decision.sourceComponentId, body);
+      return reply.code(202).send({ ...receipt, policyEpoch: decision.policyEpoch });
+    } catch (error) {
+      return routeError(reply, error, correlationId);
+    }
+  });
+
+  app.post("/v2/component-heartbeat", { config: { rateLimit: { max: 120, timeWindow: "1 minute" } } }, async (request, reply) => {
+    const correlationId = randomUUID();
+    const decision = await authorizeRuntime(db, config, request, "component.heartbeat", "/v2/component-heartbeat", correlationId);
+    if (!decision?.allow || !decision.targetComponentId) return sendError(reply, 403, decision?.reasonCode ?? "invalid_token", undefined, correlationId);
+    try {
+      const body = heartbeatSchema.parse(request.body);
+      const receipt = await recordComponentHeartbeat(db, decision.targetComponentId, body);
+      return reply.code(202).send({ ...receipt, correlationId: body.correlationId });
+    } catch (error) {
+      return routeError(reply, error, correlationId);
+    }
+  });
+
+  app.post("/v2/component-state-query", { config: { rateLimit: { max: 120, timeWindow: "1 minute" } } }, async (request, reply) => {
+    const correlationId = randomUUID();
+    const decision = await authorizeRuntime(db, config, request, "component.state.query", "/v2/component-state-query", correlationId);
+    if (!decision?.allow || !decision.targetComponentId) return sendError(reply, 403, decision?.reasonCode ?? "invalid_token", undefined, correlationId);
+    try {
+      const body = stateObservationSchema.parse(request.body) as StateObservationBody;
+      const receipt = await recordComponentStateObservation(db, decision.targetComponentId, body);
+      return reply.code(202).send({ ...receipt, correlationId: body.correlationId });
+    } catch (error) {
+      return routeError(reply, error, correlationId);
+    }
+  });
+
+  app.post("/v2/component-control-ack", { config: { rateLimit: { max: 120, timeWindow: "1 minute" } } }, async (request, reply) => {
+    const correlationId = randomUUID();
+    const decision = await authorizeRuntime(db, config, request, "component.control.ack", "/v2/component-control-ack", correlationId);
+    if (!decision?.allow || !decision.targetComponentId) return sendError(reply, 403, decision?.reasonCode ?? "invalid_token", undefined, correlationId);
+    try {
+      const body = controlAckSchema.parse(request.body) as ControlAckBody;
+      const receipt = await recordComponentControlAck(db, decision.targetComponentId, body);
+      return reply.code(202).send({ ...receipt, correlationId: body.correlationId });
+    } catch (error) {
+      return routeError(reply, error, correlationId);
+    }
   });
 
   app.post("/v2/component-audit-events", { config: { rateLimit: { max: 600, timeWindow: "1 minute" } } }, async (request, reply) => {
@@ -325,6 +463,20 @@ export function registerComponentRoutes(app: FastifyInstance, db: Db, config: Ap
     if (!decision?.allow || !decision.targetComponentId) return sendError(reply, 403, decision?.reasonCode ?? "invalid_token", undefined, correlationId);
     try {
       const event = auditEventSchema.parse(request.body);
+      await ingestComponentOperationEvent(db, decision.targetComponentId, {
+        operationKey: event.eventType,
+        inputDigest: event.inputDigest,
+        inputPayload: event.inputPayload,
+        processTrace: event.processTrace,
+        outputDigest: event.outputDigest,
+        outputPayload: event.outputPayload,
+        success: event.success,
+        correlationId: event.correlationId,
+        causationId: event.causationId,
+        traceId: event.traceId,
+        accessTokenFingerprint: event.principalFingerprint,
+        occurredAt: event.occurredAt
+      });
       const receipt = await ingestComponentAuditEvent(db, decision.targetComponentId, event);
       return reply.code(receipt.accepted ? 202 : 409).send({ ...receipt, correlationId });
     } catch (error) {

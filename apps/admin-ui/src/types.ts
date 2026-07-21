@@ -135,6 +135,7 @@ export type SecretGrant = {
   principalKind: "KAJA" | "COMPONENT" | "INTEGRATION_TOKEN";
   principalId: string | null;
   principalPublicId: string | null;
+  allSecrets: boolean;
   grantedAt: string;
   revokedAt: string | null;
 };
@@ -149,7 +150,7 @@ export type SecretVersion = {
   retiredAt: string | null;
   active: boolean;
 };
-export type KajaCredential = {
+export type AccessTokenCredential = {
   id: string;
   publicId: string;
   label: string;
@@ -167,7 +168,7 @@ export type KajaCredential = {
   lastUsedAt: string | null;
 };
 export type AccessLevel = "EXECUTE";
-export type KajaPermission = {
+export type AccessTokenPermission = {
   serverId: string;
   code: string;
   hostname: string;
@@ -207,7 +208,6 @@ export type IntegrationToken = {
   };
   serviceKind?: "MCP" | "EXTERNAL_API";
   allowedPipeline?: "MCP_ONBOARDING" | "EXTERNAL_API_REGISTRATION";
-  tokenKind?: "SINGLE_COMPONENT" | "BLUEPRINT_RELEASE";
   releaseVersion?: string;
   releaseWaveKey?: string | null;
   maxChildJobs?: number;
@@ -395,9 +395,9 @@ export type OnboardingDescriptor = {
 export const pageNames: Record<Page, string> = {
   components: "Katalog komponent",
   monitoring: "Monitoring komponent",
-  integration: "Implementační tokeny",
+  integration: "Integrační tokeny",
   secrets: "Správa tajemství",
-  tokens: "Klientská pověření Kaja",
+  tokens: "Přístupové tokeny",
   permissions: "Správa oprávnění",
   audit: "Audit",
   config: "Konfigurace",

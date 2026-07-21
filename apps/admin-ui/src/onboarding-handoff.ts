@@ -12,7 +12,6 @@ export type OnboardingHandoff = {
   token: string;
   initialExpiresAt: string;
   programmerApiUrl: string;
-  tokenKind?: "SINGLE_COMPONENT" | "BLUEPRINT_RELEASE";
   releaseWaveKey?: string | null;
   allowedBlueprintComponents?: Array<{
     componentId: string;
@@ -35,7 +34,7 @@ export function onboardingHandoffText(handoff: OnboardingHandoff): string {
   const expiresAt = formatDate(handoff.initialExpiresAt);
   const intakeUrl = handoff.intakeUrls?.recommendedIntakeUrl ?? handoff.programmerApiUrl;
   const componentScope = handoff.allowedBlueprintComponents?.map((component) => `${component.componentId}:${component.registrationType}`).join(", ");
-  const blueprintLines = handoff.tokenKind === "BLUEPRINT_RELEASE"
+  const scopeLines = handoff.allowedBlueprintComponents?.length
     ? [
       `Release wave: ${handoff.releaseWaveKey ?? "neuvedeno"}`,
       `Povolené blueprint komponenty: ${componentScope || "žádné"}`,
@@ -44,9 +43,7 @@ export function onboardingHandoffText(handoff: OnboardingHandoff): string {
     ]
     : [];
   return [
-    handoff.tokenKind === "BLUEPRINT_RELEASE"
-      ? "Automatická integrace release blueprint komponent do KajovoMCPCML"
-      : "Automatická integrace nového MCP serveru do KajovoMCPCML",
+    "Automatická integrace prvku do KajovoMCPCML",
     "",
     `Označení integračního toku: ${handoff.label}`,
     `Shrnutí serveru: ${handoff.descriptor.summary}`,
@@ -57,12 +54,10 @@ export function onboardingHandoffText(handoff: OnboardingHandoff): string {
     `Integrační token: ${handoff.token}`,
     `První upload proveďte nejpozději do: ${expiresAt}`,
     `Doporučené programátorské API: ${intakeUrl}`,
-    ...blueprintLines,
+    ...scopeLines,
     "",
     `Postupujte přesně podle přiloženého dokumentu KajovoCML ${handoff.catalogVersion}.`,
-    handoff.tokenKind === "BLUEPRINT_RELEASE"
-      ? "Pro každou povolenou blueprint komponentu pošlete samostatný manifest 2026.07.23 na native component intake; systém sám přidělí KCML identitu, hostname, authorization snapshot a credential claim."
-      : "Po přijetí manifestu a zdrojového ZIPu systém sám přidělí KCML identitu a HTTPS adresu a spustí PR/CI, nasazení, autorizaci, logging, monitoring, testy a aktivaci.",
+    "Po přijetí manifestu systém sám přidělí KCML identitu, hostname, authorization snapshot a po úspěšném ověření předá přístupový token.",
     "Stav jobu průběžně načítejte přes programátorské API. Pokud vrátí UPLOAD_REVISION, opravte uvedenou chybu a nahrajte novou revizi podle katalogu; opakujte až do COMPLETE / ACTIVE."
   ].join("\n");
 }

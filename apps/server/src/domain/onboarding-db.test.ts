@@ -179,7 +179,7 @@ describe.skipIf(!enabled)("onboarding PostgreSQL transactions", () => {
     expect(revisions.rows.map((row) => String((row as { revision: unknown }).revision))).toEqual(["db-test-1", "db-test-2"]);
   });
 
-  it("requires manual quarantine release and keeps a resumed repair job waiting for a new revision", async () => {
+  it("requires manual quarantine release and rejects a resumed repair token", async () => {
     const created = await createIntegrationToken(db, config, adminId, randomUUID(), "Quarantine repair test", descriptor);
     const principal = await authenticateIntegrationToken(db, created.token, config);
     const { manifest, digest: manifestDigest } = validateOnboardingManifest(manifestInput);
@@ -194,7 +194,7 @@ describe.skipIf(!enabled)("onboarding PostgreSQL transactions", () => {
     await db.query("update onboarding_job set state='QUARANTINED', completed_at=now() where id=$1", [job.id]);
     await expect(releaseQuarantinedOnboardingJob(db, job.id, "WRONG", "Valid repair reason", adminId, randomUUID())).rejects.toThrow("confirmation_code_mismatch");
     await releaseQuarantinedOnboardingJob(db, job.id, String(job.code), "Artifact registration metadata was repaired and a new source revision is required.", adminId, randomUUID());
-    await createIntegrationToken(db, config, adminId, randomUUID(), "Quarantine repair resume", descriptor, job.id);
+    await expect(createIntegrationToken(db, config, adminId, randomUUID(), "Quarantine repair resume", descriptor, job.id)).rejects.toThrow("resume_token_not_supported");
     const stored = await db.query("select state,completed_at from onboarding_job where id=$1", [job.id]);
     expect(stored.rows[0]).toMatchObject({ state: "AWAITING_REVISION", completed_at: null });
     const transition = await db.query("select event_type from onboarding_event where job_id=$1 order by id desc limit 1", [job.id]);
@@ -244,6 +244,6 @@ describe.skipIf(!enabled)("onboarding PostgreSQL transactions", () => {
     });
     expect((await db.query("select count(*)::int as count from integration_token where id=$1 and deleted_at is null", [created.id])).rows[0].count).toBe(0);
     await expect(authenticateIntegrationToken(db, created.token, config)).rejects.toThrow("invalid_integration_token");
-    await expect(createIntegrationToken(db, config, adminId, randomUUID(), "Deletion test resume", descriptor, job.id)).rejects.toThrow("job_not_found");
+    await expect(createIntegrationToken(db, config, adminId, randomUUID(), "Deletion test resume", descriptor, job.id)).rejects.toThrow("resume_token_not_supported");
   });
 });

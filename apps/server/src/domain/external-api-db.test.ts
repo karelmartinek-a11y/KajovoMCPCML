@@ -22,7 +22,6 @@ import {
   listExternalApiMonitoringTargets,
   recordExternalApiMonitoringInternalError,
   runExternalApiMonitoringTarget,
-  updateExternalApiManagedService,
   validateExternalApiManifest
 } from "./external-api.js";
 import { managedServiceStateView, setManagedServiceApiState } from "./managed-service.js";
@@ -543,33 +542,13 @@ describe.skipIf(!enabled)("EXTERNAL_API PostgreSQL integration", () => {
     expect(receipt.serviceId).toBeTruthy();
     const serviceId = String(receipt.serviceId);
     const resource = String(receipt.resourceUri);
-    const resumedIntegration = await createIntegrationToken(db, config, adminId, randomUUID(), "External API integration resume", {
+    await expect(createIntegrationToken(db, config, adminId, randomUUID(), "External API integration resume", {
       summary: "Reference external API resume",
       businessPurpose: "Integration test resume",
       serviceOwner: "KCML Managed Services",
       technicalOwner: "KCML Managed Services",
       criticality: "HIGH"
-    }, receipt.jobId, { serviceKind: "EXTERNAL_API", allowedPipeline: "EXTERNAL_API_REGISTRATION" });
-    const resumedPrincipal = await authenticateIntegrationToken(db, resumedIntegration.token, config);
-    const resumedJob = await db.query("select lock_version from onboarding_job where id=$1", [receipt.jobId]);
-    const resumedLockVersion = Number(resumedJob.rows[0].lock_version);
-    const revisionReceipt = await updateExternalApiManagedService(
-      db,
-      config,
-      resumedPrincipal,
-      receipt.jobId,
-      resumedLockVersion,
-      "external-api-db-test-repeat",
-      manifest,
-      manifestDigest,
-      randomUUID()
-    );
-    expect(revisionReceipt).toMatchObject({
-      jobId: receipt.jobId,
-      lockVersion: resumedLockVersion + 1,
-      serviceId,
-      finalState: "REGISTERED_DISABLED"
-    });
+    }, receipt.jobId, { serviceKind: "EXTERNAL_API", allowedPipeline: "EXTERNAL_API_REGISTRATION" })).rejects.toThrow("resume_token_not_supported");
 
     const credential = await createKajaCredential(db, adminId, randomUUID(), "Gateway client", null);
     const credentialRow = await db.query("select id from kaja_credential where public_id = $1", [credential.publicId]);
@@ -943,7 +922,7 @@ describe.skipIf(!enabled)("EXTERNAL_API PostgreSQL integration", () => {
     expect(epochAfter.rows.map((row, index) => row.permission_epoch !== epochBefore.rows[index]?.permission_epoch)).toEqual([true, true]);
   });
 
-  it("applies a resumed EXTERNAL_API onboarding revision for an existing managed service", async () => {
+  it("rejects resumed EXTERNAL_API onboarding revisions for an existing managed service", async () => {
     const initialInput = manifestFor(`https://127.0.0.1:${backend.port}`);
     const { manifest: initialManifest, digest: initialDigest } = validateExternalApiManifest(initialInput);
     const integration = await createIntegrationToken(db, config, adminId, randomUUID(), "External API integration", {
@@ -973,50 +952,14 @@ describe.skipIf(!enabled)("EXTERNAL_API PostgreSQL integration", () => {
     );
     await db.query("update onboarding_job set source_revision=1 where id=$1", [receipt.jobId]);
 
-    const resumed = await createIntegrationToken(db, config, adminId, randomUUID(), "External API resumed integration", {
+    await expect(createIntegrationToken(db, config, adminId, randomUUID(), "External API resumed integration", {
       summary: "Reference external API",
       businessPurpose: "Integration test",
       serviceOwner: "KCML Managed Services",
       technicalOwner: "KCML Managed Services",
       criticality: "HIGH"
-    }, receipt.jobId, { serviceKind: "EXTERNAL_API", allowedPipeline: "EXTERNAL_API_REGISTRATION" });
-    const resumedPrincipal = await authenticateIntegrationToken(db, resumed.token, config);
-    const resumedJob = await db.query("select lock_version from onboarding_job where id=$1", [receipt.jobId]);
-    const nextInput = {
-      ...manifestFor(`https://127.0.0.1:${backend.port}`),
-      registrationRevision: "test-reference-api-2",
-      description: "Updated local HTTPS reference backend used by the integration test."
-    };
-    const { manifest: nextManifest, digest: nextDigest } = validateExternalApiManifest(nextInput);
-    const updated = await updateExternalApiManagedService(
-      db,
-      config,
-      resumedPrincipal,
-      receipt.jobId,
-      Number(resumedJob.rows[0].lock_version),
-      "external-api-db-resume-test-revision",
-      nextManifest,
-      nextDigest,
-      randomUUID()
-    );
-
-    expect(updated).toMatchObject({
-      jobId: receipt.jobId,
-      serviceId: receipt.serviceId,
-      finalState: "REGISTERED_DISABLED"
-    });
+    }, receipt.jobId, { serviceKind: "EXTERNAL_API", allowedPipeline: "EXTERNAL_API_REGISTRATION" })).rejects.toThrow("resume_token_not_supported");
     const revisionCount = await db.query("select count(*)::int as count from managed_service_revision where managed_service_id=$1", [receipt.serviceId]);
-    expect(revisionCount.rows[0].count).toBe(2);
-    const activeRevision = await db.query("select revision from managed_service_revision where managed_service_id=$1 and active is true", [receipt.serviceId]);
-    expect(activeRevision.rows[0].revision).toBe("test-reference-api-2");
-    const sourceRevision = await db.query(
-      `select job.source_revision, max(source.revision)::int as max_revision
-         from onboarding_job job
-         join onboarding_source_revision source on source.job_id=job.id
-        where job.id=$1
-        group by job.source_revision`,
-      [receipt.jobId]
-    );
-    expect(sourceRevision.rows[0]).toMatchObject({ source_revision: 3, max_revision: 3 });
+    expect(revisionCount.rows[0].count).toBe(1);
   });
 });

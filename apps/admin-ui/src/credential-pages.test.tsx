@@ -3,13 +3,13 @@ import React from "react";
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CredentialsPage } from "./credential-pages.js";
-import type { KajaCredential } from "./types.js";
+import type { AccessTokenCredential } from "./types.js";
 
 afterEach(() => cleanup());
 
 describe("credential terminology", () => {
-  it("distinguishes the client credential from short-lived access tokens", () => {
-    const credential: KajaCredential = {
+  it("uses access token terminology for the long-lived access token registry", () => {
+    const credential: AccessTokenCredential = {
       id: "credential-1",
       publicId: "Kaja0001",
       label: "CI klient",
@@ -36,9 +36,9 @@ describe("credential terminology", () => {
         onRefresh={vi.fn()}
       />
     );
-    expect(screen.getByRole("heading", { name: "Klientská pověření Kaja" })).toBeTruthy();
-    expect(screen.getByText(/oddělených krátkodobých přístupových tokenů/i)).toBeTruthy();
-    expect(screen.getByRole("columnheader", { name: "Poslední vydání přístupového tokenu" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Přístupové tokeny" })).toBeTruthy();
+    expect(screen.getByText(/dlouhodobých přístupových tokenů/i)).toBeTruthy();
+    expect(screen.getByRole("columnheader", { name: "Poslední vydání krátkodobého tokenu" })).toBeTruthy();
     expect(screen.getByRole("columnheader", { name: "Poslední použití" })).toBeTruthy();
   });
 });
