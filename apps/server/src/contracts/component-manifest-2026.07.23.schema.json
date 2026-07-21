@@ -85,6 +85,32 @@
         }
       }
     },
+    "strictObjectSchema": {
+      "type": "object",
+      "required": [
+        "type",
+        "required",
+        "properties"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "type": {
+          "const": "object"
+        },
+        "required": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "properties": {
+          "type": "object",
+          "minProperties": 1
+        }
+      }
+    },
     "endpoint": {
       "type": "object",
       "additionalProperties": false,
@@ -133,10 +159,10 @@
           ]
         },
         "requestSchema": {
-          "type": "object"
+          "$ref": "#/$defs/strictObjectSchema"
         },
         "responseSchema": {
-          "type": "object"
+          "$ref": "#/$defs/strictObjectSchema"
         },
         "limits": {
           "type": "object",
@@ -246,7 +272,7 @@
           ]
         },
         "schema": {
-          "type": "object"
+          "$ref": "#/$defs/strictObjectSchema"
         },
         "routeAcl": {
           "type": "array",
@@ -349,7 +375,13 @@
         "autoQuarantine",
         "evidence",
         "change",
-        "integrity"
+        "integrity",
+        "stateContract",
+        "e2eScenarios",
+        "documentationEvidence",
+        "controlPlane",
+        "outboundAuthorization",
+        "secretPolicy"
       ],
       "properties": {
         "schemaVersion": {
@@ -479,7 +511,7 @@
               "const": "src/index.ts"
             },
             "testCommand": {
-              "const": "pnpm test"
+              "const": "pnpm kcml:contract-test"
             }
           }
         },
@@ -596,12 +628,14 @@
           "properties": {
             "incoming": {
               "type": "array",
+              "minItems": 1,
               "items": {
                 "$ref": "#/$defs/pulse"
               }
             },
             "outgoing": {
               "type": "array",
+              "minItems": 1,
               "items": {
                 "$ref": "#/$defs/pulse"
               }
@@ -682,6 +716,7 @@
         },
         "evidence": {
           "type": "object",
+          "minProperties": 1,
           "additionalProperties": true
         },
         "change": {
@@ -716,6 +751,356 @@
               "$ref": "#/$defs/sha256"
             }
           }
+        },
+        "stateContract": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "states",
+            "transitions"
+          ],
+          "properties": {
+            "states": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "stateKey",
+                  "category",
+                  "schema",
+                  "terminal"
+                ],
+                "properties": {
+                  "stateKey": {
+                    "type": "string",
+                    "minLength": 2,
+                    "maxLength": 160
+                  },
+                  "category": {
+                    "enum": [
+                      "OPERATIONAL",
+                      "BUSINESS",
+                      "CONTROL",
+                      "ERROR"
+                    ]
+                  },
+                  "schema": {
+                    "$ref": "#/$defs/strictObjectSchema"
+                  },
+                  "terminal": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            },
+            "transitions": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "from",
+                  "to",
+                  "triggerMask"
+                ],
+                "properties": {
+                  "from": {
+                    "type": "string",
+                    "minLength": 2
+                  },
+                  "to": {
+                    "type": "string",
+                    "minLength": 2
+                  },
+                  "triggerMask": {
+                    "type": "string",
+                    "minLength": 2
+                  }
+                }
+              }
+            }
+          }
+        },
+        "e2eScenarios": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "scenarioId",
+              "variant",
+              "inputRef",
+              "inputDigest",
+              "expectedOutputRef",
+              "expectedOutputDigest",
+              "expectedOutput",
+              "testCommands"
+            ],
+            "properties": {
+              "scenarioId": {
+                "type": "string",
+                "minLength": 2,
+                "maxLength": 160
+              },
+              "variant": {
+                "type": "string",
+                "minLength": 2,
+                "maxLength": 160
+              },
+              "inputRef": {
+                "type": "string",
+                "pattern": "^(?!.*(?:TODO|TBD|placeholder|sample|stub)).{3,}$"
+              },
+              "inputDigest": {
+                "$ref": "#/$defs/sha256"
+              },
+              "expectedOutputRef": {
+                "type": "string",
+                "pattern": "^(?!.*(?:TODO|TBD|placeholder|sample|stub)).{3,}$"
+              },
+              "expectedOutputDigest": {
+                "$ref": "#/$defs/sha256"
+              },
+              "expectedOutput": {
+                "type": "object",
+                "minProperties": 1
+              },
+              "testCommands": {
+                "type": "array",
+                "minItems": 3,
+                "contains": {
+                  "const": "pnpm kcml:contract-test"
+                },
+                "items": {
+                  "enum": [
+                    "pnpm test",
+                    "pnpm e2e",
+                    "pnpm kcml:contract-test"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "documentationEvidence": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "evidenceKey",
+              "evidenceRef",
+              "evidenceDigest",
+              "mediaType",
+              "required"
+            ],
+            "properties": {
+              "evidenceKey": {
+                "type": "string",
+                "minLength": 2,
+                "maxLength": 120
+              },
+              "evidenceRef": {
+                "type": "string",
+                "pattern": "^(?!.*(?:TODO|TBD|placeholder|sample|stub)).{3,}$"
+              },
+              "evidenceDigest": {
+                "$ref": "#/$defs/sha256"
+              },
+              "mediaType": {
+                "type": "string",
+                "minLength": 3,
+                "maxLength": 120
+              },
+              "required": {
+                "const": true
+              }
+            }
+          }
+        },
+        "controlPlane": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "enable",
+            "disable",
+            "state",
+            "heartbeat"
+          ],
+          "properties": {
+            "enable": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "supported",
+                "path",
+                "method",
+                "requestSchema",
+                "responseSchema"
+              ],
+              "properties": {
+                "supported": {
+                  "const": true
+                },
+                "path": {
+                  "type": "string",
+                  "pattern": "^/"
+                },
+                "method": {
+                  "const": "POST"
+                },
+                "requestSchema": {
+                  "$ref": "#/$defs/strictObjectSchema"
+                },
+                "responseSchema": {
+                  "$ref": "#/$defs/strictObjectSchema"
+                }
+              }
+            },
+            "disable": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "supported",
+                "path",
+                "method",
+                "requestSchema",
+                "responseSchema"
+              ],
+              "properties": {
+                "supported": {
+                  "const": true
+                },
+                "path": {
+                  "type": "string",
+                  "pattern": "^/"
+                },
+                "method": {
+                  "const": "POST"
+                },
+                "requestSchema": {
+                  "$ref": "#/$defs/strictObjectSchema"
+                },
+                "responseSchema": {
+                  "$ref": "#/$defs/strictObjectSchema"
+                }
+              }
+            },
+            "state": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "supported",
+                "path",
+                "method",
+                "requestSchema",
+                "responseSchema"
+              ],
+              "properties": {
+                "supported": {
+                  "const": true
+                },
+                "path": {
+                  "type": "string",
+                  "pattern": "^/"
+                },
+                "method": {
+                  "const": "POST"
+                },
+                "requestSchema": {
+                  "$ref": "#/$defs/strictObjectSchema"
+                },
+                "responseSchema": {
+                  "$ref": "#/$defs/strictObjectSchema"
+                }
+              }
+            },
+            "heartbeat": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "supported",
+                "path",
+                "method",
+                "requestSchema",
+                "responseSchema"
+              ],
+              "properties": {
+                "supported": {
+                  "const": true
+                },
+                "path": {
+                  "type": "string",
+                  "pattern": "^/"
+                },
+                "method": {
+                  "const": "POST"
+                },
+                "requestSchema": {
+                  "$ref": "#/$defs/strictObjectSchema"
+                },
+                "responseSchema": {
+                  "$ref": "#/$defs/strictObjectSchema"
+                }
+              }
+            }
+          }
+        },
+        "outboundAuthorization": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "required",
+            "tokenRequired",
+            "gatewayRequired",
+            "verifyEachPulse"
+          ],
+          "properties": {
+            "required": {
+              "const": true
+            },
+            "tokenRequired": {
+              "const": true
+            },
+            "gatewayRequired": {
+              "const": true
+            },
+            "verifyEachPulse": {
+              "const": true
+            }
+          }
+        },
+        "secretPolicy": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "mode",
+            "authorizationAuthority",
+            "allSecretsRequiresGrant",
+            "auditLevel"
+          ],
+          "properties": {
+            "mode": {
+              "enum": [
+                "GRANTED_SECRETS",
+                "ALL_SECRETS"
+              ]
+            },
+            "authorizationAuthority": {
+              "const": "KCML"
+            },
+            "allSecretsRequiresGrant": {
+              "const": true
+            },
+            "auditLevel": {
+              "const": "FULL"
+            }
+          }
         }
       }
     },
@@ -744,7 +1129,7 @@
               "const": "AI_AGENT"
             },
             "registrationType": {
-              "const": "KAJA_CLIENT"
+              "const": "KCML_ACCESS_CLIENT"
             },
             "agentKey": {
               "type": "string",
@@ -832,10 +1217,10 @@
                     "type": "string"
                   },
                   "inputSchema": {
-                    "type": "object"
+                    "$ref": "#/$defs/strictObjectSchema"
                   },
                   "outputSchema": {
-                    "type": "object"
+                    "$ref": "#/$defs/strictObjectSchema"
                   }
                 }
               }
@@ -915,182 +1300,34 @@
       ]
     },
     "genericComponentManifest": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "schemaVersion",
-        "blueprint",
-        "name",
-        "category",
-        "registrationType",
-        "role",
-        "revision",
-        "capabilities",
-        "protocols",
-        "transports",
-        "owners",
-        "monitoring",
-        "audit",
-        "authorization",
-        "endpoint",
-        "technicalDisable"
-      ],
-      "properties": {
-        "schemaVersion": {
-          "const": "2026.07.23"
+      "allOf": [
+        {
+          "$ref": "#/$defs/common"
         },
-        "name": {
-          "type": "string",
-          "minLength": 2,
-          "maxLength": 120
-        },
-        "description": {
-          "type": "string",
-          "maxLength": 2000
-        },
-        "blueprint": {
+        {
           "type": "object",
-          "additionalProperties": false,
           "required": [
-            "componentId",
-            "version",
-            "releaseWaveKey"
+            "componentType",
+            "registrationType",
+            "publicEndpoints"
           ],
           "properties": {
-            "componentId": {
-              "$ref": "#/$defs/blueprintId"
+            "componentType": {
+              "const": "GENERIC_COMPONENT"
             },
-            "version": {
-              "const": "2026.07.23"
+            "registrationType": {
+              "const": "KCML_ACCESS_CLIENT"
             },
-            "releaseWaveKey": {
-              "const": "baseline-2026-07-23"
-            }
-          }
-        },
-        "category": {
-          "enum": [
-            "AI_CLIENT",
-            "AI_AGENT",
-            "MCP_SERVER",
-            "MANAGED_RUNTIME",
-            "EXTERNAL_SERVICE",
-            "PLATFORM_SERVICE"
-          ]
-        },
-        "registrationType": {
-          "type": "string",
-          "pattern": "^[A-Z][A-Z0-9_]{2,79}$"
-        },
-        "role": {
-          "enum": [
-            "CLIENT",
-            "AGENT",
-            "SERVICE",
-            "RUNTIME",
-            "PLATFORM"
-          ]
-        },
-        "revision": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 80
-        },
-        "capabilities": {
-          "type": "array",
-          "uniqueItems": true,
-          "items": {
-            "type": "string",
-            "minLength": 2
-          }
-        },
-        "protocols": {
-          "type": "array",
-          "uniqueItems": true,
-          "items": {
-            "type": "string",
-            "minLength": 2
-          }
-        },
-        "transports": {
-          "type": "array",
-          "uniqueItems": true,
-          "items": {
-            "type": "string",
-            "minLength": 2
-          }
-        },
-        "owners": {
-          "type": "object"
-        },
-        "contacts": {
-          "type": "object"
-        },
-        "monitoring": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "enabled"
-          ],
-          "properties": {
-            "enabled": {
-              "const": true
-            }
-          }
-        },
-        "audit": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "enabled",
-            "replaySupported"
-          ],
-          "properties": {
-            "enabled": {
-              "const": true
-            },
-            "replaySupported": {
-              "const": true
-            }
-          }
-        },
-        "authorization": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "mode"
-          ],
-          "properties": {
-            "mode": {
-              "const": "OAUTH2_CLIENT_CREDENTIALS"
-            }
-          }
-        },
-        "endpoint": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "public"
-          ],
-          "properties": {
-            "public": {
-              "const": true
-            }
-          }
-        },
-        "technicalDisable": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "supported"
-          ],
-          "properties": {
-            "supported": {
-              "const": true
+            "publicEndpoints": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "$ref": "#/$defs/endpoint"
+              }
             }
           }
         }
-      }
+      ]
     }
   }
 }

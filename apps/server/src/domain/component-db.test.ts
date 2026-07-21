@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { loadConfig } from "../config.js";
 import { createDb, type Db } from "../db.js";
@@ -24,6 +25,7 @@ const permissionId = "91000000-0000-4000-8000-000000000004";
 const revisionId = "91000000-0000-4000-8000-000000000005";
 const clientSecret = "component-secret-for-current-policy-tests";
 const enabled = process.env.KCML_TEST_DATABASE === "1";
+const exampleManifest = JSON.parse(readFileSync(new URL("../../../../docs/onboarding-manifest-2026.07.23.example.json", import.meta.url), "utf8")) as Record<string, unknown>;
 let db: Db;
 let accessHmacKey: Buffer;
 
@@ -124,14 +126,14 @@ describe.skipIf(!enabled)("component authorization and audit persistence", () =>
     expect((await ingestComponentAuditEvent(db, targetId, event(base + 2))).expectedNextSequence).toBe(base + 3);
   });
 
-  it("keeps onboarding idempotent and reveals a component credential exactly once", async () => {
+  it("keeps onboarding idempotent and consumes the integration token after revealing an access token", async () => {
     const integrationTokenId = randomUUID();
     const admin = await db.query("select id from admin_account order by created_at limit 1");
     await db.query(`insert into integration_token(
       id,label,lookup_digest,key_id,fingerprint,created_by,initial_expires_at,expires_at,max_expires_at,descriptor,
       token_kind,release_version,release_wave_key,blueprint_release_version,max_child_jobs
-    ) values ($1,'Component DB test',$2,'test','component-db-test',$3,now()+interval '1 hour',now()+interval '1 hour',now()+interval '1 day',$4::jsonb,
-      'BLUEPRINT_RELEASE','2026.07.23','baseline-2026-07-23','2026.07.23',20)`,
+    ) values ($1,'Component DB test',$2,'test','component-db-test',$3,now()+interval '1 hour',now()+interval '1 hour',now()+interval '1 hour',$4::jsonb,
+      'BLUEPRINT_RELEASE','2026.07.23','baseline-2026-07-23','2026.07.23',1)`,
     [integrationTokenId, hmacToken(integrationTokenId, accessHmacKey), admin.rows[0].id, JSON.stringify({ summary: "Component test", businessPurpose: "Validate component onboarding credential issuance safely.", serviceOwner: "KCML", technicalOwner: "KCML", criticality: "LOW" })]);
     await db.query(
       `insert into integration_token_allowed_component(token_id,blueprint_component_id,registration_type,release_version,release_wave_key)
@@ -139,15 +141,21 @@ describe.skipIf(!enabled)("component authorization and audit persistence", () =>
       [integrationTokenId]
     );
     const manifest = validateComponentManifest({
-      schemaVersion: KCML_RELEASE.catalogVersion, blueprint: { componentId: "MCP-RX-WA-001", version: KCML_RELEASE.catalogVersion, releaseWaveKey: "baseline-2026-07-23" },
-      name: "Self-service test", category: "MCP_SERVER", registrationType: "MCP_SERVER", role: "SERVICE", revision: "1.0.0",
-      capabilities: ["mcp.initialize", "mcp.notifications.initialized", "mcp.tools.list", "mcp.tools.call"], protocols: ["MCP"], transports: ["STREAMABLE_HTTP"], owners: { service: "KCML" }, contacts: {},
-      monitoring: { enabled: true }, audit: { enabled: true, replaySupported: true }, authorization: { mode: "OAUTH2_CLIENT_CREDENTIALS" }, endpoint: { public: true }, technicalDisable: { supported: true }
+      ...structuredClone(exampleManifest),
+      displayName: "Self-service test",
+      businessPurpose: "Validate component onboarding credential issuance safely."
     });
     const input = { integrationTokenId, idempotencyKey: `component-${integrationTokenId}`, manifest, claimHmacKey: accessHmacKey, baseDomain: "component.test", correlationId: randomUUID() };
     const created = await createComponentOnboarding(db, input);
     expect((await createComponentOnboarding(db, input)).id).toBe(created.id);
-    await db.query("update component set monitoring_state='HEALTHY' where id=$1", [created.componentId]);
+    await db.query("update component set monitoring_state='HEALTHY', recertification_state='NOT_DUE' where id=$1", [created.componentId]);
+    await db.query(
+      `insert into component_e2e_result(component_id,revision_id,scenario_id,status,generated_output_digest,generated_output,correlation_id)
+       select component_id,revision_id,id,'PASS',expected_output_digest,expected_output,$2
+         from component_e2e_scenario
+        where component_id=$1`,
+      [created.componentId, randomUUID()]
+    );
     const readiness = await evaluateComponentReadiness(db, { jobId: String(created.id), integrationTokenId, claimHmacKey: accessHmacKey, correlationId: randomUUID() });
     expect(readiness.job.state).toBe("READY");
     expect(readiness.credentialClaimToken).toBeTypeOf("string");
@@ -156,6 +164,7 @@ describe.skipIf(!enabled)("component authorization and audit persistence", () =>
       credentialHmacKey: accessHmacKey, keyId: "test", correlationId: randomUUID()
     });
     expect(credential.clientId).toMatch(/^KCML[0-9]+-C01$/);
+    expect((await db.query("select revoked_at is not null as revoked from integration_token where id=$1", [integrationTokenId])).rows[0].revoked).toBe(true);
     await expect(claimComponentCredential(db, {
       jobId: String(created.id), integrationTokenId, claimToken: readiness.credentialClaimToken!, claimHmacKey: accessHmacKey,
       credentialHmacKey: accessHmacKey, keyId: "test", correlationId: randomUUID()

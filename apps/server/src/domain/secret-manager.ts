@@ -41,6 +41,7 @@ export type SecretGrantSummary = {
   principalKind: "KAJA" | "COMPONENT" | "INTEGRATION_TOKEN";
   principalId: string | null;
   principalPublicId: string | null;
+  allSecrets: boolean;
   grantedAt: string;
   revokedAt: string | null;
 };
@@ -172,6 +173,7 @@ export async function listSecretGrants(db: Db, secretId: string): Promise<Secret
     principalKind: String(row.principal_kind) as SecretGrantSummary["principalKind"],
     principalId: row.principal_id ? String(row.principal_id) : null,
     principalPublicId: row.principal_public_id ? String(row.principal_public_id) : null,
+    allSecrets: Boolean(row.all_secrets),
     grantedAt: String(row.granted_at),
     revokedAt: row.revoked_at ? String(row.revoked_at) : null
   }));
@@ -402,6 +404,7 @@ export async function grantSecret(db: Db, actorId: string, correlationId: string
   principalKind: "KAJA" | "COMPONENT" | "INTEGRATION_TOKEN";
   principalId?: string | null;
   principalPublicId?: string | null;
+  allSecrets?: boolean;
 }): Promise<SecretGrantSummary[]> {
   await tx(db, async (client) => {
     const secret = await client.query("select stable_name from secret_record where id=$1 and deleted_at is null for update", [secretId]);
@@ -409,19 +412,20 @@ export async function grantSecret(db: Db, actorId: string, correlationId: string
     if (!["KAJA", "COMPONENT", "INTEGRATION_TOKEN"].includes(input.principalKind)) throw Object.assign(new Error("invalid_secret_principal"), { statusCode: 400 });
     const principalPublicId = normalizeSecretPrincipalPublicId(input.principalPublicId);
     if (!input.principalId && !principalPublicId) throw Object.assign(new Error("invalid_secret_principal"), { statusCode: 400 });
+    const allSecrets = input.allSecrets === true;
     const existing = await client.query(
       `select id from secret_grant
-        where secret_id=$1 and principal_kind=$2 and revoked_at is null
+        where secret_id=$1 and principal_kind=$2 and revoked_at is null and all_secrets=$5
           and coalesce(principal_id::text, '')=coalesce($3::uuid::text, '')
           and coalesce(principal_public_id::text, '')=coalesce($4::text, '')
         for update`,
-      [secretId, input.principalKind, input.principalId ?? null, principalPublicId]
+      [secretId, input.principalKind, input.principalId ?? null, principalPublicId, allSecrets]
     );
     if (!existing.rowCount) {
       await client.query(
-        `insert into secret_grant(secret_id, principal_kind, principal_id, principal_public_id, granted_by)
-         values ($1,$2,$3,$4,$5)`,
-        [secretId, input.principalKind, input.principalId ?? null, principalPublicId, actorId]
+        `insert into secret_grant(secret_id, principal_kind, principal_id, principal_public_id, granted_by, all_secrets)
+         values ($1,$2,$3,$4,$5,$6)`,
+        [secretId, input.principalKind, input.principalId ?? null, principalPublicId, actorId, allSecrets]
       );
     }
     await appendAudit(client, {
@@ -430,7 +434,7 @@ export async function grantSecret(db: Db, actorId: string, correlationId: string
       actorId,
       objectType: "secret",
       objectId: secretId,
-      after: { stableName: secret.rows[0].stable_name, principalKind: input.principalKind, principalId: input.principalId ?? null, principalPublicId },
+      after: { stableName: secret.rows[0].stable_name, principalKind: input.principalKind, principalId: input.principalId ?? null, principalPublicId, allSecrets },
       correlationId
     });
   });
@@ -466,13 +470,22 @@ export async function authenticateClientSecret(db: Db, config: SecretManagerConf
   if (/^KCML[0-9]{4,}-C[0-9]{2,}$/i.test(clientId)) {
     const digest = hmacToken(clientSecret, config.ACCESS_TOKEN_HMAC_KEY_BASE64);
     const result = await db.query(
-      `select credential.id, credential.component_id, credential.public_id
+      `select credential.id, credential.component_id, credential.public_id,
+              component.enabled, component.activation_state, component.lifecycle_state, component.operational_state,
+              component.egress_enabled, component.deregistered_at
          from component_credential credential
+         join component on component.id=credential.component_id
         where credential.public_id=$1
           and credential.secret_digest=$2
           and credential.status='ACTIVE'
           and credential.revoked_at is null
-          and (credential.expires_at is null or credential.expires_at > now())`,
+          and (credential.expires_at is null or credential.expires_at > now())
+          and component.enabled is true
+          and component.egress_enabled is true
+          and component.activation_state='ACTIVE'
+          and component.lifecycle_state='ACTIVE'
+          and component.operational_state not in ('QUARANTINED','RETIRED')
+          and component.deregistered_at is null`,
       [clientId, digest]
     );
     if (!result.rowCount) return null;
@@ -522,7 +535,8 @@ export async function authenticateSecretIntegrationToken(db: Db, token: string, 
 async function assertGrant(client: pg.PoolClient, secretId: string, principal: SecretPrincipal): Promise<boolean> {
   const result = await client.query(
     `select 1 from secret_grant
-      where secret_id=$1 and principal_kind=$2 and revoked_at is null
+      where principal_kind=$2 and revoked_at is null
+        and (secret_id=$1 or all_secrets is true)
         and (
           (principal_id is not null and principal_id=$3)
           or (principal_public_id is not null and principal_public_id=$4)

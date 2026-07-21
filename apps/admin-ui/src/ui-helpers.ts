@@ -1,5 +1,5 @@
 import { isExpiredAdminSession, REAUTH_REQUIRED_EVENT, SESSION_EXPIRED_EVENT } from "./session-auth.js";
-import type { KajaCredential } from "./types.js";
+import type { AccessTokenCredential } from "./types.js";
 
 let uiTimeZone = "Europe/Prague";
 
@@ -96,7 +96,7 @@ export function describeApiError(code: string, correlationId: string | null = nu
     invalid_integration_token: "Integrační token není platný.",
     invalid_token: "Přístupový token komponenty není platný.",
     expired_token: "Přístupový token komponenty vypršel.",
-    revoked_token: "Přístupový token nebo component credential byl revokován.",
+    revoked_token: "Přístupový token nebo přístupový token byl revokován.",
     insufficient_scope: "Komponenta nemá požadovaný scope.",
     invalid_audience: "Audience tokenu neodpovídá výhradnímu endpointu komponenty.",
     component_disabled: "Komponenta je deaktivovaná a provoz je zablokován.",
@@ -107,7 +107,7 @@ export function describeApiError(code: string, correlationId: string | null = nu
     audit_gap: "Aktivace je blokována nevyřešenou mezerou v auditním streamu.",
     invalid_state: "Operaci nelze provést v aktuálním stavu komponenty.",
     component_must_be_retired: "Před odregistrací musí být komponenta vyřazena.",
-    credential_already_revoked: "Component credential už byl revokován.",
+    credential_already_revoked: "Přístupový token už byl revokován.",
     audit_stream_unavailable: "Auditní kanál komponenty není dostupný.",
     job_not_found: "Onboarding úloha nebyla nalezena.",
     job_not_resumable: "Onboarding úlohu v tomto stavu nelze obnovit.",
@@ -151,7 +151,7 @@ export function prettyJson(value: unknown): string {
   return JSON.stringify(value, null, 2);
 }
 
-export function statusClass(credential: KajaCredential): string {
+export function statusClass(credential: AccessTokenCredential): string {
   if (credential.revokedAt || !credential.active) return "danger";
   if (credential.expiresAt && new Date(credential.expiresAt).getTime() - Date.now() < 7 * 24 * 3600 * 1000) return "warn";
   return "ok";

@@ -81,8 +81,8 @@ export const operationalConfigDefinitions: OperationalConfigDefinition[] = [
 
   definition("accessTokenHmacKey", "ACCESS_TOKEN_HMAC_KEY_BASE64", "HMAC klíč přístupových tokenů", "secret", "security", ["web"], { secretFormat: "base64-min-32" }),
   definition("accessTokenHmacKeyId", "ACCESS_TOKEN_HMAC_KEY_ID", "ID HMAC klíče přístupových tokenů", "string", "security", ["web"], { defaultValue: "v1" }),
-  definition("integrationTokenHmacKey", "INTEGRATION_TOKEN_HMAC_KEY_BASE64", "HMAC klíč implementačních tokenů", "secret", "security", ["web"], { secretFormat: "base64-min-32" }),
-  definition("integrationTokenHmacKeyId", "INTEGRATION_TOKEN_HMAC_KEY_ID", "ID HMAC klíče implementačních tokenů", "string", "security", ["web"], { defaultValue: "v1" }),
+  definition("integrationTokenHmacKey", "INTEGRATION_TOKEN_HMAC_KEY_BASE64", "HMAC klíč integračních tokenů", "secret", "security", ["web"], { secretFormat: "base64-min-32" }),
+  definition("integrationTokenHmacKeyId", "INTEGRATION_TOKEN_HMAC_KEY_ID", "ID HMAC klíče integračních tokenů", "string", "security", ["web"], { defaultValue: "v1" }),
   definition("egressCapabilityHmacKey", "EGRESS_CAPABILITY_HMAC_KEY_BASE64", "HMAC klíč egress capability", "secret", "security", allRoles, { secretFormat: "base64-min-32" }),
   definition("sessionSecret", "SESSION_SECRET_BASE64", "Klíč administrátorských relací", "secret", "security", ["web"], { secretFormat: "base64-min-32" }),
   definition("csrfSecret", "CSRF_SECRET_BASE64", "CSRF klíč", "secret", "security", ["web"], { secretFormat: "base64-min-32" }),

@@ -88,7 +88,7 @@ export function isGeneratedBlueprintComponentId(componentId: string): componentI
 export type BlueprintComponentContract = {
   componentId: KcmlBlueprintComponentId;
   category: "AI_AGENT" | "MCP_SERVER" | "PLATFORM_SERVICE";
-  registrationType: "KAJA_CLIENT" | "MCP_SERVER" | "MANAGED_PLATFORM_SERVICE";
+  registrationType: "KCML_ACCESS_CLIENT" | "MCP_SERVER" | "MANAGED_PLATFORM_SERVICE";
   role: "AGENT" | "SERVICE" | "PLATFORM";
   releaseVersion: typeof KCML_RELEASE.catalogVersion;
   releaseWaveKey: typeof KCML_RELEASE_WAVE_KEY;
@@ -98,7 +98,7 @@ export const KCML_BLUEPRINT_COMPONENT_CONTRACTS: Record<KcmlBlueprintComponentId
   ...KCML_AI_COMPONENTS.map(([componentId]) => [componentId, {
     componentId,
     category: "AI_AGENT",
-    registrationType: "KAJA_CLIENT",
+    registrationType: "KCML_ACCESS_CLIENT",
     role: "AGENT",
     releaseVersion: KCML_RELEASE.catalogVersion,
     releaseWaveKey: KCML_RELEASE_WAVE_KEY

@@ -55,6 +55,11 @@ const gatesByStage = {
   preflight: ["dns", "tls_san", "host_path_method_endpoint", "route_acl"],
   trial: ["negative_auth", "mcp_initialize", "pulse_acl", "ack_then_event", "schema_contract", "correlation_chain", "logging_redaction", "technical_audit", "business_audit", "monitoring_probes", "recertification"]
 };
+const componentActivationGates = [
+  "FULL_SCHEMA", "PULSE_CONTRACT", "STATE_CONTRACT", "CALL_MASKS", "E2E_SCENARIOS", "DOCUMENTATION",
+  "CONTROL_PLANE", "SECRET_POLICY", "OUTBOUND_AUTH", "AUTHORIZATION", "PUBLIC_ENDPOINT", "TECHNICAL_DISABLE",
+  "MONITORING", "AUDIT_CONTINUITY", "RECERTIFICATION"
+];
 
 const requiredChecks = [
   "path-policy", "manifest-schema", "lint", "typecheck", "unit-tests", "contract-tests",
@@ -62,7 +67,7 @@ const requiredChecks = [
 ];
 
 const errorCodes = [
-  "invalid_integration_token", "integration_token_kind_mismatch", "implementation_token_scope_mismatch",
+  "invalid_integration_token", "integration_token_kind_mismatch", "integration_token_scope_mismatch",
   "blueprint_component_not_allowed", "duplicate_blueprint_component", "max_child_jobs_exceeded",
   "invalid_idempotency_key", "idempotency_key_reused", "multipart_required", "invalid_manifest_json",
   "manifest_and_source_required", "invalid_source_part", "source_must_be_zip", "invalid_manifest",
@@ -78,6 +83,16 @@ const errorCodes = [
 ];
 
 const ref = (name) => ({ $ref: `#/$defs/${name}` });
+const strictObjectSchema = {
+  type: "object",
+  required: ["type", "required", "properties"],
+  additionalProperties: true,
+  properties: {
+    type: { const: "object" },
+    required: { type: "array", minItems: 1, items: { type: "string", minLength: 1 } },
+    properties: { type: "object", minProperties: 1 }
+  }
+};
 const schema = {
   $schema: "https://json-schema.org/draft/2020-12/schema",
   $id: `urn:kcml:schema:component-manifest:${release}`,
@@ -93,6 +108,7 @@ const schema = {
       type: "object", additionalProperties: false, required: ["name", "email"],
       properties: { name: { type: "string", minLength: 2, maxLength: 160 }, email: ref("email") }
     },
+    strictObjectSchema,
     endpoint: {
       type: "object", additionalProperties: false,
       required: ["endpointId", "path", "methods", "authMode", "requestSchema", "responseSchema", "limits", "timeoutMs", "rateLimit", "idempotency", "signatureProfile", "eventMapping"],
@@ -101,8 +117,8 @@ const schema = {
         path: { type: "string", pattern: "^/" },
         methods: { type: "array", minItems: 1, uniqueItems: true, items: { enum: ["GET", "POST", "PUT", "PATCH", "DELETE"] } },
         authMode: { enum: ["KCML_BEARER", "SIGNED_WEBHOOK", "MUTUAL_TLS"] },
-        requestSchema: { type: "object" },
-        responseSchema: { type: "object" },
+        requestSchema: ref("strictObjectSchema"),
+        responseSchema: ref("strictObjectSchema"),
         limits: { type: "object", additionalProperties: false, required: ["requestBytes", "responseBytes"], properties: { requestBytes: { type: "integer", minimum: 1, maximum: 1048576 }, responseBytes: { type: "integer", minimum: 1, maximum: 5242880 } } },
         timeoutMs: { type: "integer", minimum: 100, maximum: 60000 },
         rateLimit: { type: "object", additionalProperties: false, required: ["windowSeconds", "maxRequests"], properties: { windowSeconds: { type: "integer", minimum: 1, maximum: 86400 }, maxRequests: { type: "integer", minimum: 1, maximum: 100000 } } },
@@ -117,7 +133,7 @@ const schema = {
       properties: {
         pulseType: { type: "string", minLength: 3, maxLength: 160 },
         direction: { enum: ["INCOMING", "OUTGOING"] },
-        schema: { type: "object" },
+        schema: ref("strictObjectSchema"),
         routeAcl: { type: "array", minItems: 1, items: { type: "string", minLength: 3, maxLength: 160 } },
         scopes: { type: "array", items: { type: "string", minLength: 3, maxLength: 160 } },
         executionMode: { enum: ["SYNC", "ACK_THEN_EVENT", "ASYNC"] },
@@ -135,7 +151,8 @@ const schema = {
         "registrationType", "blueprint", "pulseEnvelopeVersion", "displayName", "businessPurpose",
         "owners", "contacts", "criticality", "review", "source", "runtime", "dependencies",
         "networkPolicy", "dataGovernance", "pulseContract", "retryPolicy", "auditPolicy",
-        "monitoringProfile", "maintenance", "autoQuarantine", "evidence", "change", "integrity"
+        "monitoringProfile", "maintenance", "autoQuarantine", "evidence", "change", "integrity",
+        "stateContract", "e2eScenarios", "documentationEvidence", "controlPlane", "outboundAuthorization", "secretPolicy"
       ],
       properties: {
         schemaVersion: { const: release },
@@ -157,20 +174,59 @@ const schema = {
         contacts: { type: "array", minItems: 1, maxItems: 8, items: ref("contact") },
         criticality: { enum: ["LOW", "MEDIUM", "HIGH", "CRITICAL"] },
         review: { type: "object", additionalProperties: false, required: ["intervalDays", "approvedAt", "reviewDueAt", "recertificationEvaluator"], properties: { intervalDays: { type: "integer", minimum: 1, maximum: 365 }, approvedAt: ref("timestamp"), reviewDueAt: ref("timestamp"), recertificationEvaluator: { const: "KCML-SEC-005" } } },
-        source: { type: "object", additionalProperties: false, required: ["runtime", "entrypoint", "testCommand"], properties: { runtime: { const: "nodejs24-typescript" }, entrypoint: { const: "src/index.ts" }, testCommand: { const: "pnpm test" } } },
+        source: { type: "object", additionalProperties: false, required: ["runtime", "entrypoint", "testCommand"], properties: { runtime: { const: "nodejs24-typescript" }, entrypoint: { const: "src/index.ts" }, testCommand: { const: "pnpm kcml:contract-test" } } },
         runtime: { type: "object", additionalProperties: true, required: ["memoryMb", "cpuCores", "pidsLimit"], properties: { memoryMb: { type: "integer", minimum: 64, maximum: 1024 }, cpuCores: { type: "number", minimum: 0.1, maximum: 4 }, pidsLimit: { type: "integer", minimum: 16, maximum: 512 } } },
         dependencies: { type: "array", items: { type: "object", additionalProperties: false, required: ["name", "version", "checksum"], properties: { name: { type: "string" }, version: { type: "string", pattern: "^[0-9][0-9A-Za-z.+-]*$" }, checksum: ref("sha256") } } },
         networkPolicy: { type: "object", additionalProperties: false, required: ["outboundAllowlist", "dnsPolicy", "filesystemPolicy"], properties: { outboundAllowlist: { type: "array", items: { type: "string" } }, dnsPolicy: { const: "strict" }, filesystemPolicy: { enum: ["read-only", "isolated-runtime-only"] } } },
         dataGovernance: { type: "object", additionalProperties: false, required: ["classification", "containsPersonalData", "retentionDays"], properties: { classification: { enum: ["PUBLIC", "INTERNAL", "CONFIDENTIAL", "RESTRICTED"] }, containsPersonalData: { type: "boolean" }, retentionDays: { type: "integer", minimum: 1, maximum: 3650 } } },
-        pulseContract: { type: "object", additionalProperties: false, required: ["incoming", "outgoing"], properties: { incoming: { type: "array", items: ref("pulse") }, outgoing: { type: "array", items: ref("pulse") } } },
+        pulseContract: { type: "object", additionalProperties: false, required: ["incoming", "outgoing"], properties: { incoming: { type: "array", minItems: 1, items: ref("pulse") }, outgoing: { type: "array", minItems: 1, items: ref("pulse") } } },
         retryPolicy: { type: "object", additionalProperties: false, required: ["handlerRetry"], properties: { handlerRetry: { const: false } } },
         auditPolicy: { type: "object", additionalProperties: false, required: ["technicalAudit", "businessAudit"], properties: { technicalAudit: { const: "PLATFORM" }, businessAudit: { const: "COMPONENT" } } },
         monitoringProfile: { type: "object", additionalProperties: true, required: ["slo", "probes"], properties: { slo: { type: "object" }, probes: { type: "array", minItems: 1, items: { type: "string" } } } },
         maintenance: { type: "object", additionalProperties: true },
         autoQuarantine: { type: "object", additionalProperties: false, required: ["enabled", "rules"], properties: { enabled: { const: true }, rules: { type: "array", minItems: 1, items: { type: "string" } } } },
-        evidence: { type: "object", additionalProperties: true },
+        evidence: { type: "object", minProperties: 1, additionalProperties: true },
         change: { type: "object", additionalProperties: true, required: ["changeClass"], properties: { changeClass: { enum: ["INITIAL", "PATCH", "MINOR", "MAJOR"] } } },
-        integrity: { type: "object", additionalProperties: false, required: ["manifestDigest", "sourceDigest"], properties: { manifestDigest: ref("sha256"), sourceDigest: ref("sha256") } }
+        integrity: { type: "object", additionalProperties: false, required: ["manifestDigest", "sourceDigest"], properties: { manifestDigest: ref("sha256"), sourceDigest: ref("sha256") } },
+        stateContract: {
+          type: "object", additionalProperties: false, required: ["states", "transitions"],
+          properties: {
+            states: { type: "array", minItems: 1, items: { type: "object", additionalProperties: false, required: ["stateKey", "category", "schema", "terminal"], properties: { stateKey: { type: "string", minLength: 2, maxLength: 160 }, category: { enum: ["OPERATIONAL", "BUSINESS", "CONTROL", "ERROR"] }, schema: ref("strictObjectSchema"), terminal: { type: "boolean" } } } },
+            transitions: { type: "array", minItems: 1, items: { type: "object", additionalProperties: false, required: ["from", "to", "triggerMask"], properties: { from: { type: "string", minLength: 2 }, to: { type: "string", minLength: 2 }, triggerMask: { type: "string", minLength: 2 } } } }
+          }
+        },
+        e2eScenarios: {
+          type: "array", minItems: 1,
+          items: { type: "object", additionalProperties: false, required: ["scenarioId", "variant", "inputRef", "inputDigest", "expectedOutputRef", "expectedOutputDigest", "expectedOutput", "testCommands"], properties: {
+            scenarioId: { type: "string", minLength: 2, maxLength: 160 }, variant: { type: "string", minLength: 2, maxLength: 160 },
+            inputRef: { type: "string", pattern: "^(?!.*(?:TODO|TBD|placeholder|sample|stub)).{3,}$" }, inputDigest: ref("sha256"),
+            expectedOutputRef: { type: "string", pattern: "^(?!.*(?:TODO|TBD|placeholder|sample|stub)).{3,}$" }, expectedOutputDigest: ref("sha256"),
+            expectedOutput: { type: "object", minProperties: 1 },
+            testCommands: { type: "array", minItems: 3, contains: { const: "pnpm kcml:contract-test" }, items: { enum: ["pnpm test", "pnpm e2e", "pnpm kcml:contract-test"] } }
+          } }
+        },
+        documentationEvidence: {
+          type: "array", minItems: 1,
+          items: { type: "object", additionalProperties: false, required: ["evidenceKey", "evidenceRef", "evidenceDigest", "mediaType", "required"], properties: {
+            evidenceKey: { type: "string", minLength: 2, maxLength: 120 }, evidenceRef: { type: "string", pattern: "^(?!.*(?:TODO|TBD|placeholder|sample|stub)).{3,}$" },
+            evidenceDigest: ref("sha256"), mediaType: { type: "string", minLength: 3, maxLength: 120 }, required: { const: true }
+          } }
+        },
+        controlPlane: {
+          type: "object", additionalProperties: false, required: ["enable", "disable", "state", "heartbeat"],
+          properties: Object.fromEntries(["enable", "disable", "state", "heartbeat"].map((name) => [name, {
+            type: "object", additionalProperties: false, required: ["supported", "path", "method", "requestSchema", "responseSchema"],
+            properties: { supported: { const: true }, path: { type: "string", pattern: "^/" }, method: { const: "POST" }, requestSchema: ref("strictObjectSchema"), responseSchema: ref("strictObjectSchema") }
+          }]))
+        },
+        outboundAuthorization: {
+          type: "object", additionalProperties: false, required: ["required", "tokenRequired", "gatewayRequired", "verifyEachPulse"],
+          properties: { required: { const: true }, tokenRequired: { const: true }, gatewayRequired: { const: true }, verifyEachPulse: { const: true } }
+        },
+        secretPolicy: {
+          type: "object", additionalProperties: false, required: ["mode", "authorizationAuthority", "allSecretsRequiresGrant", "auditLevel"],
+          properties: { mode: { enum: ["GRANTED_SECRETS", "ALL_SECRETS"] }, authorizationAuthority: { const: "KCML" }, allSecretsRequiresGrant: { const: true }, auditLevel: { const: "FULL" } }
+        }
       }
     },
     aiAgentManifest: {
@@ -180,7 +236,7 @@ const schema = {
           type: "object",
           required: ["componentType", "registrationType", "agentKey", "agentVersion", "executionProfile", "modelPolicy", "promptPolicy", "toolScopesAllowlist", "memoryPolicy", "fallbackPolicy", "publicEndpoints"],
           properties: {
-            componentType: { const: "AI_AGENT" }, registrationType: { const: "KAJA_CLIENT" },
+            componentType: { const: "AI_AGENT" }, registrationType: { const: "KCML_ACCESS_CLIENT" },
             agentKey: { type: "string", pattern: "^[a-z0-9][a-z0-9_-]{1,62}$" },
             agentVersion: { type: "string", pattern: "^\\d+\\.\\d+\\.\\d+(?:-[A-Za-z0-9.-]+)?$" },
             executionProfile: { type: "object" }, modelPolicy: { type: "object" }, promptPolicy: { type: "object" },
@@ -201,7 +257,7 @@ const schema = {
             componentType: { const: "MCP_SERVER" }, registrationType: { const: "MCP_SERVER" },
             handlerKey: { type: "string", pattern: "^[a-z0-9][a-z0-9_-]{1,62}$" },
             handlerVersion: { type: "string", pattern: "^\\d+\\.\\d+\\.\\d+(?:-[A-Za-z0-9.-]+)?$" },
-            facadeTools: { type: "array", minItems: 1, maxItems: 1, items: { type: "object", additionalProperties: false, required: ["name", "inputSchema", "outputSchema"], properties: { name: { type: "string" }, inputSchema: { type: "object" }, outputSchema: { type: "object" } } } },
+            facadeTools: { type: "array", minItems: 1, maxItems: 1, items: { type: "object", additionalProperties: false, required: ["name", "inputSchema", "outputSchema"], properties: { name: { type: "string" }, inputSchema: ref("strictObjectSchema"), outputSchema: ref("strictObjectSchema") } } },
             protocol: { type: "object", additionalProperties: false, required: ["protocolVersion", "transport", "capabilities"], properties: { protocolVersion: { const: protocol }, transport: { const: "streamable-http" }, capabilities: { type: "array", prefixItems: [{ const: "tools" }], minItems: 1, maxItems: 1 } } },
             publicEndpoints: { type: "array", minItems: 1, items: ref("endpoint") },
             handlerContract: { type: "object", additionalProperties: true }
@@ -216,26 +272,10 @@ const schema = {
       ]
     },
     genericComponentManifest: {
-      type: "object", additionalProperties: false,
-      required: ["schemaVersion", "blueprint", "name", "category", "registrationType", "role", "revision", "capabilities", "protocols", "transports", "owners", "monitoring", "audit", "authorization", "endpoint", "technicalDisable"],
-      properties: {
-        schemaVersion: { const: release }, name: { type: "string", minLength: 2, maxLength: 120 }, description: { type: "string", maxLength: 2000 },
-        blueprint: {
-          type: "object",
-          additionalProperties: false,
-          required: ["componentId", "version", "releaseWaveKey"],
-          properties: { componentId: ref("blueprintId"), version: { const: release }, releaseWaveKey: { const: releaseWaveKey } }
-        },
-        category: { enum: ["AI_CLIENT", "AI_AGENT", "MCP_SERVER", "MANAGED_RUNTIME", "EXTERNAL_SERVICE", "PLATFORM_SERVICE"] },
-        registrationType: { type: "string", pattern: "^[A-Z][A-Z0-9_]{2,79}$" }, role: { enum: ["CLIENT", "AGENT", "SERVICE", "RUNTIME", "PLATFORM"] },
-        revision: { type: "string", minLength: 1, maxLength: 80 }, capabilities: { type: "array", uniqueItems: true, items: { type: "string", minLength: 2 } },
-        protocols: { type: "array", uniqueItems: true, items: { type: "string", minLength: 2 } }, transports: { type: "array", uniqueItems: true, items: { type: "string", minLength: 2 } },
-        owners: { type: "object" }, contacts: { type: "object" }, monitoring: { type: "object", additionalProperties: false, required: ["enabled"], properties: { enabled: { const: true } } },
-        audit: { type: "object", additionalProperties: false, required: ["enabled", "replaySupported"], properties: { enabled: { const: true }, replaySupported: { const: true } } },
-        authorization: { type: "object", additionalProperties: false, required: ["mode"], properties: { mode: { const: "OAUTH2_CLIENT_CREDENTIALS" } } },
-        endpoint: { type: "object", additionalProperties: false, required: ["public"], properties: { public: { const: true } } },
-        technicalDisable: { type: "object", additionalProperties: false, required: ["supported"], properties: { supported: { const: true } } }
-      }
+      allOf: [
+        { $ref: "#/$defs/common" },
+        { type: "object", required: ["componentType", "registrationType", "publicEndpoints"], properties: { componentType: { const: "GENERIC_COMPONENT" }, registrationType: { const: "KCML_ACCESS_CLIENT" }, publicEndpoints: { type: "array", minItems: 1, items: ref("endpoint") } } }
+      ]
     }
   }
 };
@@ -255,14 +295,14 @@ const example = {
   contacts: [{ name: "Example Operations", email: "ops@example.com" }],
   criticality: "HIGH",
   review: { intervalDays: 180, approvedAt: `${release.replaceAll(".", "-")}T00:00:00.000Z`, reviewDueAt: "2027-01-17T00:00:00.000Z", recertificationEvaluator: "KCML-SEC-005" },
-  source: { runtime: "nodejs24-typescript", entrypoint: "src/index.ts", testCommand: "pnpm test" },
+  source: { runtime: "nodejs24-typescript", entrypoint: "src/index.ts", testCommand: "pnpm kcml:contract-test" },
   runtime: { memoryMb: 256, cpuCores: 0.5, pidsLimit: 64 },
   dependencies: [{ name: "node", version: "24.0.0", checksum: "sha256:61df8c17ef87f64d8bea5e68e6f19ed9bdaf904cbc70c9b2597e9293758d9944" }],
   networkPolicy: { outboundAllowlist: [], dnsPolicy: "strict", filesystemPolicy: "isolated-runtime-only" },
   dataGovernance: { classification: "CONFIDENTIAL", containsPersonalData: true, retentionDays: 365 },
   pulseContract: {
-    incoming: [{ pulseType: "wa.message.received", direction: "INCOMING", schema: { type: "object" }, routeAcl: ["AI-CLS-001"], scopes: ["pulse:ingress"], executionMode: "ACK_THEN_EVENT", timeoutMs: 3000, resultPulseTypes: ["wa.message.accepted"], deadlineMs: 60000, retry: { transportRetry: true, retryable: true, requiresIdempotencyKey: true }, idempotency: "REQUIRED" }],
-    outgoing: [{ pulseType: "wa.message.accepted", direction: "OUTGOING", schema: { type: "object" }, routeAcl: ["AI-CLS-001"], scopes: ["pulse:publish"], executionMode: "ASYNC", timeoutMs: 3000, resultPulseTypes: [], deadlineMs: 60000, retry: { transportRetry: false, retryable: false, requiresIdempotencyKey: true }, idempotency: "REQUIRED" }]
+    incoming: [{ pulseType: "wa.message.received", direction: "INCOMING", schema: { type: "object", required: ["payload"], additionalProperties: false, properties: { payload: { type: "object", minProperties: 1 } } }, routeAcl: ["AI-CLS-001"], scopes: ["component.pulse"], executionMode: "ACK_THEN_EVENT", timeoutMs: 3000, resultPulseTypes: ["wa.message.accepted"], deadlineMs: 60000, retry: { transportRetry: true, retryable: true, requiresIdempotencyKey: true }, idempotency: "REQUIRED" }],
+    outgoing: [{ pulseType: "wa.message.accepted", direction: "OUTGOING", schema: { type: "object", required: ["payload"], additionalProperties: false, properties: { payload: { type: "object", minProperties: 1 } } }, routeAcl: ["AI-CLS-001"], scopes: ["component.outbound.pulse"], executionMode: "ASYNC", timeoutMs: 3000, resultPulseTypes: [], deadlineMs: 60000, retry: { transportRetry: false, retryable: false, requiresIdempotencyKey: true }, idempotency: "REQUIRED" }]
   },
   retryPolicy: { handlerRetry: false },
   auditPolicy: { technicalAudit: "PLATFORM", businessAudit: "COMPONENT" },
@@ -272,13 +312,39 @@ const example = {
   evidence: { architectureRef: "evidence/architecture.md", securityRef: "evidence/security.md" },
   change: { changeClass: "INITIAL" },
   integrity: { manifestDigest: "sha256:0000000000000000000000000000000000000000000000000000000000000000", sourceDigest: "sha256:1111111111111111111111111111111111111111111111111111111111111111" },
+  stateContract: {
+    states: [{ stateKey: "HEALTHY", category: "OPERATIONAL", schema: { type: "object", required: ["payload"], additionalProperties: false, properties: { payload: { type: "object", minProperties: 1 } } }, terminal: false }],
+    transitions: [{ from: "HEALTHY", to: "UNHEALTHY", triggerMask: "heartbeat.missed" }]
+  },
+  e2eScenarios: [{
+    scenarioId: "wa-ingress-happy-path",
+    variant: "message",
+    inputRef: "fixtures/wa-message.input.json",
+    inputDigest: "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+    expectedOutputRef: "fixtures/wa-message.expected.json",
+    expectedOutputDigest: "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+    expectedOutput: { payload: { accepted: true, nextPulseType: "wa.message.accepted" } },
+    testCommands: ["pnpm test", "pnpm e2e", "pnpm kcml:contract-test"]
+  }],
+  documentationEvidence: [
+    { evidenceKey: "architecture", evidenceRef: "evidence/architecture.md", evidenceDigest: "sha256:4444444444444444444444444444444444444444444444444444444444444444", mediaType: "text/markdown", required: true },
+    { evidenceKey: "contract", evidenceRef: "evidence/contract.md", evidenceDigest: "sha256:5555555555555555555555555555555555555555555555555555555555555555", mediaType: "text/markdown", required: true }
+  ],
+  controlPlane: {
+    enable: { supported: true, path: "/v2/control/enable", method: "POST", requestSchema: { type: "object", required: ["payload"], additionalProperties: false, properties: { payload: { type: "object", minProperties: 1 } } }, responseSchema: { type: "object", required: ["payload"], additionalProperties: false, properties: { payload: { type: "object", minProperties: 1 } } } },
+    disable: { supported: true, path: "/v2/control/disable", method: "POST", requestSchema: { type: "object", required: ["payload"], additionalProperties: false, properties: { payload: { type: "object", minProperties: 1 } } }, responseSchema: { type: "object", required: ["payload"], additionalProperties: false, properties: { payload: { type: "object", minProperties: 1 } } } },
+    state: { supported: true, path: "/v2/control/state", method: "POST", requestSchema: { type: "object", required: ["payload"], additionalProperties: false, properties: { payload: { type: "object", minProperties: 1 } } }, responseSchema: { type: "object", required: ["payload"], additionalProperties: false, properties: { payload: { type: "object", minProperties: 1 } } } },
+    heartbeat: { supported: true, path: "/v2/control/heartbeat", method: "POST", requestSchema: { type: "object", required: ["payload"], additionalProperties: false, properties: { payload: { type: "object", minProperties: 1 } } }, responseSchema: { type: "object", required: ["payload"], additionalProperties: false, properties: { payload: { type: "object", minProperties: 1 } } } }
+  },
+  outboundAuthorization: { required: true, tokenRequired: true, gatewayRequired: true, verifyEachPulse: true },
+  secretPolicy: { mode: "GRANTED_SECRETS", authorizationAuthority: "KCML", allSecretsRequiresGrant: true, auditLevel: "FULL" },
   handlerKey: "whatsapp_ingress",
   handlerVersion: "1.0.0",
-  facadeTools: [{ name: "ingress", inputSchema: { type: "object" }, outputSchema: { type: "object" } }],
+  facadeTools: [{ name: "ingress", inputSchema: { type: "object", required: ["payload"], additionalProperties: false, properties: { payload: { type: "object", minProperties: 1 } } }, outputSchema: { type: "object", required: ["payload"], additionalProperties: false, properties: { payload: { type: "object", minProperties: 1 } } } }],
   protocol: { protocolVersion: protocol, transport: "streamable-http", capabilities: ["tools"] },
   publicEndpoints: [{
     endpointId: "WA_INGRESS", path: "/events/whatsapp", methods: ["POST"], authMode: "SIGNED_WEBHOOK",
-    requestSchema: { type: "object" }, responseSchema: { type: "object" },
+    requestSchema: { type: "object", required: ["payload"], additionalProperties: false, properties: { payload: { type: "object", minProperties: 1 } } }, responseSchema: { type: "object", required: ["payload"], additionalProperties: false, properties: { payload: { type: "object", minProperties: 1 } } },
     limits: { requestBytes: 262144, responseBytes: 65536 }, timeoutMs: 3000,
     rateLimit: { windowSeconds: 60, maxRequests: 600 }, idempotency: "REQUIRED",
     signatureProfile: "whatsapp-hmac-v1", eventMapping: { pulseType: "wa.message.received", correlationIdSource: "header:x-correlation-id" }
@@ -320,13 +386,13 @@ const catalog = {
     baseline: true,
     baselineCounts: { aiAgents: aiComponents.length, mcpServers: mcpComponents.length, managedServices: managedServices.length },
     notFinalTargetScope: true,
-    allowedBlueprintComponentIds: generatedBlueprintIds,
+    allowedBlueprintComponentIds: blueprintIds,
     platformPrerequisiteComponentIds: managedServices
   }],
   compatibilityMatrix: [
-    { profile: "legacy-ai-client", category: "AI_CLIENT", catalog: "2026.07.20", manifestSchemas: ["1.4", "1.5"], intake: "/v1/onboardings", authorization: "KAJA_COMPATIBILITY_ADAPTER", endpoint: "KCML_HOSTNAME", result: "SUPPORTED_ADAPTED" },
+    { profile: "legacy-ai-client", category: "AI_CLIENT", catalog: "2026.07.20", manifestSchemas: ["1.4", "1.5"], intake: "/v1/onboardings", authorization: "ACCESS_TOKEN_COMPATIBILITY_ADAPTER", endpoint: "KCML_HOSTNAME", result: "SUPPORTED_ADAPTED" },
     { profile: "component-ai-client", category: "AI_CLIENT", catalog: release, manifestSchemas: [release], intake: "/v2/component-onboardings", authorization: "OAUTH2_CLIENT_CREDENTIALS", endpoint: "KCML_HOSTNAME", result: "SUPPORTED_NATIVE" },
-    { profile: "legacy-ai-agent", category: "AI_AGENT", catalog: "2026.07.20", manifestSchemas: ["1.4", "1.5"], intake: "/v1/onboardings", authorization: "KAJA_COMPATIBILITY_ADAPTER", endpoint: "KCML_HOSTNAME", result: "SUPPORTED_ADAPTED" },
+    { profile: "legacy-ai-agent", category: "AI_AGENT", catalog: "2026.07.20", manifestSchemas: ["1.4", "1.5"], intake: "/v1/onboardings", authorization: "ACCESS_TOKEN_COMPATIBILITY_ADAPTER", endpoint: "KCML_HOSTNAME", result: "SUPPORTED_ADAPTED" },
     { profile: "component-ai-agent", category: "AI_AGENT", catalog: release, manifestSchemas: [release], intake: "/v2/component-onboardings", authorization: "OAUTH2_CLIENT_CREDENTIALS", endpoint: "KCML_HOSTNAME", result: "SUPPORTED_NATIVE" },
     { profile: "legacy-mcp-server", category: "MCP_SERVER", catalog: "2026.07.20", manifestSchemas: ["1.4", "1.5"], intake: "/v1/onboardings", authorization: "MCP_OAUTH_ADAPTER", endpoint: "KCML_HOSTNAME_MCP_RESOURCE", result: "SUPPORTED_ADAPTED" },
     { profile: "component-mcp-server", category: "MCP_SERVER", catalog: release, manifestSchemas: [release], intake: "/v2/component-onboardings", authorization: "OAUTH2_CLIENT_CREDENTIALS", endpoint: "KCML_HOSTNAME", result: "SUPPORTED_NATIVE" },
@@ -340,16 +406,16 @@ const catalog = {
   runtimeCompatibility: {
     pulse: { legacyBlueprintPulseTypes: "SUPPORTED_ADAPTED", componentPulse: "SUPPORTED_NATIVE", unknownPulseType: "REJECTED_CATALOG_INCOMPATIBLE" },
     scopesAndAcl: { currentDatabaseScope: "REQUIRED_EACH_CALL", currentRouteAcl: "REQUIRED_EACH_CALL", removedPermission: "REJECTED_ROUTE_DENIED" },
-    endpointAndAudience: { canonicalHostname: "REQUIRED", matchingHostSniAudience: "REQUIRED", alternateHostname: "REJECTED_INVALID_AUDIENCE", ipLocalhostDirectPortServiceName: "REJECTED_INVALID_COMPONENT_HOSTNAME" }
+    endpointAndAudience: { canonicalHostname: "kcmlNNNN.kajovocml.hcasc.cz", matchingHostSniAudience: "REQUIRED", alternateHostname: "REJECTED_INVALID_AUDIENCE", ipLocalhostDirectPortServiceName: "REJECTED_INVALID_COMPONENT_HOSTNAME" }
   },
   ...(flowFabricBlueprint ? { flowFabricBlueprint } : {}),
   componentContracts: {
-    AI_CLIENT: { manifestContract: "aiAgentManifest", requiredCapabilities: [], gates: ["AUTHORIZATION", "TECHNICAL_DISABLE", "MONITORING", "AUDIT_CONTINUITY", "RECERTIFICATION"], endpoint: "KCML_HOSTNAME", authorization: "OAUTH2_CLIENT_CREDENTIALS", deactivation: "POLICY_EPOCH", recertification: "REQUIRED" },
-    AI_AGENT: { manifestContract: "aiAgentManifest", requiredCapabilities: [], gates: ["AUTHORIZATION", "TECHNICAL_DISABLE", "MONITORING", "AUDIT_CONTINUITY", "RECERTIFICATION"], endpoint: "KCML_HOSTNAME", authorization: "OAUTH2_CLIENT_CREDENTIALS", deactivation: "POLICY_EPOCH", recertification: "REQUIRED" },
-    MCP_SERVER: { manifestContract: "mcpServerManifest", requiredCapabilities: ["mcp.initialize", "mcp.notifications.initialized", "mcp.tools.list", "mcp.tools.call"], gates: ["AUTHORIZATION", "PUBLIC_ENDPOINT", "TECHNICAL_DISABLE", "MONITORING", "AUDIT_CONTINUITY", "RECERTIFICATION"], endpoint: "KCML_HOSTNAME", authorization: "OAUTH2_CLIENT_CREDENTIALS", deactivation: "POLICY_EPOCH", recertification: "REQUIRED" },
-    MANAGED_RUNTIME: { manifestContract: "genericComponentManifest", requiredCapabilities: [], gates: ["AUTHORIZATION", "PUBLIC_ENDPOINT", "TECHNICAL_DISABLE", "MONITORING", "AUDIT_CONTINUITY", "RECERTIFICATION"], endpoint: "KCML_HOSTNAME", authorization: "OAUTH2_CLIENT_CREDENTIALS", deactivation: "POLICY_EPOCH", recertification: "REQUIRED" },
-    EXTERNAL_SERVICE: { manifestContract: "genericComponentManifest", requiredCapabilities: [], gates: ["AUTHORIZATION", "PUBLIC_ENDPOINT", "TECHNICAL_DISABLE", "MONITORING", "AUDIT_CONTINUITY", "RECERTIFICATION"], endpoint: "KCML_HOSTNAME", authorization: "OAUTH2_CLIENT_CREDENTIALS", deactivation: "POLICY_EPOCH", recertification: "REQUIRED" },
-    PLATFORM_SERVICE: { manifestContract: "managedServiceManifest", requiredCapabilities: [], gates: ["AUTHORIZATION", "PUBLIC_ENDPOINT", "TECHNICAL_DISABLE", "MONITORING", "AUDIT_CONTINUITY", "RECERTIFICATION"], endpoint: "KCML_HOSTNAME", authorization: "OAUTH2_CLIENT_CREDENTIALS", deactivation: "POLICY_EPOCH", recertification: "REQUIRED" }
+    AI_CLIENT: { manifestContract: "aiAgentManifest", requiredCapabilities: [], gates: componentActivationGates, endpoint: "kcmlNNNN.kajovocml.hcasc.cz", authorization: "OAUTH2_CLIENT_CREDENTIALS", deactivation: "REVOCATION_EPOCH_AND_TOKEN_REVOKE", recertification: "REQUIRED" },
+    AI_AGENT: { manifestContract: "aiAgentManifest", requiredCapabilities: [], gates: componentActivationGates, endpoint: "kcmlNNNN.kajovocml.hcasc.cz", authorization: "OAUTH2_CLIENT_CREDENTIALS", deactivation: "REVOCATION_EPOCH_AND_TOKEN_REVOKE", recertification: "REQUIRED" },
+    MCP_SERVER: { manifestContract: "mcpServerManifest", requiredCapabilities: ["mcp.initialize", "mcp.notifications.initialized", "mcp.tools.list", "mcp.tools.call"], gates: componentActivationGates, endpoint: "kcmlNNNN.kajovocml.hcasc.cz", authorization: "OAUTH2_CLIENT_CREDENTIALS", deactivation: "REVOCATION_EPOCH_AND_TOKEN_REVOKE", recertification: "REQUIRED" },
+    MANAGED_RUNTIME: { manifestContract: "genericComponentManifest", requiredCapabilities: [], gates: componentActivationGates, endpoint: "kcmlNNNN.kajovocml.hcasc.cz", authorization: "OAUTH2_CLIENT_CREDENTIALS", deactivation: "REVOCATION_EPOCH_AND_TOKEN_REVOKE", recertification: "REQUIRED" },
+    EXTERNAL_SERVICE: { manifestContract: "genericComponentManifest", requiredCapabilities: [], gates: componentActivationGates, endpoint: "kcmlNNNN.kajovocml.hcasc.cz", authorization: "OAUTH2_CLIENT_CREDENTIALS", deactivation: "REVOCATION_EPOCH_AND_TOKEN_REVOKE", recertification: "REQUIRED" },
+    PLATFORM_SERVICE: { manifestContract: "managedServiceManifest", requiredCapabilities: [], gates: componentActivationGates, endpoint: "kcmlNNNN.kajovocml.hcasc.cz", authorization: "OAUTH2_CLIENT_CREDENTIALS", deactivation: "REVOCATION_EPOCH_AND_TOKEN_REVOKE", recertification: "REQUIRED" }
   },
   capabilityContracts: {
     "mcp.initialize": { protocol: "MCP", transport: "streamable-http", requiredFor: ["MCP_SERVER"], audit: true, monitoring: true },
@@ -358,41 +424,42 @@ const catalog = {
     "mcp.tools.call": { protocol: "MCP", transport: "streamable-http", requiredFor: ["MCP_SERVER"], audit: true, monitoring: true },
     "component.discovery": { protocol: "HTTPS", transport: "https", requiredFor: [], audit: true, monitoring: true },
     "component.pulse": { protocol: "KCML_PULSE", transport: "https", requiredFor: [], audit: true, monitoring: true },
-    "component.audit.write": { protocol: "KCML_AUDIT", transport: "https", requiredFor: [], audit: true, monitoring: true }
+    "component.audit.write": { protocol: "KCML_AUDIT", transport: "https", requiredFor: [], audit: true, monitoring: true },
+    "component.heartbeat": { protocol: "KCML_CONTROL", transport: "https", requiredFor: [], audit: true, monitoring: true },
+    "component.state.query": { protocol: "KCML_CONTROL", transport: "https", requiredFor: [], audit: true, monitoring: true },
+    "component.control.ack": { protocol: "KCML_CONTROL", transport: "https", requiredFor: [], audit: true, monitoring: true },
+    "component.outbound.pulse": { protocol: "KCML_PULSE", transport: "https", requiredFor: [], audit: true, monitoring: true }
   },
   blueprintComponents: {
-    aiAgents: aiComponents.map(([componentId, role]) => ({ componentId, role, registrationType: "KAJA_CLIENT" })),
+    aiAgents: aiComponents.map(([componentId, role]) => ({ componentId, role, registrationType: "KCML_ACCESS_CLIENT" })),
     mcpServers: mcpComponents.map(([componentId, role]) => ({ componentId, role, registrationType: "MCP_SERVER" })),
     managedServices: managedServices.map((componentId) => ({ componentId, registrationType: "MANAGED_PLATFORM_SERVICE" }))
   },
-  implementationTokens: {
-    tokenTypes: ["SINGLE_COMPONENT", "BLUEPRINT_RELEASE"],
+  integrationTokens: {
     secretApiCompatibility: {
-      acceptedTokenTypes: ["SINGLE_COMPONENT", "BLUEPRINT_RELEASE"],
-      rejectedTokenTypes: [],
-      grantIdentity: "Secret API accepts any valid integration token and requires an explicit secret grant bound to component UUID, token UUID, or token fingerprint."
+      acceptedTokenTypes: ["INTEGRATION_TOKEN"],
+      rejectedTokenTypes: ["CONSUMED", "EXPIRED", "REVOKED"],
+      grantIdentity: "Secret API accepts any unconsumed, unexpired integration token during the integration procedure and requires an explicit secret grant bound to component UUID, token UUID, or token fingerprint."
     },
     blueprintRelease: {
       releaseVersion: release,
       releaseWave: releaseWaveKey,
-      allowedBlueprintComponentIds: generatedBlueprintIds,
+      allowedBlueprintComponentIds: blueprintIds,
       platformPrerequisiteComponentIds: managedServices,
-      allowedRegistrationTypes: ["KAJA_CLIENT", "MCP_SERVER"],
-      maxChildJobs: generatedBlueprintIds.length,
-      autoActivateAfterPass: true,
+      allowedRegistrationTypes: ["KCML_ACCESS_CLIENT", "MCP_SERVER", "MANAGED_PLATFORM_SERVICE"],
+      maxChildJobs: 1,
+      autoActivateAfterPass: false,
       manualApprovalRequiredAfterIssuance: false,
       ttlHours: 24,
-      maxTtlDays: 30,
       lifecycle: {
         initialExpiresInHours: 24,
-        heartbeatExtensionHours: 24,
-        maxExpiresInDays: 30,
+        maxExpiresInHours: 24,
         currentExpiryField: "expiresAt",
         maximumExpiryField: "maxExpiresAt",
-        extensionTrigger: "onboarding worker heartbeat while the job is in a non-terminal runnable state",
-        terminalStatesStopExtension: ["ACTIVE", "FAILED", "QUARANTINED", "CANCELLED"],
-        pausedStatesStopExtension: ["AWAITING_REVISION"],
-        revocation: "administrator revoke/delete, resume token replacement, cancellation, quarantine release, or server archival"
+        successfulUseLimit: 1,
+        consumedBy: "successful access-token handoff / client_secret claim",
+        incompleteIntegrationCleanup: "expired, cancelled or retryable failed onboarding jobs are removed from runtime-visible state; redacted audit remains",
+        revocation: "administrator revoke/delete, successful access-token handoff, expiry, cancellation, quarantine release, or server archival"
       },
       secret: { bytes: 64, prefix: "kci_", storage: "HMAC digest only" }
     }
@@ -406,11 +473,12 @@ const catalog = {
       request: { method: "POST", contentType: "application/json", schema: { type: "object", required: ["name"], additionalProperties: false, properties: { name: { type: "string", pattern: "^[A-Z][A-Z0-9_]{2,127}$" } } } },
       response: { contentType: "application/json", fields: ["name", "value", "version", "fingerprint", "correlationId"], cache: "no-store" },
       auth: {
-        integrationToken: { header: "Authorization: Bearer <integration_token>", acceptedTokenTypes: ["SINGLE_COMPONENT", "BLUEPRINT_RELEASE"], lifecycleIndependent: true },
-        clientSecret: { header: "Authorization: Basic base64(client_id:client_secret)", tokenField: "client_secret", directCredentialVerification: true, lifecycleIndependent: true },
+        integrationToken: { header: "Authorization: Bearer <integration_token>", acceptedTokenTypes: ["INTEGRATION_TOKEN"], lifecycleIndependent: true },
+        clientSecret: { header: "Authorization: Basic base64(client_id:client_secret)", tokenField: "client_secret", directCredentialVerification: true, lifecycleIndependent: false },
         oauthAccessToken: { accepted: false, reason: "Secret API does not issue or require short-lived OAuth access tokens for resolve" },
-        scopeAudienceLifecycleEvaluation: { appliedInsideSecretApi: false, replacementGate: "credential authenticity plus explicit secret grant" },
-        componentLifecycleEvaluation: { appliedInsideSecretApi: false, blockedStatesIgnoredForCredentialValidity: ["DISABLED", "INACTIVE", "QUARANTINED", "DEREGISTERED"] }
+        scopeAudienceLifecycleEvaluation: { appliedInsideSecretApi: true, replacementGate: "access-token authenticity plus explicit secret grant or audited ALL_SECRETS grant" },
+        componentLifecycleEvaluation: { appliedInsideSecretApi: true, blockedStatesRejectedForCredentialValidity: ["DISABLED", "INACTIVE", "QUARANTINED", "DEREGISTERED"] },
+        allSecretsGrant: { accepted: true, grantName: "ALL_SECRETS", explicitAdminApprovalRequired: true, audited: true }
       },
       errorModel: {
         missingUngrantInactiveDeleted: "secret_unavailable",
@@ -465,6 +533,13 @@ const catalog = {
       },
       "/v2/component-onboardings/{id}/readiness": { post: { operationId: "evaluateComponentReadiness", responses: { "200": { description: "Readiness result" } } } },
       "/v2/component-onboardings/{id}/credential-claims": { post: { operationId: "claimComponentCredential", responses: { "200": { description: "Credential shown once" } } } },
+      "/v2/component-onboardings/{id}/e2e-results": { post: { operationId: "recordComponentE2EResult", responses: { "202": { description: "Scenario output matches expected output" }, "409": { description: "Scenario output differs from expected output" } } } },
+      "/v2/component-pulse": { post: { operationId: "ingestComponentPulse", responses: { "202": { description: "Full inbound PULS envelope accepted" } } } },
+      "/v2/component-outbound-pulse": { post: { operationId: "dispatchComponentOutboundPulse", responses: { "202": { description: "Outbound PULS envelope authorized and audited" } } } },
+      "/v2/component-heartbeat": { post: { operationId: "recordComponentHeartbeat", responses: { "202": { description: "Heartbeat accepted and policy snapshot returned" } } } },
+      "/v2/component-state-query": { post: { operationId: "recordComponentStateQueryResponse", responses: { "202": { description: "State snapshot accepted" } } } },
+      "/v2/component-control-ack": { post: { operationId: "recordComponentControlAck", responses: { "202": { description: "Control-plane acknowledgement accepted" } } } },
+      "/v2/component-audit-events": { post: { operationId: "ingestComponentOperationAuditEvent", responses: { "202": { description: "Full operation audit accepted" } } } },
       "/v1/service-onboardings": { post: { operationId: "createServiceOnboarding", parameters: [{ name: "Idempotency-Key", in: "header", required: true, schema: { type: "string" } }], responses: { "202": { description: "Accepted" } } } },
       "/v1/service-onboardings/{id}": { get: { operationId: "getServiceOnboarding", responses: { "200": { description: "Current job" } } } },
       "/v1/service-onboardings/{id}/revision": { put: { operationId: "putServiceOnboardingRevision", parameters: [{ name: "Idempotency-Key", in: "header", required: true, schema: { type: "string" } }, { name: "If-Match", in: "header", required: true, schema: { type: "string" } }], responses: { "202": { description: "Accepted" } } } },
@@ -523,7 +598,7 @@ const catalog = {
         }
       }
     },
-    components: { securitySchemes: { bearerAuth: { type: "http", scheme: "bearer", bearerFormat: "KCML implementation token" } } }
+    components: { securitySchemes: { bearerAuth: { type: "http", scheme: "bearer", bearerFormat: "KCML integration token" } } }
   }
 };
 

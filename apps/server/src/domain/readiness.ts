@@ -54,7 +54,9 @@ const EXPECTED_MIGRATIONS = [
   "045_release_wave_blueprint_enforcement_20260723.sql",
   "046_drop_stale_component_identity_triggers_20260723.sql",
   "047_blueprint_release_generated_scope_20260723.sql",
-  "048_revoke_legacy_blueprint_platform_grants_20260723.sql"
+  "048_revoke_legacy_blueprint_platform_grants_20260723.sql",
+  "049_single_use_integration_tokens_20260724.sql",
+  "050_component_full_contract_20260724.sql"
 ] as const;
 
 export type ReadinessReport = {
@@ -149,4 +151,3 @@ export async function buildReadinessReport(db: Db, config: ReadinessConfig): Pro
     monitor: { ok: monitorOk, enabled: config.MONITOR_ENABLED, lastCompletedAt, lastError: monitorResult.rows[0]?.last_error ? String(monitorResult.rows[0].last_error) : null }
   };
 }
-

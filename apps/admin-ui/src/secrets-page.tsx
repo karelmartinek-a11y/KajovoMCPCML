@@ -171,6 +171,7 @@ function SecretDetailModal({ secret, accountName, onClose, onChanged }: {
   const [principalKind, setPrincipalKind] = useState<SecretGrant["principalKind"]>("COMPONENT");
   const [principalId, setPrincipalId] = useState("");
   const [principalPublicId, setPrincipalPublicId] = useState("");
+  const [allSecrets, setAllSecrets] = useState(false);
   const [revealOpen, setRevealOpen] = useState(false);
   const [rotateOpen, setRotateOpen] = useState(false);
   const [error, setError] = useState("");
@@ -184,11 +185,13 @@ function SecretDetailModal({ secret, accountName, onClose, onChanged }: {
       const result = await grantManagedSecret(secret, {
         principalKind,
         principalId: principalId.trim() || null,
-        principalPublicId: principalPublicId.trim() || null
+        principalPublicId: principalPublicId.trim() || null,
+        allSecrets
       });
       setGrants(result.grants);
       setPrincipalId("");
       setPrincipalPublicId("");
+      setAllSecrets(false);
       onChanged();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Grant se nepodařilo uložit");
@@ -239,12 +242,13 @@ function SecretDetailModal({ secret, accountName, onClose, onChanged }: {
         <section className="secret-grant-editor">
           <h3>Granty</h3>
           <div className="secret-grant-form">
-            <label>Typ<select value={principalKind} onChange={(event) => setPrincipalKind(event.target.value as SecretGrant["principalKind"])}><option value="COMPONENT">Component</option><option value="KAJA">Kaja</option><option value="INTEGRATION_TOKEN">Integration token</option></select></label>
-            <label>Principal UUID<input value={principalId} onChange={(event) => setPrincipalId(event.target.value)} placeholder="volitelné UUID komponenty / credentialu" /></label>
-            <label>Public ID<span className="field-hint">Nikdy nevkládejte plný token kci_…; pro integration token použijte fingerprint nebo veřejný identifikátor.</span><input value={principalPublicId} onChange={(event) => setPrincipalPublicId(event.target.value)} placeholder="např. Kaja0001, KCML0001-C01 nebo sha256:…" /></label>
+            <label>Typ<select value={principalKind} onChange={(event) => setPrincipalKind(event.target.value as SecretGrant["principalKind"])}><option value="COMPONENT">Prvek</option><option value="KAJA">Přístupový token/KCML přístup</option><option value="INTEGRATION_TOKEN">Integrační token</option></select></label>
+            <label>Principal UUID<input value={principalId} onChange={(event) => setPrincipalId(event.target.value)} placeholder="volitelné UUID komponenty / tokenu" /></label>
+            <label>Public ID<span className="field-hint">Nikdy nevkládejte plný token kci_…; pro integrační token použijte fingerprint nebo veřejný identifikátor.</span><input value={principalPublicId} onChange={(event) => setPrincipalPublicId(event.target.value)} placeholder="např. přístupový veřejný identifikátor, KCML0001-C01 nebo sha256:…" /></label>
+            <label className="checkbox-line"><input type="checkbox" checked={allSecrets} onChange={(event) => setAllSecrets(event.target.checked)} /> Povolit všechny proměnné KCML Secrets pro tuto identitu</label>
             <button type="button" onClick={() => { void addGrant(); }} disabled={deleted || (!principalId.trim() && !principalPublicId.trim())}><LockKeyhole size={16} /> Přidat grant</button>
           </div>
-          {grants.length ? <div className="table-scroll"><table><thead><tr><th>Principal</th><th>Identita</th><th>Vydáno</th><th>Stav</th><th>Akce</th></tr></thead><tbody>{grants.map((grant) => <tr key={grant.id}><td>{grant.principalKind}</td><td><code>{grant.principalPublicId ?? grant.principalId}</code></td><td>{formatDate(grant.grantedAt)}</td><td><span className={`badge ${grant.revokedAt ? "danger" : "ok"}`}>{grant.revokedAt ? "REVOKED" : "ACTIVE"}</span></td><td>{grant.revokedAt ? null : <button className="small-button danger-link" onClick={() => { void revoke(grant); }}>Revokovat</button>}</td></tr>)}</tbody></table></div> : <p>Secret zatím nemá žádný grant.</p>}
+          {grants.length ? <div className="table-scroll"><table><thead><tr><th>Principal</th><th>Identita</th><th>Rozsah</th><th>Vydáno</th><th>Stav</th><th>Akce</th></tr></thead><tbody>{grants.map((grant) => <tr key={grant.id}><td>{grant.principalKind === "COMPONENT" ? "Prvek" : grant.principalKind === "INTEGRATION_TOKEN" ? "Integrační token" : "Přístupový token/KCML přístup"}</td><td><code>{grant.principalPublicId ?? grant.principalId}</code></td><td>{grant.allSecrets ? "Všechny proměnné" : "Tento secret"}</td><td>{formatDate(grant.grantedAt)}</td><td><span className={`badge ${grant.revokedAt ? "danger" : "ok"}`}>{grant.revokedAt ? "REVOKED" : "ACTIVE"}</span></td><td>{grant.revokedAt ? null : <button className="small-button danger-link" onClick={() => { void revoke(grant); }}>Revokovat</button>}</td></tr>)}</tbody></table></div> : <p>Secret zatím nemá žádný grant.</p>}
         </section>
         <section className="secret-grant-editor">
           <h3><History size={16} /> Historie verzí</h3>
@@ -277,7 +281,7 @@ export function SecretsPage({ secrets, accountName, onRefresh }: {
   const [selected, setSelected] = useState<ManagedSecret | null>(null);
   const filtered = useMemo(() => secrets.filter((secret) => `${secret.stableName} ${secret.displayName} ${secret.description}`.toLowerCase().includes(query.toLowerCase())), [secrets, query]);
   return <>
-    <PageHeader title="Secrets" description="Centrální správa stabilních secret názvů, verzí a grantů pro komponenty a klientská pověření.">
+    <PageHeader title="Secrets" description="Centrální správa stabilních secret názvů, verzí a grantů pro komponenty a přístupové tokeny.">
       <label className="search-box"><Search size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Hledat secret…" aria-label="Hledat secret" /></label>
       <button onClick={() => setCreateOpen(true)}><Plus size={17} /> Nový secret</button>
       <IconButton label="Obnovit secrets" onClick={onRefresh}><RefreshCw size={17} /></IconButton>

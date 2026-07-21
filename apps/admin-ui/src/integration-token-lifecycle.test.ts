@@ -12,23 +12,24 @@ const baseToken = {
 };
 
 describe("integration token lifecycle presentation", () => {
-  it("shows a protected running integration only with a fresh heartbeat", () => {
+  it("shows a running integration without claiming extension protection", () => {
     const lifecycle = getIntegrationTokenLifecycle(baseToken, Date.parse("2026-07-13T11:00:30.000Z"));
     expect(lifecycle.runState).toBe("running");
-    expect(lifecycle.protectionActive).toBe(true);
+    expect(lifecycle.protectionActive).toBe(false);
+    expect(lifecycle.protectionLabel).toContain("24hodinové");
     expect(lifecycle.currentRemainingMs).toBe(7_170_000);
   });
 
-  it("does not claim protection when the heartbeat is stale", () => {
+  it("does not depend on heartbeat freshness", () => {
     const lifecycle = getIntegrationTokenLifecycle(baseToken, Date.parse("2026-07-13T11:02:00.000Z"));
-    expect(lifecycle.runState).toBe("starting");
+    expect(lifecycle.runState).toBe("running");
     expect(lifecycle.protectionActive).toBe(false);
-    expect(lifecycle.protectionLabel).toContain("heartbeat");
   });
 
-  it("stops extension while waiting for a programmer revision", () => {
-    const lifecycle = getIntegrationTokenLifecycle({ ...baseToken, jobState: "AWAITING_REVISION" }, Date.parse("2026-07-13T11:00:30.000Z"));
+  it("marks failed or cancelled work as incomplete", () => {
+    const lifecycle = getIntegrationTokenLifecycle({ ...baseToken, jobState: "FAILED" }, Date.parse("2026-07-13T11:00:30.000Z"));
     expect(lifecycle.runState).toBe("paused");
+    expect(lifecycle.runLabel).toBe("Integrace nedokončena");
     expect(lifecycle.protectionActive).toBe(false);
   });
 

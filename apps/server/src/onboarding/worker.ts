@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import path from "node:path";
 import type { WorkerConfig } from "../config.js";
 import type { Db } from "../db.js";
+import { cleanupExpiredComponentOnboardings } from "../domain/component.js";
 import {
   heartbeatJob,
   leaseNextJob,
@@ -272,6 +273,7 @@ export class OnboardingWorker {
     if (this.lastMaintenanceAt < Date.now() - 60_000) {
       const paused = await pauseExpiredOnboardingJobs(this.db);
       for (const job of paused) await this.stopRuntime(job.id, job.code).catch(() => undefined);
+      await cleanupExpiredComponentOnboardings(this.db, randomUUID());
       const cleanup = await this.db.query(
         `select id,code from onboarding_job
           where state in ('FAILED','QUARANTINED','CANCELLED') and runtime_stopped_at is null`

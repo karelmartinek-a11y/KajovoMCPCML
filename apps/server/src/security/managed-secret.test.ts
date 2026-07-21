@@ -61,7 +61,7 @@ describe("secret api credential authentication", () => {
     });
   });
 
-  it("accepts an active component client_secret without consulting component lifecycle state", async () => {
+  it("accepts an active component client_secret only after consulting component lifecycle state", async () => {
     const accessKey = randomBytes(32);
     const seenSql: string[] = [];
     const db = {
@@ -87,8 +87,29 @@ describe("secret api credential authentication", () => {
       id: "91000000-0000-4000-8000-000000000001",
       publicId: "KCML91001-C01"
     });
-    expect(seenSql.join("\n")).not.toContain("lifecycle_state");
-    expect(seenSql.join("\n")).not.toContain("source.enabled");
+    expect(seenSql.join("\n")).toContain("component.lifecycle_state='ACTIVE'");
+    expect(seenSql.join("\n")).toContain("component.enabled is true");
+  });
+
+  it("rejects a component client_secret when lifecycle filters do not match", async () => {
+    const accessKey = randomBytes(32);
+    const db = {
+      query: async (sql: string, params: unknown[]) => {
+        if (sql.includes("from component_credential")) {
+          expect(params[1]).toEqual(hmacToken("long-lived-client-secret", accessKey));
+          return { rowCount: 0, rows: [] };
+        }
+        return { rowCount: 0, rows: [] };
+      }
+    } as unknown as Db;
+
+    await expect(authenticateClientSecret(db, {
+      CONFIG_VAULT_MASTER_KEY_BASE64: randomBytes(32),
+      CONFIG_VAULT_MASTER_KEY_ID: "config-v1",
+      ACCESS_TOKEN_HMAC_KEY_BASE64: accessKey,
+      INTEGRATION_TOKEN_HMAC_KEY_BASE64: randomBytes(32),
+      INTEGRATION_TOKEN_HMAC_KEY_ID: "it-v1"
+    }, "KCML91001-C01", "long-lived-client-secret")).resolves.toBeNull();
   });
 
   it("accepts a valid blueprint integration token and exposes a grantable token identity", async () => {

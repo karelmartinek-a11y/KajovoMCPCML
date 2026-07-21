@@ -138,7 +138,8 @@ const secretStatusSchema = z.object({
 const secretGrantSchema = z.object({
   principalKind: z.enum(["KAJA", "COMPONENT", "INTEGRATION_TOKEN"]),
   principalId: z.string().uuid().nullable().optional(),
-  principalPublicId: z.string().trim().min(1).max(160).nullable().optional()
+  principalPublicId: z.string().trim().min(1).max(160).nullable().optional(),
+  allSecrets: z.boolean().optional()
 }).strict();
 const secretRevealGrantSchema = z.object({
   password: z.string().min(1),

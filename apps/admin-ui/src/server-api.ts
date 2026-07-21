@@ -194,6 +194,7 @@ export function grantManagedSecret(secret: ManagedSecret, input: {
   principalKind: SecretGrant["principalKind"];
   principalId?: string | null;
   principalPublicId?: string | null;
+  allSecrets?: boolean;
 }): Promise<{ grants: SecretGrant[] }> {
   return api<{ grants: SecretGrant[] }>(`/api/secrets/${secret.id}/grants`, {
     method: "POST",

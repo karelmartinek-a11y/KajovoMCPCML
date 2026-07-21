@@ -118,13 +118,11 @@ describe("quarantine release MFA", () => {
 describe("machine-readable onboarding catalogs", () => {
   let app: FastifyInstance;
   let config: AppConfig;
-  let tokenKind: "SINGLE_COMPONENT" | "BLUEPRINT_RELEASE";
   let allowedBlueprintComponents: Array<{ componentId: string; registrationType: string; releaseVersion: string; releaseWaveKey: string }>;
 
   beforeEach(async () => {
-    tokenKind = "BLUEPRINT_RELEASE";
     allowedBlueprintComponents = [
-      { componentId: "AI-CLS-001", registrationType: "KAJA_CLIENT", releaseVersion: KCML_RELEASE.catalogVersion, releaseWaveKey: "baseline-2026-07-23" },
+      { componentId: "AI-CLS-001", registrationType: "KCML_ACCESS_CLIENT", releaseVersion: KCML_RELEASE.catalogVersion, releaseWaveKey: "baseline-2026-07-23" },
       { componentId: "MCP-RX-WA-001", registrationType: "MCP_SERVER", releaseVersion: KCML_RELEASE.catalogVersion, releaseWaveKey: "baseline-2026-07-23" }
     ];
     config = loadConfig({
@@ -150,7 +148,7 @@ describe("machine-readable onboarding catalogs", () => {
               max_expires_at: new Date(Date.now() + 120_000).toISOString(),
               service_kind: "MCP",
               allowed_pipeline: "MCP_ONBOARDING",
-              token_kind: tokenKind,
+              token_kind: "BLUEPRINT_RELEASE",
               release_version: KCML_RELEASE.catalogVersion,
               release_wave_key: "baseline-2026-07-23",
               max_child_jobs: 20,
@@ -198,12 +196,11 @@ describe("machine-readable onboarding catalogs", () => {
     expect(response.statusCode).toBe(200);
     expect(response.json()).toMatchObject({
       token: {
-        tokenKind: "BLUEPRINT_RELEASE",
         allowedPipeline: "MCP_ONBOARDING"
       },
       blueprintRelease: {
         allowedBlueprintComponentIds: ["AI-CLS-001", "MCP-RX-WA-001"],
-        allowedRegistrationTypes: ["KAJA_CLIENT", "MCP_SERVER"]
+        allowedRegistrationTypes: ["KCML_ACCESS_CLIENT", "MCP_SERVER"]
       },
       intakeUrl: `https://${config.REGISTER_HOST}/v2/component-onboardings`,
       intakeUrls: {
@@ -214,7 +211,6 @@ describe("machine-readable onboarding catalogs", () => {
   });
 
   it("preserves the registration-type fallback for a single-component token", async () => {
-    tokenKind = "SINGLE_COMPONENT";
     allowedBlueprintComponents = [];
     const response = await app.inject({
       method: "GET",
@@ -226,15 +222,15 @@ describe("machine-readable onboarding catalogs", () => {
     });
     expect(response.statusCode).toBe(200);
     expect(response.json()).toMatchObject({
-      token: { tokenKind: "SINGLE_COMPONENT" },
+      token: { allowedPipeline: "MCP_ONBOARDING" },
       blueprintRelease: {
-        allowedRegistrationTypes: ["KAJA_CLIENT", "MCP_SERVER", "MANAGED_PLATFORM_SERVICE"]
+        allowedRegistrationTypes: ["KCML_ACCESS_CLIENT", "MCP_SERVER", "MANAGED_PLATFORM_SERVICE"]
       }
     });
   });
 
   it.each(["/v1/onboardings", "/v1/service-onboardings"])(
-    "rejects a blueprint release token on legacy intake %s before parsing an upload",
+    "keeps legacy intake %s on the normal authenticated upload validation path",
     async (url) => {
       const response = await app.inject({
         method: "POST",
@@ -245,9 +241,8 @@ describe("machine-readable onboarding catalogs", () => {
           "idempotency-key": "release-token-must-use-native-intake"
         }
       });
-      expect(response.statusCode).toBe(409);
-      expect(response.json()).toMatchObject({ error: "integration_token_kind_mismatch" });
+      expect(response.statusCode).toBe(415);
+      expect(response.json()).toMatchObject({ error: "multipart_required" });
     }
   );
 });
-

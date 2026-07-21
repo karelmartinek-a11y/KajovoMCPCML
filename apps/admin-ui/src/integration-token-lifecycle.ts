@@ -1,16 +1,3 @@
-const EXTENDING_JOB_STATES = new Set([
-  "CREATED",
-  "SOURCE_UPLOADED",
-  "PR_CREATED",
-  "CI_RUNNING",
-  "MERGED",
-  "ARTIFACT_BUILDING",
-  "DEPLOYING",
-  "REGISTERED_DISABLED",
-  "TRIAL_TESTING"
-]);
-
-const HEARTBEAT_FRESH_MS = 90_000;
 const NEAR_MAXIMUM_MS = 2 * 60 * 60 * 1000;
 
 export type IntegrationTokenLifecycleInput = {
@@ -47,45 +34,36 @@ export function getIntegrationTokenLifecycle(token: IntegrationTokenLifecycleInp
   const issuedAtMs = timestamp(token.issuedAt) ?? nowMs;
   const expiresAtMs = timestamp(token.expiresAt) ?? 0;
   const maxExpiresAtMs = timestamp(token.maxExpiresAt) ?? issuedAtMs;
-  const heartbeatAtMs = timestamp(token.heartbeatAt);
   const currentRemainingMs = Math.max(0, expiresAtMs - nowMs);
   const maximumRemainingMs = Math.max(0, maxExpiresAtMs - nowMs);
   const maximumDurationMs = Math.max(1, maxExpiresAtMs - issuedAtMs);
   const maximumProgressPercent = Math.min(100, Math.max(0, ((nowMs - issuedAtMs) / maximumDurationMs) * 100));
   const tokenValid = !token.revokedAt && currentRemainingMs > 0;
-  const heartbeatFresh = heartbeatAtMs !== null && heartbeatAtMs <= nowMs + 5_000 && heartbeatAtMs >= nowMs - HEARTBEAT_FRESH_MS;
-  const extensionEligible = tokenValid && token.jobState !== null && EXTENDING_JOB_STATES.has(token.jobState);
 
   let runState: IntegrationRunState;
   let runLabel: string;
   let protectionLabel: string;
-  let protectionActive = false;
 
   if (!tokenValid) {
     runState = "inactive";
     runLabel = token.revokedAt ? "Token revokován" : "Platnost skončila";
-    protectionLabel = "Automatické prodloužení vypnuto";
+    protectionLabel = "Integrační token není použitelný";
   } else if (!token.jobId) {
     runState = "waiting";
     runLabel = "Integrace nezahájena";
-    protectionLabel = "Prodloužení začne až s integračním jobem";
+    protectionLabel = "Token čeká na první upload";
   } else if (token.jobState === "ACTIVE") {
     runState = "completed";
     runLabel = "Integrace dokončena";
-    protectionLabel = "Automatické prodloužení ukončeno";
-  } else if (!extensionEligible) {
+    protectionLabel = "Token byl spotřebován úspěšnou integrací";
+  } else if (token.jobState && ["FAILED", "QUARANTINED", "CANCELLED"].includes(token.jobState)) {
     runState = "paused";
-    runLabel = token.jobState === "AWAITING_REVISION" ? "Integrace čeká na opravu" : "Integrace neběží";
-    protectionLabel = "Automatické prodloužení vypnuto";
-  } else if (heartbeatFresh) {
+    runLabel = "Integrace nedokončena";
+    protectionLabel = "Nedokončený runtime stav bude uklizen";
+  } else {
     runState = "running";
     runLabel = "Integrace běží";
-    protectionLabel = "Odpočet je chráněn automatickým prodlužováním";
-    protectionActive = true;
-  } else {
-    runState = "starting";
-    runLabel = "Integrace čeká na worker";
-    protectionLabel = "Prodloužení čeká na heartbeat";
+    protectionLabel = "Platí pevné 24hodinové okno bez prodlužování";
   }
 
   return {
@@ -97,7 +75,7 @@ export function getIntegrationTokenLifecycle(token: IntegrationTokenLifecycleInp
     runState,
     runLabel,
     protectionLabel,
-    protectionActive
+    protectionActive: false
   };
 }
 

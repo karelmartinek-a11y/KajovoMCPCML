@@ -25,7 +25,7 @@ describe("application layout and router", () => {
       </AppLayout>
     );
     expect(screen.getByRole("heading", { name: "Auditní události" })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: /Klientská pověření Kaja/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Přístupové tokeny/ })).toBeNull();
     expect(screen.queryByRole("button", { name: /Konfigurace/ })).toBeNull();
     await userEvent.click(screen.getByRole("button", { name: /Monitoring komponent/ }));
     expect(onPageChange).toHaveBeenCalledWith("monitoring");
