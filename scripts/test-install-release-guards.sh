@@ -25,6 +25,10 @@ grep -Fq 'CONFIG_VAULT_MASTER_KEY_BASE64="$vault_master_key"' "$install_script"
 grep -Fq "where key='adminBootstrapUsername'" "$install_script"
 grep -Fq 'admin_username="$(effective_admin_username)"' "$install_script"
 grep -Fq 'export ADMIN_BOOTSTRAP_USERNAME="$admin_username"' "$install_script"
+if grep -Fq 'resumeJobId' deploy/scripts/smoke-reference-external-api.sh; then
+  echo "reference smoke must not use resumeJobId" >&2
+  exit 1
+fi
 grep -Fq 'release-check:mcp_kcml0002_state=SKIPPED clean_start_no_registered_server' "$install_script"
 grep -Fq "where version='046_drop_stale_component_identity_triggers_20260723.sql'" "$install_script"
 grep -Fq -- "--exclude-table='public.admin_account_manual_fix_backup_*'" deploy/scripts/backup.sh

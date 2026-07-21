@@ -110,72 +110,26 @@ jq \
 step discover-service
 services_json="$(admin_read "$base_url/api/managed-services")"
 service_id="$(jq -r '.services[] | select(.slug == "reference-external-api") | .id' <<<"$services_json" | head -n 1)"
-service_code="$(jq -r '.services[] | select(.slug == "reference-external-api") | .code' <<<"$services_json" | head -n 1)"
 
 intent_body() {
-  local resume_job_id="${1:-}"
-  if [ -n "$resume_job_id" ]; then
-    jq -nc \
-      --arg label "Reference EXTERNAL_API smoke" \
-      --arg resumeJobId "$resume_job_id" \
-      '{
-        label: $label,
-        serviceKind: "EXTERNAL_API",
-        resumeJobId: $resumeJobId,
-        descriptor: {
-          summary: "Reference EXTERNAL_API smoke",
-          businessPurpose: "Production smoke validation",
-          serviceOwner: "KCML Managed Services",
-          technicalOwner: "KCML Managed Services",
-          criticality: "HIGH"
-        }
-      }'
-  else
-    jq -nc \
-      --arg label "Reference EXTERNAL_API smoke" \
-      '{
-        label: $label,
-        serviceKind: "EXTERNAL_API",
-        descriptor: {
-          summary: "Reference EXTERNAL_API smoke",
-          businessPurpose: "Production smoke validation",
-          serviceOwner: "KCML Managed Services",
-          technicalOwner: "KCML Managed Services",
-          criticality: "HIGH"
-        }
-      }'
-  fi
+  jq -nc \
+    --arg label "Reference EXTERNAL_API smoke" \
+    '{
+      label: $label,
+      serviceKind: "EXTERNAL_API",
+      descriptor: {
+        summary: "Reference EXTERNAL_API smoke",
+        businessPurpose: "Production smoke validation",
+        serviceOwner: "KCML Managed Services",
+        technicalOwner: "KCML Managed Services",
+        criticality: "HIGH"
+      }
+    }'
 }
 
 step onboard-reference-service
 if [ -n "$service_id" ] && [ "$service_id" != "null" ]; then
-  test "$service_code" != "null"
-  jobs_json="$(admin_read "$base_url/api/onboarding-jobs")"
-  job_id="$(jq -r --arg code "$service_code" '.jobs[] | select(.code == $code) | .id' <<<"$jobs_json" | head -n 1)"
-  test -n "$job_id"
-  test "$job_id" != "null"
-  intent_json="$(intent_body "$job_id")"
-  intent_response="$(
-    admin_write -H 'content-type: application/json' \
-      --data "$intent_json" "$base_url/api/integration-intents"
-  )"
-  integration_token="$(jq -r '.integrationToken' <<<"$intent_response")"
-  resumed_job_json="$(admin_read "$base_url/api/onboarding-jobs/$job_id")"
-  job_lock_version="$(jq -r '.job.lockVersion' <<<"$resumed_job_json")"
-  test -n "$job_lock_version"
-  test "$job_lock_version" != "null"
-  onboarding_status="$(
-    curl -sS -o "$tmpdir/onboarding-response.json" -w '%{http_code}' -X PUT \
-    -H "Host: $register_host" \
-    -H "authorization: Bearer $integration_token" \
-    -H "idempotency-key: $(cat /proc/sys/kernel/random/uuid)" \
-    -H "if-match: \"$job_lock_version\"" \
-    -H 'content-type: application/json' \
-    --data @"$manifest_file" \
-    "$base_url/v1/service-onboardings/$job_id/revision"
-  )"
-  printf '%s' "$onboarding_status" > "$tmpdir/onboarding-http-status.txt"
-  test "$onboarding_status" = "202"
+  step reuse-existing-reference-service
 else
   intent_json="$(intent_body)"
   intent_response="$(
