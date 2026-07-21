@@ -9,6 +9,8 @@
     "start": "node dist/index.js",
     "start:worker": "node dist/cli/onboarding-worker.js",
     "worker": "tsx src/cli/onboarding-worker.ts",
+    "start:component-control-worker": "node dist/cli/component-control-worker.js",
+    "component-control-worker": "tsx src/cli/component-control-worker.ts",
     "start:monitor": "node dist/cli/monitor.js",
     "monitor": "tsx src/cli/monitor.ts",
     "start:egress-proxy": "node dist/cli/egress-proxy.js",

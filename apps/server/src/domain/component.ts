@@ -449,8 +449,9 @@ async function enqueueControlDispatch(client: pg.PoolClient, params: {
 }): Promise<Record<string, unknown>> {
   const { revisionId, row } = await controlContract(client, params.componentId, params.commandType);
   const target = await client.query("select hostname,code from component where id=$1", [params.componentId]);
+  const dispatchId = randomUUID();
   const requestBody = {
-    commandId: randomUUID(),
+    commandId: dispatchId,
     commandType: params.commandType,
     componentId: params.componentId,
     componentCode: String(target.rows[0]?.code ?? ""),
@@ -460,11 +461,12 @@ async function enqueueControlDispatch(client: pg.PoolClient, params: {
   };
   const dispatch = await client.query(
     `insert into component_control_dispatch(
-      component_id,revision_id,command_contract_id,command_type,target_hostname,endpoint_path,request_body,request_digest,
+      id,component_id,revision_id,command_contract_id,command_type,target_hostname,endpoint_path,request_body,request_digest,
       requested_policy_epoch,expected_state_key,correlation_id,causation_id,deadline_at,retry_policy
-    ) values ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10,$11,$12,now()+interval '5 minutes',$13::jsonb)
+    ) values ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10,$11,$12,$13,now()+interval '5 minutes',$14::jsonb)
     returning *`,
     [
+      dispatchId,
       params.componentId,
       revisionId,
       row.id,
@@ -479,18 +481,6 @@ async function enqueueControlDispatch(client: pg.PoolClient, params: {
       params.causationId ?? null,
       JSON.stringify({ maxAttempts: 3, strategy: "fail_closed" })
     ]
-  );
-  await client.query(
-    `insert into component_control_dispatch_attempt(
-      dispatch_id,attempt_number,status,request_body,correlation_id
-    ) values ($1,1,'SENT',$2::jsonb,$3)`,
-    [dispatch.rows[0].id, JSON.stringify(requestBody), params.correlationId]
-  );
-  await client.query(
-    `update component_control_dispatch
-        set state='ACK_PENDING',attempt_count=1,last_attempt_at=now(),updated_at=now()
-      where id=$1`,
-    [dispatch.rows[0].id]
   );
   return dispatch.rows[0] as Record<string, unknown>;
 }
@@ -558,6 +548,7 @@ async function finalizeDispatchFromEvidence(client: pg.PoolClient, dispatchId: s
             pulse_enabled=$2,
             egress_enabled=$2,
             activation_state=$3,
+            lifecycle_state=case when $2 then 'ACTIVE' else case when lifecycle_state='ACTIVE' then 'APPROVED' else lifecycle_state end end,
             operational_state=$4,
             monitoring_state=$5,
             updated_at=now()
@@ -569,6 +560,11 @@ async function finalizeDispatchFromEvidence(client: pg.PoolClient, dispatchId: s
       activating ? "HEALTHY" : "DISABLED",
       activating ? "HEALTHY" : "PENDING"
     ]
+  );
+  await client.query(
+    `update principal set status=$2,updated_at=now()
+      where id=(select principal_id from component where id=$1)`,
+    [row.component_id, activating ? "ACTIVE" : "SUSPENDED"]
   );
   await client.query(
     `update component_control_dispatch
@@ -600,7 +596,9 @@ async function replaceDerivedComponentContracts(client: pg.PoolClient, component
     "component_call_mask",
     "component_pulse_mask",
     "component_state_transition",
-    "component_state_contract"
+    "component_state_contract",
+    "component_tool_contract",
+    "component_runtime_target"
   ];
   for (const table of tables) {
     await client.query(`delete from ${table} where component_id=$1 and revision_id=$2`, [componentId, revisionId]);
@@ -653,11 +651,52 @@ async function replaceDerivedComponentContracts(client: pg.PoolClient, component
 
   const facadeTools = Array.isArray(manifest.facadeTools) ? manifest.facadeTools as JsonRecord[] : [];
   for (const tool of facadeTools) {
+    const behavior = record(manifest.behavior) ?? {};
+    const annotations = record(tool.annotations) ?? {};
+    await client.query(
+      `insert into component_tool_contract(
+        component_id,revision_id,name,title,description,input_schema,output_schema,annotations,scope_name,
+        timeout_ms,limits,idempotency,variants
+      ) values ($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,$8::jsonb,'mcp.tools.call',$9,$10::jsonb,$11::jsonb,$12::jsonb)`,
+      [componentId, revisionId, text(tool.name), text(tool.title) || text(tool.name), text(tool.description) || text(tool.title) || text(tool.name),
+        JSON.stringify(tool.inputSchema ?? {}), JSON.stringify(tool.outputSchema ?? {}), JSON.stringify(annotations),
+        Number(behavior.timeoutMs ?? 15_000), JSON.stringify({
+          requestMaxBytes: Number(behavior.requestMaxBytes ?? 1_048_576),
+          responseMaxBytes: Number(behavior.responseMaxBytes ?? 5_242_880),
+          maxConcurrency: Number(behavior.maxConcurrency ?? 1)
+        }), JSON.stringify({ policy: text(behavior.idempotencyPolicy), effectClass: text(behavior.effectClass) }), JSON.stringify([])]
+    );
     await client.query(
       `insert into component_call_mask(component_id,revision_id,mask_key,direction,route_pattern,scope_name,request_schema,response_schema)
        values ($1,$2,$3,'INBOUND',$4,$5,$6::jsonb,$7::jsonb)`,
       [componentId, revisionId, `tool:${text(tool.name)}`, `/mcp/tools/${text(tool.name)}`, "mcp.tools.call",
         JSON.stringify(tool.inputSchema ?? {}), JSON.stringify(tool.outputSchema ?? {})]
+    );
+    await client.query(
+      `insert into component_permission(source_component_id,target_component_id,route_pattern,scope_name,access_level,granted_by_type)
+       values ($1,$1,$2,'mcp.tools.call','INVOKE','system')
+       on conflict (source_component_id,target_component_id,route_pattern,scope_name) do update set revoked_at=null`,
+      [componentId, `/mcp/tools/${text(tool.name)}`]
+    );
+  }
+
+  const runtime = record(manifest.runtime);
+  const upstream = optionalText(runtime?.upstream);
+  const socketPath = optionalText(runtime?.socketPath);
+  const runtimeDigest = optionalText(record(manifest.integrity)?.sourceDigest) ?? componentManifestDigest(manifest);
+  if (socketPath) {
+    await client.query(
+      `insert into component_runtime_target(component_id,revision_id,transport,upstream,socket_path,status,runtime_digest)
+       values ($1,$2,'UDS',$3,$3,'PENDING',$4)`,
+      [componentId, revisionId, socketPath, runtimeDigest]
+    );
+  } else if (upstream) {
+    const parsed = new URL(upstream);
+    if (parsed.protocol !== "https:") throw Object.assign(new Error("runtime_https_required"), { statusCode: 400 });
+    await client.query(
+      `insert into component_runtime_target(component_id,revision_id,transport,upstream,expected_tls_identity,status,runtime_digest)
+       values ($1,$2,'HTTPS',$3,$4,'PENDING',$5)`,
+      [componentId, revisionId, parsed.toString(), parsed.hostname, runtimeDigest]
     );
   }
 
@@ -709,7 +748,7 @@ async function replaceDerivedComponentContracts(client: pg.PoolClient, component
   for (const scopeName of ["mcp.initialize", "mcp.notifications.initialized", "mcp.tools.list", "mcp.tools.call"]) {
     await client.query(
       `insert into component_permission(source_component_id,target_component_id,route_pattern,scope_name,access_level,granted_by_type)
-       values ($1,$1,'/v2/component-mcp',$2,'INVOKE','system')
+       values ($1,$1,'/mcp',$2,'INVOKE','system')
        on conflict (source_component_id,target_component_id,route_pattern,scope_name) do nothing`,
       [componentId, scopeName]
     );
@@ -793,6 +832,7 @@ export async function createComponentOnboarding(db: Db, params: {
     const code = `KCML${String(number).padStart(4, "0")}`;
     const hostname = `${code.toLowerCase()}.${STRICT_COMPONENT_HOST_SUFFIX}`;
     const componentId = randomUUID();
+    const principalId = randomUUID();
     const category = manifestCategory(params.manifest);
     const role = manifestRole(params.manifest);
     const capabilities = manifestCapabilities(params.manifest);
@@ -809,11 +849,16 @@ export async function createComponentOnboarding(db: Db, params: {
       capturedAt: new Date().toISOString()
     };
     await client.query(
+      `insert into principal(id,kind,public_id,status,policy_epoch,revocation_epoch,metadata)
+       values ($1,'COMPONENT',$2,'SUSPENDED',1,1,$3::jsonb)`,
+      [principalId, code, JSON.stringify({ componentId, assignedBy: "component_onboarding" })]
+    );
+    await client.query(
       `insert into component(
-        id,kcml_number,code,hostname,display_name,description,category,registration_type,component_role,owners,contacts,
+        id,principal_id,kcml_number,code,hostname,display_name,description,category,registration_type,component_role,owners,contacts,
         lifecycle_state,activation_state,operational_state,monitoring_state,enabled,release_version,release_wave_key,blueprint_component_id
-      ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11::jsonb,'REVIEW','INACTIVE','UNKNOWN',$12,false,$13,$14,$15)`,
-      [componentId, number, code, hostname, params.manifest.displayName, params.manifest.businessPurpose, category,
+      ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12::jsonb,'REVIEW','INACTIVE','UNKNOWN',$13,false,$14,$15,$16)`,
+      [componentId, principalId, number, code, hostname, params.manifest.displayName, params.manifest.businessPurpose, category,
         params.manifest.registrationType, role, JSON.stringify(params.manifest.owners), JSON.stringify(params.manifest.contacts),
         "PENDING", COMPONENT_CATALOG_VERSION, KCML_RELEASE_WAVE_KEY, blueprintComponentId]
     );
@@ -1296,7 +1341,7 @@ export async function recordComponentHeartbeat(db: Db, componentId: string, hear
   challengeId?: string;
   challengeNonce?: string;
   payload?: unknown;
-}): Promise<{ accepted: true; policyEpoch: number; failClosed: boolean }> {
+}): Promise<{ accepted: boolean; policyEpoch: number; failClosed: boolean; rejectionReason?: string }> {
   return tx(db, async (client) => {
     const current = await client.query("select policy_epoch,code,activation_state,recertification_state from component where id=$1 for update", [componentId]);
     if (!current.rowCount) throw Object.assign(new Error("not_found"), { statusCode: 404 });
@@ -1357,7 +1402,7 @@ export async function recordComponentHeartbeat(db: Db, componentId: string, hear
     );
     if (validationState === "REJECTED") {
       await client.query("update component set monitoring_state='DEGRADED',updated_at=now() where id=$1", [componentId]);
-      return { accepted: true, policyEpoch, failClosed: true };
+      return { accepted: false, policyEpoch, failClosed: true, rejectionReason: rejectionReason ?? "heartbeat_rejected" };
     }
     if (current.rows[0].activation_state === "ENABLE_REQUESTED" && heartbeat.challengeId) {
       const dispatch = await client.query("select dispatch_id from component_heartbeat_challenge where id=$1", [heartbeat.challengeId]);
@@ -1839,6 +1884,11 @@ export async function setComponentLifecycle(db: Db, params: {
         deregistered_at=case when $5='DEREGISTER' then now() else deregistered_at end,
         lock_version=lock_version+1 where id=$1`,
       [params.componentId, next.lifecycle, next.activation, next.operational, params.action]
+    );
+    await client.query(
+      `update principal set status=$2,revocation_epoch=case when $3 then revocation_epoch+1 else revocation_epoch end,updated_at=now()
+        where id=(select principal_id from component where id=$1)`,
+      [params.componentId, params.action === "QUARANTINE" ? "QUARANTINED" : params.action === "RESTORE" ? "SUSPENDED" : "REVOKED", params.action !== "RESTORE"]
     );
     const revokedTokens = params.action === "RESTORE" ? 0 : await revokeComponentRuntimeTokens(client, params.componentId);
     await appendAudit(client, {

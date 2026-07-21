@@ -11,13 +11,11 @@ import {
   createComponentOnboarding,
   evaluateComponentReadiness,
   getComponent,
-  getComponentDiscovery,
   getComponentOnboarding,
   ingestComponentOperationEvent,
   ingestComponentPulse,
   listComponents,
   recordComponentControlAck,
-  recordComponentE2EResult,
   recordComponentHeartbeat,
   recordComponentStateObservation,
   revokeComponentCredential,
@@ -30,7 +28,6 @@ import {
   validateComponentManifest
 } from "../domain/component.js";
 import { authenticateIntegrationToken } from "../domain/onboarding.js";
-import { resolveSecret } from "../domain/secret-manager.js";
 import {
   createExternalPrincipal,
   createExternalTarget,
@@ -55,23 +52,6 @@ const externalTargetSchema = z.object({ targetKey: z.string().min(3).max(120).re
 const externalStatusSchema = z.object({ status: z.enum(["ACTIVE", "DISABLED", "REVOKED"]) }).strict();
 const externalPermissionSchema = z.object({ componentId: z.string().uuid().optional(), externalPrincipalId: z.string().uuid().optional(), externalTargetId: z.string().uuid(), routePattern: z.string().min(1).max(500), scopeName: z.string().min(2).max(200), enabled: z.boolean() }).strict();
 const outboundGatewaySchema = z.object({ targetKey: z.string().min(3).max(120), routePath: z.string().startsWith("/").max(500), scopeName: z.string().min(2).max(200), payload: requiredJson }).strict();
-const componentMcpSchema = z.object({ jsonrpc: z.literal("2.0"), id: z.union([z.string(), z.number(), z.null()]).optional(), method: z.enum(["initialize", "notifications/initialized", "tools/list", "tools/call"]), params: z.unknown().optional() }).strict();
-const componentMcpCallSchema = z.object({ name: z.string(), arguments: z.record(z.unknown()).default({}) }).strict();
-const COMPONENT_RUNTIME_TOOLS = [
-  "kcml.pulse.accept", "kcml.pulse.emit", "kcml.audit.append", "kcml.state.push",
-  "kcml.state.query", "kcml.control.ack", "kcml.heartbeat.push", "kcml.heartbeat.challenge", "kcml.secret.resolve"
-] as const;
-const COMPONENT_RUNTIME_TOOL_SCHEMAS: Record<typeof COMPONENT_RUNTIME_TOOLS[number], Record<string, unknown>> = {
-  "kcml.pulse.accept": { type: "object", required: ["pulseType", "direction", "source", "target", "input", "output", "correlationId", "occurredAt"], additionalProperties: true },
-  "kcml.pulse.emit": { type: "object", required: ["targetKey", "routePath", "scopeName", "payload"], additionalProperties: false },
-  "kcml.audit.append": { type: "object", required: ["sequenceNumber", "eventType", "occurredAt", "inputDigest", "inputPayload", "processTrace", "outputDigest", "outputPayload", "success", "correlationId", "catalogVersion"], additionalProperties: true },
-  "kcml.state.push": { type: "object", required: ["stateKey", "observedAt", "correlationId", "declaredClientId", "componentCode", "policyEpoch", "statePayload"], additionalProperties: false },
-  "kcml.state.query": { type: "object", additionalProperties: false },
-  "kcml.control.ack": { type: "object", required: ["commandId", "commandType", "status", "ackPayload", "correlationId", "declaredClientId", "componentCode", "policyEpoch"], additionalProperties: false },
-  "kcml.heartbeat.push": { type: "object", required: ["heartbeatAt", "operationalState", "correlationId", "declaredClientId", "componentCode", "policyEpoch"], additionalProperties: true },
-  "kcml.heartbeat.challenge": { type: "object", additionalProperties: false },
-  "kcml.secret.resolve": { type: "object", required: ["stableName"], additionalProperties: false, properties: { stableName: { type: "string", minLength: 3, maxLength: 128 } } }
-};
 const identitySchema = z.object({
   clientId: z.string().min(3).max(160),
   componentCode: z.string().min(3).max(120),
@@ -125,12 +105,6 @@ const controlAckSchema = z.object({
   declaredClientId: z.string().min(3).max(160),
   componentCode: z.string().min(3).max(120),
   policyEpoch: z.number().int().nonnegative()
-}).strict();
-const e2eResultSchema = z.object({
-  scenarioKey: z.string().min(2).max(160),
-  generatedOutput: requiredJson,
-  generatedOutputDigest: z.string().startsWith("sha256:").optional(),
-  correlationId: z.string().uuid()
 }).strict();
 type StateObservationBody = {
   stateKey: string;
@@ -335,22 +309,7 @@ export function registerComponentRoutes(app: FastifyInstance, db: Db, config: Ap
   app.post("/v2/component-onboardings/:id/e2e-results", async (request, reply) => {
     const correlationId = randomUUID();
     if (hostOf(request.headers.host) !== config.REGISTER_HOST) return sendError(reply, 404, "not_found", undefined, correlationId);
-    const principal = await integrationPrincipal(db, config, request, reply, correlationId);
-    if (!principal) return;
-    try {
-      const body = e2eResultSchema.parse(request.body);
-      const result = await recordComponentE2EResult(db, {
-        jobId: (request.params as { id: string }).id,
-        integrationTokenId: principal.id,
-        scenarioKey: body.scenarioKey,
-        generatedOutput: body.generatedOutput,
-        generatedOutputDigest: body.generatedOutputDigest,
-        correlationId: body.correlationId
-      });
-      return reply.code(result.status === "PASS" ? 202 : 409).header("cache-control", "no-store").send({ ...result, correlationId: body.correlationId });
-    } catch (error) {
-      return routeError(reply, error, correlationId);
-    }
+    return sendError(reply, 410, "client_supplied_e2e_results_forbidden", "KCML executes and records onboarding E2E evidence.", correlationId);
   });
 
   app.delete("/v2/component-onboardings/:id", async (request, reply) => {
@@ -520,43 +479,19 @@ export function registerComponentRoutes(app: FastifyInstance, db: Db, config: Ap
   app.get("/.well-known/kcml-component", { config: { rateLimit: { max: 60, timeWindow: "1 minute" } } }, async (request, reply) => {
     const correlationId = randomUUID();
     const host = hostOf(request.headers.host);
-    try {
-      const component = await getComponentDiscovery(db, host);
-      return reply.header("cache-control", "no-store").send({ component, catalogVersion: COMPONENT_CATALOG_VERSION });
-    } catch (error) {
-      return routeError(reply, error, correlationId);
+    if (!host || host === config.ADMIN_HOST || host === config.AUTH_HOST || host === config.REGISTER_HOST) {
+      return sendError(reply, 404, "not_found", undefined, correlationId);
     }
+    return reply.header("cache-control", "public, max-age=300").send({
+      mcpEndpoint: `https://${host}/mcp`,
+      protectedResourceMetadata: `https://${host}/.well-known/oauth-protected-resource`,
+      catalogVersion: COMPONENT_CATALOG_VERSION
+    });
   });
 
   app.post("/v2/component-mcp", { config: { rateLimit: { max: 240, timeWindow: "1 minute" } } }, async (request, reply) => {
     const correlationId = randomUUID();
-    const body = componentMcpSchema.safeParse(request.body);
-    if (!body.success) return reply.send({ jsonrpc: "2.0", id: null, error: { code: -32600, message: "Invalid Request", data: { correlationId } } });
-    const requiredScope = body.data.method === "initialize" ? "mcp.initialize" : body.data.method === "notifications/initialized" ? "mcp.notifications.initialized" : body.data.method === "tools/list" ? "mcp.tools.list" : "mcp.tools.call";
-    const decision = await authorizeRuntime(db, config, request, requiredScope, "/v2/component-mcp", correlationId);
-    if (!decision?.allow || !decision.targetComponentId) return reply.send({ jsonrpc: "2.0", id: body.data.id ?? null, error: { code: -32001, message: "Unauthorized", data: { code: decision?.reasonCode ?? "invalid_token", correlationId } } });
-    if (body.data.method === "initialize") return reply.send({ jsonrpc: "2.0", id: body.data.id ?? null, result: { protocolVersion: "2025-11-25", capabilities: { tools: { listChanged: false } }, serverInfo: { name: "kcml-component-runtime", version: COMPONENT_CATALOG_VERSION } } });
-    if (body.data.method === "notifications/initialized") return reply.code(202).send();
-    if (body.data.method === "tools/list") return reply.send({ jsonrpc: "2.0", id: body.data.id ?? null, result: { tools: COMPONENT_RUNTIME_TOOLS.map((name) => ({ name, description: `KCML component runtime operation ${name}`, inputSchema: COMPONENT_RUNTIME_TOOL_SCHEMAS[name] })) } });
-    const call = componentMcpCallSchema.safeParse(body.data.params);
-    if (!call.success || !COMPONENT_RUNTIME_TOOLS.includes(call.data.name as typeof COMPONENT_RUNTIME_TOOLS[number])) return reply.send({ jsonrpc: "2.0", id: body.data.id ?? null, error: { code: -32602, message: "Invalid tool", data: { correlationId } } });
-    try {
-      const args = call.data.arguments;
-      let result: unknown;
-      if (call.data.name === "kcml.pulse.accept") { const pulse = fullPulseSchema.parse(args) as ComponentPulseEnvelope; assertSourceIdentity(pulse.source as { clientId: string; componentCode: string }, decision); assertTargetIdentity(pulse.target as { componentCode: string; audience?: string }, decision); result = await ingestComponentPulse(db, decision.targetComponentId, pulse); }
-      else if (call.data.name === "kcml.audit.append") result = await ingestComponentAuditEvent(db, decision.targetComponentId, auditEventSchema.parse(args));
-      else if (call.data.name === "kcml.state.push") { const state = stateObservationSchema.parse(args) as StateObservationBody; if (state.declaredClientId !== decision.sourceClientId || state.componentCode !== decision.targetComponentCode) throw Object.assign(new Error("client_id_mismatch"), { statusCode: 403 }); result = await recordComponentStateObservation(db, decision.targetComponentId, { ...state, declaredComponentCode: state.componentCode }); }
-      else if (call.data.name === "kcml.control.ack") { const ack = controlAckSchema.parse(args) as ControlAckBody; if (ack.declaredClientId !== decision.sourceClientId || ack.componentCode !== decision.targetComponentCode) throw Object.assign(new Error("client_id_mismatch"), { statusCode: 403 }); result = await recordComponentControlAck(db, decision.targetComponentId, { ...ack, declaredComponentCode: ack.componentCode }); }
-      else if (call.data.name === "kcml.heartbeat.push") { const heartbeat = heartbeatSchema.parse(args); if (heartbeat.declaredClientId !== decision.sourceClientId || heartbeat.componentCode !== decision.targetComponentCode) throw Object.assign(new Error("client_id_mismatch"), { statusCode: 403 }); result = await recordComponentHeartbeat(db, decision.targetComponentId, { ...heartbeat, declaredComponentCode: heartbeat.componentCode }); }
-      else if (call.data.name === "kcml.pulse.emit") { const outbound = outboundGatewaySchema.parse(args); result = await dispatchExternalComponentCall(db, { sourceComponentId: decision.sourceComponentId ?? decision.targetComponentId, targetKey: outbound.targetKey, routePath: outbound.routePath, scopeName: outbound.scopeName, payload: outbound.payload, correlationId, hmacKey: config.ACCESS_TOKEN_HMAC_KEY_BASE64, keyId: config.ACCESS_TOKEN_HMAC_KEY_ID }); }
-      else if (call.data.name === "kcml.state.query") result = (await db.query("select id,status,requested_at,deadline_at from component_state_query_run where component_id=$1 order by requested_at desc limit 1", [decision.targetComponentId])).rows[0] ?? null;
-      else if (call.data.name === "kcml.heartbeat.challenge") result = (await db.query("select id,challenge_nonce,expires_at,status from component_heartbeat_challenge where component_id=$1 order by created_at desc limit 1", [decision.targetComponentId])).rows[0] ?? null;
-      else { if (!decision.sourceComponentId || !decision.sourceClientId) throw Object.assign(new Error("component_identity_required"), { statusCode: 403 }); result = await resolveSecret(db, config, { kind: "COMPONENT", id: decision.sourceComponentId, publicId: decision.sourceClientId, auditActorType: "component" }, String(args.stableName), correlationId); }
-      return reply.send({ jsonrpc: "2.0", id: body.data.id ?? null, result: { structuredContent: result } });
-    } catch (error) {
-      const code = error instanceof Error ? error.message.split(":")[0] : "runtime_tool_failed";
-      return reply.send({ jsonrpc: "2.0", id: body.data.id ?? null, error: { code: -32602, message: code, data: { correlationId } } });
-    }
+    return sendError(reply, 410, "component_mcp_moved", "Use the canonical POST /mcp endpoint.", correlationId);
   });
 
   app.post("/v2/component-pulse", { config: { rateLimit: { max: 120, timeWindow: "1 minute" } } }, async (request, reply) => {
@@ -615,7 +550,7 @@ export function registerComponentRoutes(app: FastifyInstance, db: Db, config: Ap
         ...body,
         declaredComponentCode: body.componentCode
       });
-      return reply.code(202).send({ ...receipt, correlationId: body.correlationId });
+      return reply.code(receipt.accepted ? 202 : 422).send({ ...receipt, correlationId: body.correlationId });
     } catch (error) {
       return routeError(reply, error, correlationId);
     }
@@ -642,21 +577,7 @@ export function registerComponentRoutes(app: FastifyInstance, db: Db, config: Ap
 
   app.post("/v2/component-state-query", { config: { rateLimit: { max: 120, timeWindow: "1 minute" } } }, async (request, reply) => {
     const correlationId = randomUUID();
-    const decision = await authorizeRuntime(db, config, request, "component.state.query", "/v2/component-state-query", correlationId);
-    if (!decision?.allow || !decision.targetComponentId) return sendError(reply, 403, decision?.reasonCode ?? "invalid_token", undefined, correlationId);
-    try {
-      const body = stateObservationSchema.parse(request.body) as StateObservationBody;
-      if (body.declaredClientId !== decision.sourceClientId || body.componentCode !== decision.targetComponentCode) {
-        return sendError(reply, 403, "client_id_mismatch", undefined, correlationId);
-      }
-      const receipt = await recordComponentStateObservation(db, decision.targetComponentId, {
-        ...body,
-        declaredComponentCode: body.componentCode
-      });
-      return reply.code(202).header("warning", `299 - legacy state query endpoint acts as state.push; use /v2/component-state-push`).send({ ...receipt, correlationId: body.correlationId });
-    } catch (error) {
-      return routeError(reply, error, correlationId);
-    }
+    return sendError(reply, 410, "state_query_requires_control_dispatch", "KCML issues state queries through the durable control-dispatch worker.", correlationId);
   });
 
   app.post("/v2/component-control-ack", { config: { rateLimit: { max: 120, timeWindow: "1 minute" } } }, async (request, reply) => {

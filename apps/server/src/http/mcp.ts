@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { FastifyInstance, FastifyReply } from "fastify";
 import { z } from "zod";
-import type { McpHttpConfig } from "../config.js";
+import type { AppServerConfig } from "../config.js";
 import type { Db } from "../db.js";
 import { tx } from "../db.js";
 import { appendAudit } from "../domain/audit.js";
@@ -32,6 +32,7 @@ import {
   sendJsonRpc,
   type JsonRpcResponse
 } from "./json-rpc.js";
+import { canonicalMcpComponent, handleCanonicalMcp } from "./component-mcp-runtime.js";
 
 const validatorCache = new BoundedValidatorCache(256);
 
@@ -243,7 +244,7 @@ function serverCanServe(server: McpServer): boolean {
     && serverAvailability(server).canServeExisting;
 }
 
-export function registerMcpRoutes(app: FastifyInstance, db: Db, config: McpHttpConfig): void {
+export function registerMcpRoutes(app: FastifyInstance, db: Db, config: AppServerConfig): void {
   app.setErrorHandler((error, request, reply) => {
     if (request.url.split("?")[0] === "/mcp") {
       const correlationId = randomUUID();
@@ -263,6 +264,12 @@ export function registerMcpRoutes(app: FastifyInstance, db: Db, config: McpHttpC
   app.get("/.well-known/oauth-protected-resource", async (request, reply) => {
     const hostname = hostOf(request.headers.host);
     if (!isKcmlHostname(hostname, config.PUBLIC_BASE_DOMAIN)) return sendError(reply, 404, "not_found");
+    const component = await canonicalMcpComponent(db, hostname);
+    if (component) return {
+      resource: `https://${hostname}`,
+      authorization_servers: [`https://${config.AUTH_HOST}`],
+      bearer_methods_supported: ["header"]
+    };
     const managedService = await getManagedServiceByHostname(db, hostname);
     if (managedService?.serviceKind === "EXTERNAL_API") {
       if (managedService.apiState !== "ENABLED") return sendError(reply, 503, "service_unavailable", "Resource is unavailable");
@@ -296,6 +303,12 @@ export function registerMcpRoutes(app: FastifyInstance, db: Db, config: McpHttpC
   app.get("/.well-known/oauth-protected-resource/mcp", async (request, reply) => {
     const hostname = hostOf(request.headers.host);
     if (!isKcmlHostname(hostname, config.PUBLIC_BASE_DOMAIN)) return sendError(reply, 404, "not_found");
+    const component = await canonicalMcpComponent(db, hostname);
+    if (component) return {
+      resource: `https://${hostname}`,
+      authorization_servers: [`https://${config.AUTH_HOST}`],
+      bearer_methods_supported: ["header"]
+    };
     const managedService = await getManagedServiceByHostname(db, hostname);
     if (managedService?.serviceKind === "EXTERNAL_API") {
       if (managedService.apiState !== "ENABLED") return sendError(reply, 503, "service_unavailable", "Resource is unavailable");
@@ -341,6 +354,9 @@ export function registerMcpRoutes(app: FastifyInstance, db: Db, config: McpHttpC
       return sendError(reply, 405, "method_not_allowed", "This deployment supports POST Streamable HTTP requests only", correlationId);
     }
     if (!isKcmlHostname(hostname, config.PUBLIC_BASE_DOMAIN)) return sendError(reply, 404, "not_found", "Unknown resource", correlationId);
+
+    const canonicalComponent = await canonicalMcpComponent(db, hostname);
+    if (canonicalComponent) return handleCanonicalMcp(request, reply, db, config, canonicalComponent, correlationId);
 
     const managedService = await getManagedServiceByHostname(db, hostname);
     if (managedService && managedService.apiState !== "ENABLED") {

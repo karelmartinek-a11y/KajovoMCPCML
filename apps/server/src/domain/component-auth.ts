@@ -30,6 +30,7 @@ export type ComponentAuthorizationDecision = {
   audience: string | null;
   scopes: string[];
   policyEpoch: number | null;
+  tokenFingerprint: string | null;
 };
 
 function denied(reasonCode: ComponentAuthorizationReason, correlationId: string, values: Partial<ComponentAuthorizationDecision> = {}): ComponentAuthorizationDecision {
@@ -46,6 +47,7 @@ function denied(reasonCode: ComponentAuthorizationReason, correlationId: string,
     audience: null,
     scopes: [],
     policyEpoch: null,
+    tokenFingerprint: null,
     ...values
   };
 }
@@ -121,6 +123,72 @@ export async function authorizeComponentCall(db: Db, params: {
 }): Promise<ComponentAuthorizationDecision> {
   return tx(db, async (client) => {
     const tokenDigest = hmacToken(params.token, params.hmacKey);
+    const principalToken = await client.query(`
+      select token.*,principal.public_id source_client_id,principal.status source_principal_status,
+        principal.revocation_epoch current_source_revocation_epoch,
+        source.id source_component_id,source.code source_component_code,source.enabled source_enabled,
+        source.lifecycle_state source_lifecycle_state,
+        target.id target_component_id,target.code target_component_code,target.hostname target_hostname,
+        target.enabled target_enabled,target.ingress_enabled target_ingress_enabled,
+        target.lifecycle_state target_lifecycle_state,target.operational_state target_operational_state,
+        target.policy_epoch,target.release_version,
+        token.expires_at <= now() token_expired
+      from principal_access_token token
+      join principal on principal.id=token.source_principal_id
+      left join component source on source.principal_id=principal.id
+      join component target on lower(target.hostname::text)=lower($2)
+      where token.lookup_digest=$1
+        and (token.target_component_id is null or token.target_component_id=target.id)
+      for update of token`, [tokenDigest, params.host]);
+    if (principalToken.rowCount) {
+      const row = principalToken.rows[0];
+      const base = {
+        sourceComponentId: row.source_component_id ? String(row.source_component_id) : null,
+        targetComponentId: String(row.target_component_id),
+        sourceClientId: String(row.source_client_id),
+        sourceComponentCode: row.source_component_code ? String(row.source_component_code) : String(row.source_client_id),
+        targetComponentCode: String(row.target_component_code),
+        audience: params.audience,
+        scopes: row.scope_names as string[],
+        policyEpoch: Number(row.policy_epoch),
+        tokenFingerprint: String(row.fingerprint)
+      };
+      let principalDecision: ComponentAuthorizationDecision;
+      if (row.revoked_at || Number(row.issued_revocation_epoch) !== Number(row.current_source_revocation_epoch)) {
+        principalDecision = denied("revoked_token", params.correlationId, base);
+      } else if (row.token_expired) {
+        principalDecision = denied("expired_token", params.correlationId, base);
+      } else if (row.source_principal_status !== "ACTIVE") {
+        principalDecision = denied(row.source_principal_status === "QUARANTINED" ? "component_quarantined" : "component_disabled", params.correlationId, base);
+      } else if (String(row.target_hostname).toLowerCase() !== params.host.toLowerCase()) {
+        principalDecision = denied("invalid_audience", params.correlationId, base);
+      } else if (row.target_lifecycle_state === "QUARANTINED" || row.target_operational_state === "QUARANTINED" || row.source_lifecycle_state === "QUARANTINED") {
+        principalDecision = denied("component_quarantined", params.correlationId, base);
+      } else if (!row.target_enabled || !row.target_ingress_enabled || (row.source_component_id && !row.source_enabled)) {
+        principalDecision = denied("component_disabled", params.correlationId, base);
+      } else {
+        const permission = row.source_component_id ? await client.query(
+          `select 1 from component_permission
+            where source_component_id=$1 and target_component_id=$2 and scope_name=$3 and revoked_at is null
+              and ($4 = route_pattern or (right(route_pattern,2)='/*' and $4 like left(route_pattern,length(route_pattern)-1)||'%'))`,
+          [row.source_component_id, row.target_component_id, params.scope, params.route]
+        ) : { rowCount: 0 };
+        principalDecision = permission.rowCount
+          ? { allow: true, reasonCode: "allowed", decisionId: randomUUID(), correlationId: params.correlationId, ...base }
+          : denied("route_denied", params.correlationId, base);
+      }
+      if (principalDecision.allow) {
+        await client.query("update principal_access_token set last_used_at=now() where lookup_digest=$1", [tokenDigest]);
+      }
+      await appendAudit(client, {
+        eventType: principalDecision.allow ? "component_authorization.allowed" : "component_authorization.denied",
+        actorType: "component", actorId: principalDecision.sourceComponentId ?? principalDecision.sourceClientId,
+        objectType: "component", objectId: principalDecision.targetComponentId,
+        after: { decisionId: principalDecision.decisionId, reasonCode: principalDecision.reasonCode, scope: params.scope, route: params.route, audience: params.audience, tokenFingerprint: principalDecision.tokenFingerprint },
+        correlationId: params.correlationId
+      });
+      return principalDecision;
+    }
     const result = await client.query(`
       select token.*,credential.status credential_status,credential.revoked_at credential_revoked_at,
         credential.public_id as source_client_id,
@@ -148,7 +216,8 @@ export async function authorizeComponentCall(db: Db, params: {
         targetComponentCode: String(row.target_component_code),
         audience: String(row.audience),
         scopes: row.scope_names as string[],
-        policyEpoch: Number(row.policy_epoch)
+        policyEpoch: Number(row.policy_epoch),
+        tokenFingerprint: String(row.fingerprint)
       };
       if (row.revoked_at || row.credential_status === "REVOKED" || row.credential_revoked_at
         || String(row.credential_revocation_epoch) !== String(row.current_credential_epoch)
