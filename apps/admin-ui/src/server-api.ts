@@ -66,20 +66,32 @@ export async function setComponentPermission(component: Component, permissionId:
   return response.component;
 }
 
-export async function revokeComponentCredential(component: Component, credentialId: string): Promise<Component> {
-  const response = await api<{ component: Component }>(`/api/components/${component.id}/credentials/${credentialId}/revoke`, {
+export async function revokeComponentAccessToken(component: Component, tokenId: string): Promise<Component> {
+  const response = await api<{ component: Component }>(`/api/components/${component.id}/access-tokens/${tokenId}/revoke`, {
     method: "POST", headers: mutationHeaders(), body: "{}"
   });
   return response.component;
 }
 
-export async function rotateComponentCredential(component: Component, credentialId: string): Promise<{
+export async function rotateComponentAccessToken(component: Component, tokenId: string): Promise<{
   component: Component;
-  credential: { clientId: string; clientSecret: string; fingerprint: string };
+  accessToken: { token: string; fingerprint: string };
 }> {
-  return api(`/api/components/${component.id}/credentials/${credentialId}/rotate`, {
+  return api(`/api/components/${component.id}/access-tokens/${tokenId}/rotate`, {
     method: "POST", headers: mutationHeaders(), body: "{}"
   });
+}
+
+export async function runComponentE2E(component: Component): Promise<void> {
+  await api(`/api/components/${component.id}/e2e-runs`, { method: "POST", headers: mutationHeaders(), body: "{}" });
+}
+
+export async function runComponentStateQuery(component: Component): Promise<void> {
+  await api(`/api/components/${component.id}/state-queries`, { method: "POST", headers: mutationHeaders(), body: "{}" });
+}
+
+export async function runComponentHeartbeatChallenge(component: Component): Promise<void> {
+  await api(`/api/components/${component.id}/heartbeat-challenges`, { method: "POST", headers: mutationHeaders(), body: "{}" });
 }
 
 export async function runRegisteredServerTest(server: Server): Promise<ServerTestResult> {

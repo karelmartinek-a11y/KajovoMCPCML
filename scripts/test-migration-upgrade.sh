@@ -177,64 +177,23 @@ run_migrations
 run_migrations
 
 psql "$KCML_UPGRADE_DATABASE_URL" --no-psqlrc --set ON_ERROR_STOP=1 <<'SQL'
-insert into integration_token(
-  id,label,lookup_digest,key_id,fingerprint,created_by,initial_expires_at,expires_at,max_expires_at,descriptor,
-  token_kind,release_version,release_wave_key,blueprint_release_version,max_child_jobs
-) select
-  '20000000-0000-0000-0000-000000000024','Legacy blueprint platform grant',digest('legacy-blueprint-platform-grant','sha256'),'v1','legacyplatform24',id,
-  now()+interval '1 hour',now()+interval '1 hour',now()+interval '1 day',
-  '{"summary":"Legacy platform grant","businessPurpose":"Exercise upgrade cleanup for forbidden platform scope.","serviceOwner":"KCML","technicalOwner":"KCML","criticality":"HIGH"}'::jsonb,
-  'BLUEPRINT_RELEASE','2026.07.24','baseline-2026-07-24','2026.07.24',1
-from admin_account order by created_at limit 1;
-
-alter table integration_token_allowed_component disable trigger integration_token_allowed_component_generated_scope_tg;
-insert into integration_token_allowed_component(token_id,blueprint_component_id,registration_type,release_version,release_wave_key)
-values
-  ('20000000-0000-0000-0000-000000000024','AI-CLS-001','KCML_ACCESS_CLIENT','2026.07.24','baseline-2026-07-24'),
-  ('20000000-0000-0000-0000-000000000024','KCML-AUTH-001','MANAGED_PLATFORM_SERVICE','2026.07.24','baseline-2026-07-24');
-alter table integration_token_allowed_component enable trigger integration_token_allowed_component_generated_scope_tg;
-SQL
-psql "$KCML_UPGRADE_DATABASE_URL" --no-psqlrc --set ON_ERROR_STOP=1 --file "$migrations/048_revoke_legacy_blueprint_platform_grants_20260723.sql" >/dev/null
-
-psql "$KCML_UPGRADE_DATABASE_URL" --no-psqlrc --set ON_ERROR_STOP=1 <<'SQL'
-begin;
-insert into managed_service(
-  code, slug, display_name, description, service_kind, lifecycle_state, operational_state, enabled,
-  public_hostname, base_url, resource_uri, auth_mode, api_state, criticality, owners, contacts, governance,
-  monitoring_enabled, monitoring_profile_digest, review_approved_at, review_due_at, review_interval_days, environment
-) values (
-  'KCML999999','reference-external-api-upgrade-fixture',
-  'Reference External API upgrade fixture',
-  'Rolled-back upgrade fixture proving the current managed-service component bridge is authoritative.',
-  'EXTERNAL_API','REGISTERED_DISABLED','HEALTHY',false,
-  'kcml999999.hcasc.cz','https://reference-api.hcasc.cz','https://kcml999999.hcasc.cz',
-  'NONE','DISABLED','HIGH',
-  '{"service":"KCML Managed Services","technical":"KCML Managed Services","security":"KCML Security","operations":"KCML Operations"}'::jsonb,
-  '{"serviceEmail":"service@hcasc.cz","technicalEmail":"platform@hcasc.cz","securityEmail":"security@hcasc.cz","operationsOnCall":"KCML Operations"}'::jsonb,
-  '{"criticality":"HIGH","classification":"CONFIDENTIAL","containsPersonalData":true,"exportAllowed":false,"retentionDays":365,"loggingPolicy":"Redact secrets before storing runtime evidence.","redactionFields":["authorization"]}'::jsonb,
-  true,'sha256:upgrade-fixture','2026-07-15T00:00:00Z','2026-10-13T00:00:00Z',90,'production'
-);
 do $$
 begin
   if exists (
-    select 1
-      from pg_trigger
+    select 1 from pg_trigger
      where tgname in ('legacy_mcp_server_component_adapter_trigger','legacy_managed_service_component_adapter_trigger')
        and not tgisinternal
   ) then
     raise exception 'stale_component_identity_trigger_present';
   end if;
   if not exists (
-    select 1
-      from managed_service service
-      join component component on component.id=service.component_id
-     where service.slug='reference-external-api-upgrade-fixture'
-       and component.release_version='2026.07.24'
+    select 1 from component component
+      join principal principal on principal.id=component.principal_id
+     where component.code='KCML0002' and principal.kind='COMPONENT'
   ) then
-    raise exception 'managed_service_component_bridge_not_current';
+    raise exception 'component_principal_backfill_missing';
   end if;
 end $$;
-rollback;
 SQL
 
 psql "$KCML_UPGRADE_DATABASE_URL" --no-psqlrc --set ON_ERROR_STOP=1 <<'SQL'
@@ -280,7 +239,7 @@ SQL
 
 psql "$KCML_UPGRADE_DATABASE_URL" --no-psqlrc --set ON_ERROR_STOP=1 --tuples-only --no-align <<'SQL' | grep -Fx 'upgrade-ok'
 select case when
-  (select count(*) from schema_migration) = 59
+  (select count(*) from schema_migration) = 87
   and (select count(*) from legacy_schema_migration) = 9
   and (select count(*) from audit_event) = 1165
   and (select valid from verify_audit_chain()) is true
@@ -314,21 +273,6 @@ select case when
      where id='20000000-0000-0000-0000-000000000002'
        and legacy_backfill=true
        and descriptor->>'summary'='Legacy production integration token'
-  )
-  and exists (
-    select 1 from integration_token
-     where id='20000000-0000-0000-0000-000000000024'
-       and revoked_at is not null
-  )
-  and exists (
-    select 1 from integration_token_allowed_component
-     where token_id='20000000-0000-0000-0000-000000000024'
-       and blueprint_component_id='AI-CLS-001'
-  )
-  and not exists (
-    select 1 from integration_token_allowed_component
-     where token_id='20000000-0000-0000-0000-000000000024'
-       and blueprint_component_id='KCML-AUTH-001'
   )
   and exists (
     select 1 from access_token

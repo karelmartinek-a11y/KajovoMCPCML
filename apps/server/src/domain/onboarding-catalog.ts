@@ -4,7 +4,7 @@ import { KCML_RELEASE } from "./release.js";
 export const MCP_CATALOG_VERSION = KCML_RELEASE.catalogVersion;
 export const MCP_MANIFEST_SCHEMA_VERSION = KCML_RELEASE.manifestSchemaVersion;
 export const MCP_CATALOG_PATH = `docs/onboarding-catalogs/component-${MCP_CATALOG_VERSION}.json`;
-export const MCP_CONNECT_FILE = `KajovoCML_Onboarding_Catalog_${MCP_CATALOG_VERSION}.docx`;
+export const MCP_CONNECT_FILE = `component-${MCP_CATALOG_VERSION}.json`;
 
 function canonicalize(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(canonicalize);

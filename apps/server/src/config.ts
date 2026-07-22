@@ -388,7 +388,8 @@ export type GitHubOnboardingConfig = Pick<AppConfig, "GITHUB_TOKEN" | "GITHUB_AP
 export type ActivationConfig = Pick<AppConfig, "AUTH_HOST" | "PUBLIC_BASE_DOMAIN">;
 export type EgressProxyConfig = EgressClientConfig & Pick<AppConfig, "NODE_ENV">;
 export type OciRuntimeConfig = Pick<AppConfig, "OCI_IMAGE_NAMESPACE" | "OCI_REGISTRY" | "OCI_CERTIFICATE_IDENTITY" | "OCI_CERTIFICATE_OIDC_ISSUER" | "PODMAN_BINARY" | "COSIGN_BINARY" | "RUNTIME_SOCKET_ROOT" | "EGRESS_PROXY_SOCKET_PATH">;
-export type WorkerConfig = GitHubOnboardingConfig & ActivationConfig & EgressClientConfig & OciRuntimeConfig & Pick<AppConfig, "ONBOARDING_WORKER_INTERVAL_MS">;
+export type WorkerConfig = GitHubOnboardingConfig & ActivationConfig & EgressClientConfig & OciRuntimeConfig
+  & Pick<AppConfig, "ONBOARDING_WORKER_INTERVAL_MS" | "ACCESS_TOKEN_HMAC_KEY_BASE64" | "CONFIG_VAULT_MASTER_KEY_BASE64" | "CONFIG_VAULT_MASTER_KEY_ID">;
 export type MonitoringConfig = AlertDeliveryConfig & EgressClientConfig & OciRuntimeConfig & Pick<AppConfig, "AUTH_HOST" | "MONITOR_INTERVAL_MS" | "AUDIT_ARCHIVE_PATH">;
 export type AppServerConfig = WebAppConfig
   & AdminRoutesConfig

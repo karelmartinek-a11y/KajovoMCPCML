@@ -50,13 +50,13 @@ describe("programmer onboarding API authorization", () => {
 
   afterEach(async () => app?.close());
 
-  it("keeps the legacy onboarding intake as an authenticated compatibility adapter", async () => {
+  it("retires the legacy onboarding intake without authenticating or mutating state", async () => {
     const missing = await app.inject({ method: "POST", url: "/v1/onboardings", headers: { host: config.REGISTER_HOST } });
     const invalid = await app.inject({ method: "POST", url: "/v1/onboardings", headers: { host: config.REGISTER_HOST, authorization: `Bearer kci_${"a".repeat(86)}` } });
-    expect(missing.statusCode).toBe(401);
-    expect(invalid.statusCode).toBe(401);
-    expect((JSON.parse(missing.body) as { error: string }).error).toBe("invalid_integration_token");
-    expect((JSON.parse(invalid.body) as { error: string }).error).toBe("invalid_integration_token");
+    expect(missing.statusCode).toBe(410);
+    expect(invalid.statusCode).toBe(410);
+    expect((JSON.parse(missing.body) as { error: string }).error).toBe("legacy_onboarding_retired_use_component_intake");
+    expect((JSON.parse(invalid.body) as { error: string }).error).toBe("legacy_onboarding_retired_use_component_intake");
   });
 
   it("does not expose the registration API on another host", async () => {
@@ -71,9 +71,9 @@ describe("programmer onboarding API authorization", () => {
       headers: { host: config.ADMIN_HOST, cookie: `__Host-kcml_session=${sessionValue}` }
     });
     expect(response.statusCode).toBe(200);
-    expect(response.headers["content-type"]).toContain("application/vnd.openxmlformats-officedocument.wordprocessingml.document");
-    expect(response.headers["content-disposition"]).toContain(`KajovoCML_Onboarding_Catalog_${KCML_RELEASE.catalogVersion}.docx`);
-    expect(response.rawPayload.subarray(0, 2).toString()).toBe("PK");
+    expect(response.headers["content-type"]).toContain("application/json");
+    expect(response.headers["content-disposition"]).toContain(`component-${KCML_RELEASE.catalogVersion}.json`);
+    expect(response.json()).toMatchObject({ version: KCML_RELEASE.catalogVersion, serviceKind: "COMPONENT" });
   });
 
   it.each([
@@ -118,13 +118,8 @@ describe("quarantine release MFA", () => {
 describe("machine-readable onboarding catalogs", () => {
   let app: FastifyInstance;
   let config: AppConfig;
-  let allowedBlueprintComponents: Array<{ componentId: string; registrationType: string; releaseVersion: string; releaseWaveKey: string }>;
 
   beforeEach(async () => {
-    allowedBlueprintComponents = [
-      { componentId: "AI-CLS-001", registrationType: "KCML_ACCESS_CLIENT", releaseVersion: KCML_RELEASE.catalogVersion, releaseWaveKey: "baseline-2026-07-24" },
-      { componentId: "MCP-RX-WA-001", registrationType: "MCP_SERVER", releaseVersion: KCML_RELEASE.catalogVersion, releaseWaveKey: "baseline-2026-07-24" }
-    ];
     config = loadConfig({
       NODE_ENV: "test",
       DATABASE_URL: "postgres://unused/test",
@@ -146,13 +141,11 @@ describe("machine-readable onboarding catalogs", () => {
               fingerprint: "integration-token-fingerprint",
               expires_at: new Date(Date.now() + 60_000).toISOString(),
               max_expires_at: new Date(Date.now() + 120_000).toISOString(),
-              service_kind: "MCP",
-              allowed_pipeline: "MCP_ONBOARDING",
-              token_kind: "BLUEPRINT_RELEASE",
+              service_kind: "COMPONENT",
+              allowed_pipeline: "COMPONENT_ONBOARDING",
+              token_kind: "SINGLE_COMPONENT",
               release_version: KCML_RELEASE.catalogVersion,
-              release_wave_key: "baseline-2026-07-24",
-              max_child_jobs: 20,
-              allowed_blueprint_components: allowedBlueprintComponents
+              max_child_jobs: 1
             }]
           };
         }
@@ -184,7 +177,7 @@ describe("machine-readable onboarding catalogs", () => {
     });
   });
 
-  it("returns the native component intake and exact blueprint scope for a release token", async () => {
+  it("returns the native generic component intake for an integration token", async () => {
     const response = await app.inject({
       method: "GET",
       url: "/v1/integration-intent",
@@ -195,23 +188,16 @@ describe("machine-readable onboarding catalogs", () => {
     });
     expect(response.statusCode).toBe(200);
     expect(response.json()).toMatchObject({
-      token: {
-        allowedPipeline: "MCP_ONBOARDING"
-      },
-      blueprintRelease: {
-        allowedBlueprintComponentIds: ["AI-CLS-001", "MCP-RX-WA-001"],
-        allowedRegistrationTypes: ["KCML_ACCESS_CLIENT", "MCP_SERVER"]
-      },
+      token: { maxRegistrations: 1 },
+      registration: { componentKind: "GENERIC", identityAssignedBy: "KCML" },
       intakeUrl: `https://${config.REGISTER_HOST}/v2/component-onboardings`,
       intakeUrls: {
-        recommendedIntakeUrl: `https://${config.REGISTER_HOST}/v2/component-onboardings`,
-        legacyServiceIntakeUrl: `https://${config.REGISTER_HOST}/v1/service-onboardings`
+        recommendedIntakeUrl: `https://${config.REGISTER_HOST}/v2/component-onboardings`
       }
     });
   });
 
-  it("preserves the registration-type fallback for a single-component token", async () => {
-    allowedBlueprintComponents = [];
+  it("does not expose a fixed component allowlist", async () => {
     const response = await app.inject({
       method: "GET",
       url: "/v1/integration-intent",
@@ -221,16 +207,12 @@ describe("machine-readable onboarding catalogs", () => {
       }
     });
     expect(response.statusCode).toBe(200);
-    expect(response.json()).toMatchObject({
-      token: { allowedPipeline: "MCP_ONBOARDING" },
-      blueprintRelease: {
-        allowedRegistrationTypes: ["KCML_ACCESS_CLIENT", "MCP_SERVER", "MANAGED_PLATFORM_SERVICE"]
-      }
-    });
+    expect(response.json()).toMatchObject({ token: { maxRegistrations: 1 } });
+    expect(JSON.stringify(response.json())).not.toMatch(/allowedBlueprint|blueprintRelease/);
   });
 
   it.each(["/v1/onboardings", "/v1/service-onboardings"])(
-    "keeps legacy intake %s on the normal authenticated upload validation path",
+    "returns Gone for retired legacy intake %s",
     async (url) => {
       const response = await app.inject({
         method: "POST",
@@ -241,8 +223,8 @@ describe("machine-readable onboarding catalogs", () => {
           "idempotency-key": "release-token-must-use-native-intake"
         }
       });
-      expect(response.statusCode).toBe(415);
-      expect(response.json()).toMatchObject({ error: "multipart_required" });
+      expect(response.statusCode).toBe(410);
+      expect(response.json()).toMatchObject({ error: "legacy_onboarding_retired_use_component_intake" });
     }
   );
 });

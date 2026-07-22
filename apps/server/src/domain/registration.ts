@@ -4,7 +4,7 @@ import { z } from "zod";
 import type { Db } from "../db.js";
 import componentManifestSchema from "../contracts/component-manifest-2026.07.24.schema.json" with { type: "json" };
 import { kcmlCodeFromNumber, kcmlHostnameForCode } from "./hostnames.js";
-import { KCML_MCP_COMPONENTS, KCML_RELEASE } from "./release.js";
+import { KCML_RELEASE } from "./release.js";
 
 const sha256Schema = z.string().regex(/^sha256:[a-f0-9]{64}$/);
 const evidenceRefSchema = z.string().regex(/^evidence\/[a-z0-9][a-z0-9_./-]{1,240}$/i);
@@ -354,7 +354,7 @@ export type RuntimeRegistrationManifest = Omit<RegistrationManifest15, "schemaVe
   releaseVersion: typeof KCML_RELEASE.applicationVersion;
   componentType: "MCP_SERVER";
   registrationType: "MCP_SERVER";
-  blueprint: { componentId: string; version: typeof KCML_RELEASE.blueprintVersion };
+  blueprint: { componentId: string; version: "2026.07.24" };
   pulseEnvelopeVersion: typeof KCML_RELEASE.pulseEnvelopeVersion;
   publicEndpoints: unknown[];
   pulseContract: unknown;
@@ -370,7 +370,7 @@ export type OnboardingManifest = LegacyOnboardingManifest | RegistrationManifest
 export type RegistrationManifest = RuntimeRegistrationManifest;
 
 export function isStructuredOnboardingManifest(manifest: OnboardingManifest): manifest is Exclude<OnboardingManifest, LegacyOnboardingManifest> {
-  return ["1.5", "2026.07.20", KCML_RELEASE.manifestSchemaVersion].includes(manifest.schemaVersion);
+  return ["1.5", "2026.07.20"].includes(manifest.schemaVersion);
 }
 
 function parseStoredRuntimeRegistrationManifest20260720(input: unknown): StoredRuntimeRegistrationManifest20260720 | null {
@@ -382,7 +382,6 @@ function parseStoredRuntimeRegistrationManifest20260720(input: unknown): StoredR
     || value.componentType !== "MCP_SERVER" || value.registrationType !== "MCP_SERVER"
     || value.pulseEnvelopeVersion !== "2026.07.20" || value.normalizedFromComponentManifest !== true
     || !blueprint || blueprint.version !== "2026.07.20" || typeof blueprint.componentId !== "string"
-    || !KCML_MCP_COMPONENTS.some(([componentId]) => componentId === blueprint.componentId)
     || !protocol || protocol.protocolVersion !== KCML_RELEASE.mcpProtocolVersion
     || !Array.isArray(value.publicEndpoints) || value.publicEndpoints.length === 0
     || !value.tool || typeof value.tool !== "object" || !value.behavior || typeof value.behavior !== "object"
@@ -439,13 +438,12 @@ function assertNoPlatformGeneratedFields(input: Record<string, unknown>): void {
 function normalizeComponentMcpManifest(input: unknown): RuntimeRegistrationManifest {
   if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("invalid_manifest");
   const raw = input as Record<string, unknown>;
-  if (raw.schemaVersion !== KCML_RELEASE.manifestSchemaVersion) throw new Error("old_manifest_schema_not_accepted");
+  if (raw.schemaVersion !== "2026.07.24") throw new Error("legacy_manifest_schema_retired");
   assertNoPlatformGeneratedFields(raw);
   if (!componentManifestValidator(raw)) throw new Error("invalid_manifest");
   if (raw.componentType !== "MCP_SERVER" || raw.registrationType !== "MCP_SERVER") throw new Error("component_type_not_supported");
 
-  const blueprint = raw.blueprint as { componentId: string; version: typeof KCML_RELEASE.blueprintVersion };
-  if (!KCML_MCP_COMPONENTS.some(([componentId]) => componentId === blueprint.componentId)) throw new Error("blueprint_component_not_allowed");
+  const blueprint = raw.blueprint as { componentId: string; version: "2026.07.24" };
   const facadeTools = raw.facadeTools as Array<{ name: string; inputSchema: Record<string, unknown>; outputSchema: Record<string, unknown> }>;
   if (facadeTools.length !== 1) throw new Error("facade_tool_count_mismatch");
   const endpoint = (raw.publicEndpoints as Array<Record<string, unknown>>)[0];
@@ -574,7 +572,7 @@ function validateParsedManifest(manifest: OnboardingManifest): void {
   validateJsonSchemas(manifest.tool.inputSchema, manifest.tool.outputSchema);
   assertAnnotationPolicy(manifest.tool.annotations, manifest.behavior.effectClass);
   if (manifest.schemaVersion === "1.5") assertManifest15Invariants(manifest);
-  if (manifest.schemaVersion === "2026.07.20" || manifest.schemaVersion === KCML_RELEASE.manifestSchemaVersion) {
+  if (manifest.schemaVersion === "2026.07.20") {
     if (!manifest.publicEndpoints.length) throw new Error("public_endpoint_required_for_mcp");
     if (manifest.protocol.protocolVersion !== KCML_RELEASE.mcpProtocolVersion) throw new Error("mcp_protocol_mismatch");
   }
@@ -589,18 +587,13 @@ function resultFor<T extends OnboardingManifest>(manifest: T): { manifest: T; di
 }
 
 export function validateOnboardingManifest(input: unknown): { manifest: RuntimeRegistrationManifest; digest: string } {
-  if (exactComponentType(input) === "MCP_SERVER") {
-    const manifest = normalizeComponentMcpManifest(input);
-    validateParsedManifest(manifest);
-    return {
-      manifest,
-      digest: `sha256:${createHash("sha256").update(canonicalJson(input)).digest("hex")}`
-    };
+  void exactComponentType;
+  void normalizeComponentMcpManifest;
+  if (input && typeof input === "object" && !Array.isArray(input)
+    && (input as Record<string, unknown>).schemaVersion === KCML_RELEASE.manifestSchemaVersion) {
+    throw Object.assign(new Error("legacy_registration_intake_retired"), { statusCode: 410 });
   }
-  if (input && typeof input === "object" && !Array.isArray(input) && (input as Record<string, unknown>).schemaVersion !== KCML_RELEASE.manifestSchemaVersion) {
-    throw new Error("old_manifest_schema_not_accepted");
-  }
-  throw new Error("invalid_manifest");
+  throw new Error("old_manifest_schema_not_accepted");
 }
 
 export function validateStoredOnboardingManifest(input: unknown): { manifest: OnboardingManifest; digest: string } {

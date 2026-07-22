@@ -1,0 +1,34 @@
+[Unit]
+Description=KCML durable component E2E executor
+After=network-online.target postgresql.service kcml-egress-proxy.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=kcml
+Group=kcml
+WorkingDirectory=/opt/kcml/current
+EnvironmentFile=/etc/kcml/worker.env
+Environment=KCML_PROCESS_ROLE=worker
+Environment=DATABASE_URL_FILE=%d/database_url
+Environment=CONFIG_VAULT_MASTER_KEY_BASE64_FILE=%d/config_vault_master_key
+Environment=EGRESS_CAPABILITY_HMAC_KEY_BASE64_FILE=%d/egress_capability_hmac
+LoadCredential=database_url:/etc/kcml/credentials/worker/database_url
+LoadCredential=config_vault_master_key:/etc/kcml/credentials/config_vault_master_key
+LoadCredential=egress_capability_hmac:/etc/kcml/credentials/worker/egress_capability_hmac
+ExecStart=/usr/bin/node apps/server/dist/cli/component-e2e-worker.js
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target

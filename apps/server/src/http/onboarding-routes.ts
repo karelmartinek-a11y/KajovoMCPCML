@@ -30,7 +30,7 @@ import {
   MCP_CONNECT_FILE,
   verifyMcpOnboardingCatalog
 } from "../domain/onboarding-catalog.js";
-import { KCML_BLUEPRINT_RELEASE_MAX_CHILD_JOBS, KCML_GENERATED_BLUEPRINT_COMPONENT_IDS, KCML_MANAGED_SERVICE_IDS, KCML_RELEASE, KCML_RELEASE_WAVE_KEY } from "../domain/release.js";
+import { KCML_RELEASE } from "../domain/release.js";
 import { evidenceReferencesForManifest, validateOnboardingManifest } from "../domain/registration.js";
 import { MAX_ARCHIVE_BYTES, validateAndQuarantineArchive } from "../domain/upload-validation.js";
 import { decryptMfaSecret } from "../security/secrets.js";
@@ -46,14 +46,8 @@ const onboardingDescriptorSchema = z.object({
   technicalOwner: z.string().trim().min(2).max(160),
   criticality: z.enum(["LOW", "MEDIUM", "HIGH", "CRITICAL"])
 }).strict();
-const KCML_ALL_BLUEPRINT_COMPONENT_IDS = [...KCML_GENERATED_BLUEPRINT_COMPONENT_IDS, ...KCML_MANAGED_SERVICE_IDS] as unknown as [string, ...string[]];
 const integrationTokenRequestSchema = z.object({
   label: z.string().trim().min(1).max(120),
-  serviceKind: z.enum(["MCP", "EXTERNAL_API"]).default("MCP"),
-  tokenKind: z.enum(["SINGLE_COMPONENT", "BLUEPRINT_RELEASE"]).default("SINGLE_COMPONENT"),
-  releaseWave: z.literal(KCML_RELEASE_WAVE_KEY).default(KCML_RELEASE_WAVE_KEY),
-  allowedBlueprintComponentIds: z.array(z.enum(KCML_ALL_BLUEPRINT_COMPONENT_IDS)).optional(),
-  maxChildJobs: z.number().int().min(1).max(KCML_BLUEPRINT_RELEASE_MAX_CHILD_JOBS).optional(),
   descriptor: onboardingDescriptorSchema
 }).strict();
 
@@ -166,20 +160,12 @@ function adminHost(config: Pick<HostRoutingConfig, "ADMIN_HOST">, request: Fasti
   return false;
 }
 
-function onboardingHandoffUrls(registerHost: string, serviceKind: "MCP" | "EXTERNAL_API") {
-  const legacyServiceIntakeUrl = `https://${registerHost}/v1/service-onboardings`;
+function onboardingHandoffUrls(registerHost: string) {
   const nativeComponentIntakeUrl = `https://${registerHost}/v2/component-onboardings`;
-  const externalApiIntakeUrl = `https://${registerHost}/v1/service-onboardings`;
-  const recommendedIntakeUrl = serviceKind === "EXTERNAL_API"
-    ? externalApiIntakeUrl
-    : nativeComponentIntakeUrl;
   return {
-    recommendedIntakeUrl,
+    recommendedIntakeUrl: nativeComponentIntakeUrl,
     nativeComponentIntakeUrl,
-    legacyServiceIntakeUrl,
-    externalApiIntakeUrl,
     componentCatalogUrl: `https://${registerHost}/api/onboarding-catalogs/component/${MCP_CATALOG_VERSION}`,
-    externalApiCatalogUrl: `https://${registerHost}/api/onboarding-catalogs/external-api/1.0`
   };
 }
 
@@ -198,6 +184,13 @@ async function adminIdentity(db: Db, config: OnboardingRouteConfig, request: Fas
 }
 
 export function registerOnboardingRoutes(app: FastifyInstance, db: Db, config: OnboardingRouteConfig): void {
+  app.addHook("onRequest", async (request, reply) => {
+    const path = request.url.split("?", 1)[0] ?? "";
+    if (/^\/v1\/(?:service-)?onboardings(?:\/|$)/.test(path)) {
+      if (hostOf(request.headers.host) !== config.REGISTER_HOST) return sendError(reply, 404, "not_found");
+      return sendError(reply, 410, "legacy_onboarding_retired_use_component_intake");
+    }
+  });
   const createExternalApiOnboarding = async (request: FastifyRequest, reply: FastifyReply) => {
     const correlationId = randomUUID();
     if (hostOf(request.headers.host) !== config.REGISTER_HOST) return sendError(reply, 404, "not_found", undefined, correlationId);
@@ -266,7 +259,7 @@ export function registerOnboardingRoutes(app: FastifyInstance, db: Db, config: O
       return sendError(reply, 400, "invalid_integration_descriptor", error instanceof Error ? error.message : undefined, correlationId);
     }
     try {
-      await fs.access(path.resolve(process.cwd(), MCP_CONNECT_FILE));
+      await fs.access(path.resolve(repositoryRoot, MCP_CATALOG_PATH));
     } catch {
       return sendError(reply, 503, "onboarding_catalog_unavailable", `Onboarding katalog v${MCP_CATALOG_VERSION} není na serveru dostupný.`, correlationId);
     }
@@ -274,16 +267,14 @@ export function registerOnboardingRoutes(app: FastifyInstance, db: Db, config: O
       reply.header("cache-control", "no-store");
       return {
         ...await createIntegrationToken(db, config, accountId, correlationId, parsed.label, parsed.descriptor, undefined, {
-          serviceKind: parsed.serviceKind,
-          allowedPipeline: parsed.serviceKind === "EXTERNAL_API" ? "EXTERNAL_API_REGISTRATION" : "MCP_ONBOARDING",
-          releaseVersion: KCML_RELEASE.catalogVersion,
-          releaseWaveKey: parsed.releaseWave,
-          allowedBlueprintComponentIds: parsed.allowedBlueprintComponentIds
+          serviceKind: "COMPONENT",
+          allowedPipeline: "COMPONENT_ONBOARDING",
+          releaseVersion: KCML_RELEASE.catalogVersion
         }),
         onboardingCatalogUrl: "/api/onboarding-catalog",
         onboardingCatalogFileName: MCP_CONNECT_FILE,
-        programmerApiUrl: onboardingHandoffUrls(config.REGISTER_HOST, parsed.serviceKind).recommendedIntakeUrl,
-        intakeUrls: onboardingHandoffUrls(config.REGISTER_HOST, parsed.serviceKind)
+        programmerApiUrl: onboardingHandoffUrls(config.REGISTER_HOST).recommendedIntakeUrl,
+        intakeUrls: onboardingHandoffUrls(config.REGISTER_HOST)
       };
     } catch (error) {
       return sendError(reply, statusCode(error), errorCode(error), undefined, correlationId);
@@ -304,22 +295,18 @@ export function registerOnboardingRoutes(app: FastifyInstance, db: Db, config: O
     }
     try {
       const intent = await createIntegrationToken(db, config, accountId, correlationId, parsed.label, parsed.descriptor, undefined, {
-        serviceKind: parsed.serviceKind,
-        allowedPipeline: parsed.serviceKind === "EXTERNAL_API" ? "EXTERNAL_API_REGISTRATION" : "MCP_ONBOARDING",
-        releaseVersion: KCML_RELEASE.catalogVersion,
-        releaseWaveKey: parsed.releaseWave,
-        allowedBlueprintComponentIds: parsed.allowedBlueprintComponentIds
+        serviceKind: "COMPONENT",
+        allowedPipeline: "COMPONENT_ONBOARDING",
+          releaseVersion: KCML_RELEASE.catalogVersion
       });
       return {
         integrationIntentId: intent.id,
         integrationToken: intent.token,
-        serviceKind: parsed.serviceKind,
-        releaseWave: intent.releaseWaveKey,
-        allowedBlueprintComponents: intent.allowedBlueprintComponents,
+        serviceKind: "COMPONENT",
         expiresAt: intent.expiresAt,
-        intakeUrl: onboardingHandoffUrls(config.REGISTER_HOST, parsed.serviceKind).recommendedIntakeUrl,
-        intakeUrls: onboardingHandoffUrls(config.REGISTER_HOST, parsed.serviceKind),
-        catalogUrl: `https://${config.REGISTER_HOST}/api/onboarding-catalogs/${parsed.serviceKind === "EXTERNAL_API" ? "external-api/1.0" : `component/${MCP_CATALOG_VERSION}`}`
+        intakeUrl: onboardingHandoffUrls(config.REGISTER_HOST).recommendedIntakeUrl,
+        intakeUrls: onboardingHandoffUrls(config.REGISTER_HOST),
+        catalogUrl: `https://${config.REGISTER_HOST}/api/onboarding-catalogs/component/${MCP_CATALOG_VERSION}`
       };
     } catch (error) {
       return sendError(reply, statusCode(error), errorCode(error), undefined, correlationId);
@@ -361,11 +348,11 @@ export function registerOnboardingRoutes(app: FastifyInstance, db: Db, config: O
   }, async (request, reply) => {
     if (!await adminIdentity(db, config, request, reply)) return;
     try {
-      const catalog = await fs.readFile(path.resolve(repositoryRoot, "docs/releases", MCP_CATALOG_VERSION, MCP_CONNECT_FILE));
+      const catalog = await fs.readFile(path.resolve(repositoryRoot, MCP_CATALOG_PATH));
       return reply
         .header("cache-control", "private, no-store")
         .header("content-disposition", `attachment; filename="${MCP_CONNECT_FILE}"`)
-        .type("application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+        .type("application/json")
         .send(catalog);
     } catch {
       return sendError(reply, 503, "onboarding_catalog_unavailable");
@@ -492,30 +479,14 @@ export function registerOnboardingRoutes(app: FastifyInstance, db: Db, config: O
       token: {
         id: principal.id,
         fingerprint: principal.fingerprint,
-        serviceKind: principal.serviceKind,
-        allowedPipeline: principal.allowedPipeline,
         releaseVersion: principal.releaseVersion,
-        releaseWaveKey: principal.releaseWaveKey,
-        maxChildJobs: principal.maxChildJobs,
+        maxRegistrations: 1,
         expiresAt: principal.expiresAt,
         maxExpiresAt: principal.maxExpiresAt
       },
-      blueprintRelease: {
-        releaseVersion: KCML_RELEASE.applicationVersion,
-        releaseWave: principal.releaseWaveKey ?? KCML_RELEASE_WAVE_KEY,
-        allowedBlueprintComponentIds: principal.allowedBlueprintComponents.length
-          ? principal.allowedBlueprintComponents.map((component) => component.componentId)
-          : KCML_ALL_BLUEPRINT_COMPONENT_IDS,
-        allowedBlueprintComponents: principal.allowedBlueprintComponents,
-        allowedRegistrationTypes: principal.allowedBlueprintComponents.length
-          ? [...new Set(principal.allowedBlueprintComponents.map((component) => component.registrationType))]
-          : ["KCML_ACCESS_CLIENT", "MCP_SERVER", "MANAGED_PLATFORM_SERVICE"],
-        maxChildJobs: principal.maxChildJobs,
-        autoActivateAfterPass: false,
-        manualApprovalRequiredAfterIssuance: false
-      },
-      intakeUrl: onboardingHandoffUrls(config.REGISTER_HOST, principal.serviceKind).recommendedIntakeUrl,
-      intakeUrls: onboardingHandoffUrls(config.REGISTER_HOST, principal.serviceKind),
+      registration: { componentKind: "GENERIC", identityAssignedBy: "KCML" },
+      intakeUrl: onboardingHandoffUrls(config.REGISTER_HOST).recommendedIntakeUrl,
+      intakeUrls: onboardingHandoffUrls(config.REGISTER_HOST),
       catalogUrl: `https://${config.REGISTER_HOST}/api/onboarding-catalogs/component/${MCP_CATALOG_VERSION}`,
       correlationId
     });

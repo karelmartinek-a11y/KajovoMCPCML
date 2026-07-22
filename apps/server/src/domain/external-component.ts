@@ -62,7 +62,7 @@ async function pinnedHttpsPost(url: URL, body: string, headers: Record<string, s
 }
 
 function principalView(row: Record<string, unknown>): JsonRecord {
-  return { id: String(row.id), publicId: String(row.public_id), displayName: String(row.display_name), description: String(row.description), status: String(row.status), createdAt: String(row.created_at), revokedAt: row.revoked_at instanceof Date ? row.revoked_at.toISOString() : null, credentialCount: Number(row.credential_count ?? 0) };
+  return { id: String(row.id), publicId: String(row.public_id), displayName: String(row.display_name), description: String(row.description), status: String(row.status), createdAt: String(row.created_at), revokedAt: row.revoked_at instanceof Date ? row.revoked_at.toISOString() : null, accessTokenCount: Number(row.access_token_count ?? 0) };
 }
 function targetView(row: Record<string, unknown>): JsonRecord {
   return { id: String(row.id), targetKey: String(row.target_key), displayName: String(row.display_name), baseUrl: String(row.base_url), auditRequired: Boolean(row.audit_required), allowedPathPrefixes: row.allowed_path_prefixes ?? ["/"], connectTimeoutMs: Number(row.connect_timeout_ms), requestTimeoutMs: Number(row.request_timeout_ms), maxRetries: Number(row.max_retries), circuitState: String(row.circuit_state), circuitFailureCount: Number(row.circuit_failure_count), circuitFailureThreshold: Number(row.circuit_failure_threshold), circuitOpenSeconds: Number(row.circuit_open_seconds), status: String(row.status), createdAt: String(row.created_at), revokedAt: row.revoked_at instanceof Date ? row.revoked_at.toISOString() : null };
@@ -74,7 +74,7 @@ function circuitCooldownActive(row: Record<string, unknown>): boolean {
 }
 
 export async function listExternalPrincipals(db: Db): Promise<JsonRecord[]> {
-  const result = await db.query(`select p.*, (select count(*)::int from component_external_principal_credential c where c.external_principal_id=p.id and c.status='ACTIVE' and c.revoked_at is null) credential_count from component_external_principal p order by p.created_at desc`);
+  const result = await db.query(`select external.*, (select count(*)::int from principal_access_token token where token.source_principal_id=external.principal_id and token.revoked_at is null) access_token_count from component_external_principal external order by external.created_at desc`);
   return result.rows.map(principalView);
 }
 export async function listExternalTargets(db: Db): Promise<JsonRecord[]> {
@@ -85,10 +85,22 @@ export async function listExternalPermissions(db: Db): Promise<JsonRecord[]> {
   const result = await db.query(`select permission.*, target.target_key, target.display_name as target_display_name, component.code as component_code, principal.public_id as external_principal_public_id from component_external_permission permission join component_external_target target on target.id=permission.external_target_id left join component on component.id=permission.component_id left join component_external_principal principal on principal.id=permission.external_principal_id order by permission.granted_at desc`);
   return result.rows.map((row: Record<string, unknown>) => ({ ...row }));
 }
+export async function listExternalInboundPermissions(db: Db): Promise<JsonRecord[]> {
+  const result = await db.query(`
+    select permission.id,external.id as external_principal_id,external.public_id as external_principal_public_id,
+           component.id as target_component_id,component.code as target_component_code,
+           permission.route_pattern,permission.scope_name,permission.granted_at,permission.revoked_at
+      from principal_component_permission permission
+      join component_external_principal external on external.principal_id=permission.source_principal_id
+      join component on component.id=permission.target_component_id
+     order by permission.granted_at desc`);
+  return result.rows.map((row: Record<string, unknown>) => ({ ...row }));
+}
 
 export async function createExternalPrincipal(db: Db, params: { publicId: string; displayName: string; description?: string; actorId: string; correlationId: string }): Promise<JsonRecord> {
   return tx(db, async (client) => {
-    const created = await client.query(`insert into component_external_principal(public_id,display_name,description) values ($1,$2,$3) returning *`, [params.publicId, params.displayName, params.description ?? ""]);
+    const canonical = await client.query("insert into principal(kind,public_id,status,metadata) values ('EXTERNAL',$1,'ACTIVE',$2::jsonb) returning id", [params.publicId, JSON.stringify({ displayName: params.displayName })]);
+    const created = await client.query(`insert into component_external_principal(principal_id,public_id,display_name,description) values ($1,$2,$3,$4) returning *`, [canonical.rows[0].id, params.publicId, params.displayName, params.description ?? ""]);
     await appendAudit(client, { eventType: "external_principal.created", actorType: "admin", actorId: params.actorId, objectType: "component_external_principal", objectId: String(created.rows[0].id), after: { publicId: params.publicId }, correlationId: params.correlationId });
     return principalView(created.rows[0]);
   });
@@ -107,22 +119,44 @@ export async function setExternalEntityStatus(db: Db, params: { kind: "principal
   return tx(db, async (client) => {
     const result = await client.query(`update ${table} set status=$2, revoked_at=case when $2='REVOKED' then now() else null end where id=$1 returning *`, [params.id, params.status]);
     if (!result.rowCount) fail("not_found", 404);
-    if (params.kind === "principal" && params.status !== "ACTIVE") await client.query("update component_external_principal_credential set status='REVOKED',revoked_at=now(),revocation_epoch=gen_random_uuid() where external_principal_id=$1 and revoked_at is null", [params.id]);
+    if (params.kind === "principal") {
+      await client.query(`update principal set status=$2,policy_epoch=policy_epoch+1,revocation_epoch=case when $2='ACTIVE' then revocation_epoch else revocation_epoch+1 end,updated_at=now()
+        where id=(select principal_id from component_external_principal where id=$1)`, [params.id, params.status === "ACTIVE" ? "ACTIVE" : params.status === "REVOKED" ? "REVOKED" : "SUSPENDED"]);
+      if (params.status !== "ACTIVE") await client.query("update principal_access_token set revoked_at=coalesce(revoked_at,now()) where source_principal_id=(select principal_id from component_external_principal where id=$1)", [params.id]);
+    }
     await appendAudit(client, { eventType: `external_${params.kind}.status_changed`, actorType: "admin", actorId: params.actorId, objectType: table, objectId: params.id, after: { status: params.status }, correlationId: params.correlationId });
     return params.kind === "principal" ? principalView(result.rows[0]) : targetView(result.rows[0]);
   });
 }
-export async function rotateExternalPrincipalCredential(db: Db, params: { principalId: string; actorId: string; hmacKey: Buffer; keyId: string; correlationId: string }): Promise<{ principal: JsonRecord; credential: JsonRecord }> {
+export async function rotateExternalPrincipalAccessToken(db: Db, params: { principalId: string; actorId: string; hmacKey: Buffer; hmacKeyId: string; correlationId: string }): Promise<{ principal: JsonRecord; accessToken: JsonRecord }> {
   return tx(db, async (client) => {
     const principal = await client.query("select * from component_external_principal where id=$1 for update", [params.principalId]);
     if (!principal.rowCount) fail("not_found", 404);
     if (principal.rows[0].status !== "ACTIVE") fail("external_principal_inactive", 409);
-    await client.query("update component_external_principal_credential set status='REVOKED',revoked_at=now(),revocation_epoch=gen_random_uuid() where external_principal_id=$1 and status='ACTIVE'", [params.principalId]);
+    await client.query("update principal_access_token set revoked_at=coalesce(revoked_at,now()),rotated_at=now(),rotation_reason='ADMIN_ROTATE' where source_principal_id=$1 and revoked_at is null", [principal.rows[0].principal_id]);
     const secret = issueOpaqueSecret();
-    const publicId = `${String(principal.rows[0].public_id)}-C${String(Date.now()).slice(-6)}`;
-    const credential = await client.query(`insert into component_external_principal_credential(external_principal_id,public_id,key_id,secret_digest,secret_fingerprint) values ($1,$2,$3,$4,$5) returning id,public_id,secret_fingerprint,issued_at`, [params.principalId, publicId, params.keyId, hmacToken(secret.value, params.hmacKey), secret.fingerprint]);
-    await appendAudit(client, { eventType: "external_principal.credential_rotated", actorType: "admin", actorId: params.actorId, objectType: "component_external_principal", objectId: params.principalId, after: { clientId: publicId, fingerprint: secret.fingerprint }, correlationId: params.correlationId });
-    return { principal: principalView(principal.rows[0]), credential: { clientId: publicId, clientSecret: secret.value, fingerprint: secret.fingerprint, issuedAt: String(credential.rows[0].issued_at) } };
+    const scopes = await client.query("select distinct scope_name from principal_component_permission where source_principal_id=$1 and revoked_at is null order by scope_name", [principal.rows[0].principal_id]);
+    const canonical = await client.query("select policy_epoch,revocation_epoch from principal where id=$1 for update", [principal.rows[0].principal_id]);
+    await client.query(`insert into principal_access_token(lookup_digest,key_id,fingerprint,source_principal_id,target_component_id,audience,scope_names,issued_policy_epoch,issued_revocation_epoch,expires_at)
+      values ($1,$2,$3,$4,null,'*',$5::text[],$6,$7,'infinity')`, [hmacToken(secret.value, params.hmacKey), params.hmacKeyId, secret.fingerprint, principal.rows[0].principal_id,
+      scopes.rows.map((row) => String(row.scope_name)), canonical.rows[0].policy_epoch, canonical.rows[0].revocation_epoch]);
+    await appendAudit(client, { eventType: "external_principal.access_token_rotated", actorType: "admin", actorId: params.actorId, objectType: "component_external_principal", objectId: params.principalId, after: { fingerprint: secret.fingerprint, expiresAt: "infinity" }, correlationId: params.correlationId });
+    return { principal: principalView(principal.rows[0]), accessToken: { token: secret.value, fingerprint: secret.fingerprint } };
+  });
+}
+
+export async function setExternalInboundPermission(db: Db, params: { externalPrincipalId: string; targetComponentId: string; routePattern: string; scopeName: string; enabled: boolean; actorId: string; correlationId: string }): Promise<void> {
+  return tx(db, async (client) => {
+    const principal = await client.query("select principal_id from component_external_principal where id=$1 for update", [params.externalPrincipalId]);
+    if (!principal.rowCount) fail("not_found", 404);
+    const existing = await client.query("select id from principal_component_permission where source_principal_id=$1 and target_component_id=$2 and route_pattern=$3 and scope_name=$4 for update",
+      [principal.rows[0].principal_id, params.targetComponentId, params.routePattern, params.scopeName]);
+    if (existing.rowCount) await client.query("update principal_component_permission set revoked_at=case when $2 then null else now() end where id=$1", [existing.rows[0].id, params.enabled]);
+    else if (params.enabled) await client.query("insert into principal_component_permission(source_principal_id,target_component_id,route_pattern,scope_name) values ($1,$2,$3,$4)",
+      [principal.rows[0].principal_id, params.targetComponentId, params.routePattern, params.scopeName]);
+    await client.query("update principal set policy_epoch=policy_epoch+1 where id=$1", [principal.rows[0].principal_id]);
+    await appendAudit(client, { eventType: "external_principal.component_permission_changed", actorType: "admin", actorId: params.actorId,
+      objectType: "component", objectId: params.targetComponentId, after: { externalPrincipalId: params.externalPrincipalId, routePattern: params.routePattern, scopeName: params.scopeName, enabled: params.enabled }, correlationId: params.correlationId });
   });
 }
 export async function setExternalPermission(db: Db, params: { componentId?: string; externalPrincipalId?: string; externalTargetId: string; routePattern: string; scopeName: string; enabled: boolean; actorId: string; correlationId: string }): Promise<void> {
@@ -136,7 +170,7 @@ export async function setExternalPermission(db: Db, params: { componentId?: stri
   });
 }
 
-export async function dispatchExternalComponentCall(db: Db, params: { sourceComponentId: string; targetKey: string; routePath: string; scopeName: string; payload: unknown; correlationId: string; hmacKey: Buffer; keyId: string }): Promise<JsonRecord> {
+export async function dispatchExternalComponentCall(db: Db, params: { sourceComponentId: string; targetKey: string; routePath: string; scopeName: string; payload: unknown; correlationId: string; accessToken: string; tokenFingerprint: string }): Promise<JsonRecord> {
   const targetResult = await db.query("select * from component_external_target where target_key=$1 and status='ACTIVE'", [params.targetKey]);
   if (!targetResult.rowCount) fail("external_target_not_available", 404);
   let target = targetResult.rows[0] as Record<string, unknown>;
@@ -163,13 +197,11 @@ export async function dispatchExternalComponentCall(db: Db, params: { sourceComp
     return row;
   });
   const requestDigest = `sha256:${createHash("sha256").update(JSON.stringify(params.payload)).digest("hex")}`;
-  const { value: accessToken, fingerprint } = issueOpaqueSecret();
   let call;
   try {
     call = await tx(db, async (client) => {
       const created = await client.query(`insert into component_external_gateway_call(source_component_id,external_target_id,external_permission_id,route_path,scope_name,correlation_id,request_digest,request_payload,status,attempt_count) values ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,'PENDING',1) returning id`, [params.sourceComponentId, target.id, permission.rows[0].id, params.routePath, params.scopeName, params.correlationId, requestDigest, JSON.stringify(params.payload)]);
-      await client.query(`insert into component_external_access_token(lookup_digest,key_id,fingerprint,source_component_id,external_target_id,audience,scope_names,expires_at) values ($1,$2,$3,$4,$5,$6,$7::text[],now()+interval '15 minutes')`, [hmacToken(accessToken, params.hmacKey), params.keyId, fingerprint, params.sourceComponentId, target.id, baseUrl.origin, [params.scopeName]]);
-      await appendAudit(client, { eventType: "component.external_gateway.token_issued", actorType: "component", actorId: params.sourceComponentId, objectType: "component_external_target", objectId: String(target.id), after: { callId: created.rows[0].id, audience: baseUrl.origin, scopeName: params.scopeName, fingerprint, expiresInSeconds: 900 }, correlationId: params.correlationId });
+      await appendAudit(client, { eventType: "component.external_gateway.authorized", actorType: "component", actorId: params.sourceComponentId, objectType: "component_external_target", objectId: String(target.id), after: { callId: created.rows[0].id, audience: baseUrl.origin, scopeName: params.scopeName, tokenFingerprint: params.tokenFingerprint }, correlationId: params.correlationId });
       return created;
     });
   } catch (error) {
@@ -182,7 +214,7 @@ export async function dispatchExternalComponentCall(db: Db, params: { sourceComp
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     attemptsUsed = attempt;
     try {
-      response = await pinnedHttpsPost(url, JSON.stringify(params.payload), { "authorization": `Bearer ${accessToken}`, "content-type": "application/json", "x-kcml-correlation-id": params.correlationId, "x-kcml-access-token-fingerprint": fingerprint }, Number(target.request_timeout_ms));
+      response = await pinnedHttpsPost(url, JSON.stringify(params.payload), { "authorization": `Bearer ${params.accessToken}`, "content-type": "application/json", "x-kcml-correlation-id": params.correlationId, "x-kcml-access-token-fingerprint": params.tokenFingerprint }, Number(target.request_timeout_ms));
       if (response.status < 500 || attempt === attempts) break;
     } catch {
       if (attempt === attempts) break;

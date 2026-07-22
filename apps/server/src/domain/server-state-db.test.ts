@@ -9,6 +9,16 @@ const enabled = process.env.KCML_TEST_DATABASE === "1";
 describe.skipIf(!enabled)("server state PostgreSQL transitions", () => {
   let db: Db;
 
+  async function createCanonicalComponent(kcmlNumber: number, code: string): Promise<string> {
+    const principal = await db.query("insert into principal(kind,public_id,status) values ('COMPONENT',$1,'ACTIVE') returning id", [`${code}-${randomUUID()}`]);
+    const component = await db.query(
+      `insert into component(principal_id,kcml_number,code,hostname,display_name,category,registration_type,component_role,lifecycle_state,activation_state,operational_state,monitoring_state,enabled,release_version)
+       values ($1,$2,$3,$4,'Legacy adapter test','EXTERNAL_SERVICE','GENERIC_COMPONENT','SERVICE','ACTIVE','ACTIVE','HEALTHY','HEALTHY',true,'2026.07.22-compliance.1') returning id`,
+      [principal.rows[0].id, kcmlNumber, code, `${code.toLowerCase()}.kajovocml.hcasc.cz`]
+    );
+    return String(component.rows[0].id);
+  }
+
   beforeAll(() => {
     db = createDb(loadConfig(process.env));
   });
@@ -25,14 +35,15 @@ describe.skipIf(!enabled)("server state PostgreSQL transitions", () => {
     const code = `KCML${String(kcmlNumber).padStart(4, "0")}`;
     const hostname = `kcml${String(kcmlNumber).padStart(4, "0")}.example.invalid`;
     const audience = `https://${hostname}/mcp`;
+    const componentId = await createCanonicalComponent(kcmlNumber, code);
     const server = await db.query(
       `insert into mcp_server(
-         kcml_number,code,hostname,tool_name,display_name,description,enabled,
+         component_id,kcml_number,code,hostname,tool_name,display_name,description,enabled,
          registration_state,operational_state,input_schema,output_schema,handler_key,
          handler_version,contract_version,artifact_digest,manifest_digest
-       ) values ($3,$4,$5,'test_tool','Test','Test',true,
+       ) values ($6,$3,$4,$5,'test_tool','Test','Test',true,
          'ACTIVE','HEALTHY','{}','{}','test','1.0.0','1.0.0',$1,$2) returning id`,
-      [`sha256:${"a".repeat(64)}`, `sha256:${"b".repeat(64)}`, kcmlNumber, code, hostname]
+      [`sha256:${"a".repeat(64)}`, `sha256:${"b".repeat(64)}`, kcmlNumber, code, hostname, componentId]
     );
     const serverId = String(server.rows[0].id);
     const revision = await db.query(
@@ -58,9 +69,9 @@ describe.skipIf(!enabled)("server state PostgreSQL transitions", () => {
       [credential.rows[0].id, credential.rows[0].revocation_epoch, serverId, audience]
     );
     const managed = await db.query(
-      `insert into managed_service(legacy_mcp_server_id,code,slug,display_name,description,service_kind,lifecycle_state,operational_state,enabled,public_hostname,base_url,resource_uri,api_state)
-       values ($1,$2,$3,'Test','Test','MCP','ACTIVE','HEALTHY',true,$4,$5,$6,'ENABLED') returning id,revocation_epoch,service_token_epoch,permission_epoch,active_revision_epoch`,
-      [serverId, code, hostname.split(".")[0], hostname, `https://${hostname}`, audience]
+      `insert into managed_service(component_id,legacy_mcp_server_id,code,slug,display_name,description,service_kind,lifecycle_state,operational_state,enabled,public_hostname,base_url,resource_uri,api_state)
+       values ($7,$1,$2,$3,'Test','Test','MCP','ACTIVE','HEALTHY',true,$4,$5,$6,'ENABLED') returning id,revocation_epoch,service_token_epoch,permission_epoch,active_revision_epoch`,
+      [serverId, code, hostname.split(".")[0], hostname, `https://${hostname}`, audience, componentId]
     );
     await db.query(
       `insert into managed_service_access_token(lookup_digest,key_id,fingerprint,credential_id,managed_service_id,audience,expires_at,credential_revocation_epoch,service_revocation_epoch,principal_token_epoch,service_token_epoch,permission_epoch_snapshot,active_revision_epoch_snapshot)
@@ -93,14 +104,15 @@ describe.skipIf(!enabled)("server state PostgreSQL transitions", () => {
     const kcmlNumber = Number((await db.query("select nextval('kcml_number_seq') as value")).rows[0].value);
     const code = `KCML${String(kcmlNumber).padStart(4, "0")}`;
     const hostname = `kcml${String(kcmlNumber).padStart(4, "0")}.example.invalid`;
+    const componentId = await createCanonicalComponent(kcmlNumber, code);
     const server = await db.query(
       `insert into mcp_server(
-         kcml_number,code,hostname,tool_name,display_name,description,enabled,
+         component_id,kcml_number,code,hostname,tool_name,display_name,description,enabled,
          registration_state,operational_state,input_schema,output_schema,handler_key,
          handler_version,contract_version,artifact_digest,manifest_digest
-       ) values ($3,$4,$5,'concurrent_disable','Concurrent','Concurrent',true,
+       ) values ($6,$3,$4,$5,'concurrent_disable','Concurrent','Concurrent',true,
          'ACTIVE','HEALTHY','{}','{}','test','1.0.0','1.0.0',$1,$2) returning id`,
-      [`sha256:${"d".repeat(64)}`, `sha256:${"e".repeat(64)}`, kcmlNumber, code, hostname]
+      [`sha256:${"d".repeat(64)}`, `sha256:${"e".repeat(64)}`, kcmlNumber, code, hostname, componentId]
     );
     const serverId = String(server.rows[0].id);
 

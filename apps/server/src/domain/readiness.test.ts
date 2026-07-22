@@ -1,12 +1,9 @@
-import { readdirSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { readdirSync, readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import { loadConfig } from "../config.js";
 import type { Db } from "../db.js";
 import { buildReadinessReport } from "./readiness.js";
-
-vi.mock("./catalog.js", () => ({
-  listServers: vi.fn(async () => [])
-}));
 
 vi.mock("./audit.js", () => ({
   appendAudit: vi.fn(async () => undefined),
@@ -27,11 +24,22 @@ describe("readiness report", () => {
       .sort();
     const query = vi.fn(async (sql: string) => {
       if (sql === "select 1") return { rowCount: 1, rows: [{ "?column?": 1 }] };
-      if (sql === "select version from schema_migration order by sequence_number,version") {
-        return { rowCount: migrations.length, rows: migrations.map((version) => ({ version })) };
+      if (sql === "select version,sequence_number,checksum_sha256 from schema_migration order by sequence_number,version") {
+        return { rowCount: migrations.length, rows: migrations.map((version, index) => ({ version, sequence_number: index + 1,
+          checksum_sha256: createHash("sha256").update(readFileSync(new URL(`../migrations/${version}`, import.meta.url))).digest("hex") })) };
       }
       if (sql === "select last_completed_at,last_error from monitoring_scheduler_heartbeat where singleton=true") {
         return { rowCount: 0, rows: [] };
+      }
+      if (sql.includes("from component c") && sql.includes("gates_valid")) return { rowCount: 0, rows: [] };
+      if (sql === "select worker_kind,worker_id,build_id,last_heartbeat_at,last_error from platform_worker_heartbeat order by worker_kind") {
+        return { rowCount: 2, rows: [
+          { worker_kind: "COMPONENT_CONTROL", worker_id: "control-test", build_id: "test-build", last_heartbeat_at: new Date(), last_error: null },
+          { worker_kind: "COMPONENT_E2E", worker_id: "e2e-test", build_id: "test-build", last_heartbeat_at: new Date(), last_error: null }
+        ] };
+      }
+      if (sql.includes("expired_dispatches") && sql.includes("invalid_token_bindings")) {
+        return { rowCount: 1, rows: [{ expired_dispatches: 0, stale_heartbeats: 0, invalid_token_bindings: 0, platform_worker_access_configured: true }] };
       }
       if (sql === "begin" || sql === "rollback") return { rowCount: 0, rows: [] };
       throw new Error(`unexpected_query:${sql}`);
@@ -49,6 +57,7 @@ describe("readiness report", () => {
       SESSION_SECRET_BASE64: secret(4),
       CSRF_SECRET_BASE64: secret(5),
       MFA_ENCRYPTION_KEY_BASE64: secret(6),
+      BUILD_ID: "test-build",
       MONITOR_ENABLED: "false"
     });
 

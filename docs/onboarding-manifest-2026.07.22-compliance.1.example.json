@@ -1,0 +1,287 @@
+{
+  "schemaVersion": "2026.07.22-compliance.1",
+  "registrationRevision": "1.0.0",
+  "displayName": "Inventory lookup",
+  "businessPurpose": "Returns authoritative inventory availability.",
+  "kind": "inventory-api",
+  "owners": [
+    {
+      "name": "Inventory Platform",
+      "team": "Commerce"
+    }
+  ],
+  "contacts": [
+    {
+      "type": "EMAIL",
+      "value": "inventory@example.com"
+    }
+  ],
+  "criticality": {
+    "level": "HIGH",
+    "reviewIntervalDays": 90
+  },
+  "artifact": {
+    "type": "REMOTE_RUNTIME",
+    "digest": "sha256:02799f758a23ede1917e6c9192c8a2f713c584be6e237a26be3222863f8977cc",
+    "provenance": {
+      "issuer": "https://github.com"
+    }
+  },
+  "runtime": {
+    "transport": "HTTPS",
+    "runtimeDigest": "sha256:6e0631b89fe50fdbc5d3479192e1f58d7f79b7e9532f09c92764cee2d730092e",
+    "upstream": "https://inventory-runtime.example.com",
+    "tlsIdentity": "inventory-runtime.example.com",
+    "resources": {
+      "cpuMillis": 500,
+      "memoryMiB": 256,
+      "maxConcurrency": 20
+    }
+  },
+  "capabilities": [
+    "mcp.initialize",
+    "mcp.notifications.initialized",
+    "mcp.tools.list",
+    "mcp.tools.call",
+    "component.control.ack",
+    "component.state.query",
+    "component.heartbeat",
+    "component.audit.write"
+  ],
+  "tools": [
+    {
+      "name": "inventory.lookup",
+      "title": "Inventory lookup",
+      "description": "Looks up inventory by SKU.",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "sku"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "sku": {
+            "type": "string"
+          }
+        }
+      },
+      "outputSchema": {
+        "type": "object",
+        "required": [
+          "available"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "available": {
+            "type": "boolean"
+          }
+        }
+      },
+      "scope": "inventory.lookup",
+      "timeoutMs": 5000,
+      "limits": {
+        "requestMaxBytes": 65536,
+        "responseMaxBytes": 65536
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    }
+  ],
+  "endpoints": [],
+  "pulses": {
+    "incoming": [],
+    "outgoing": []
+  },
+  "states": {
+    "states": [
+      {
+        "key": "LIFECYCLE",
+        "category": "OPERATIONAL",
+        "schema": {
+          "type": "object",
+          "required": [
+            "enabled",
+            "activationState",
+            "operationalState"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "activationState": {
+              "type": "string"
+            },
+            "operationalState": {
+              "type": "string"
+            }
+          }
+        },
+        "terminal": false
+      }
+    ],
+    "transitions": []
+  },
+  "controlPlane": {
+    "enable": {
+      "path": "/v1/kcml/control/enable",
+      "requestSchema": {
+        "type": "object",
+        "required": [
+          "commandId"
+        ],
+        "properties": {
+          "commandId": {
+            "type": "string"
+          }
+        }
+      },
+      "responseSchema": {
+        "type": "object",
+        "required": [
+          "accepted"
+        ],
+        "properties": {
+          "accepted": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "disable": {
+      "path": "/v1/kcml/control/disable",
+      "requestSchema": {
+        "type": "object",
+        "required": [
+          "commandId"
+        ],
+        "properties": {
+          "commandId": {
+            "type": "string"
+          }
+        }
+      },
+      "responseSchema": {
+        "type": "object",
+        "required": [
+          "accepted"
+        ],
+        "properties": {
+          "accepted": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "state": {
+      "path": "/v1/kcml/control/state",
+      "requestSchema": {
+        "type": "object",
+        "required": [
+          "commandId"
+        ],
+        "properties": {
+          "commandId": {
+            "type": "string"
+          }
+        }
+      },
+      "responseSchema": {
+        "type": "object",
+        "required": [
+          "accepted"
+        ],
+        "properties": {
+          "accepted": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "heartbeat": {
+      "path": "/v1/kcml/control/heartbeat",
+      "requestSchema": {
+        "type": "object",
+        "required": [
+          "commandId"
+        ],
+        "properties": {
+          "commandId": {
+            "type": "string"
+          }
+        }
+      },
+      "responseSchema": {
+        "type": "object",
+        "required": [
+          "accepted"
+        ],
+        "properties": {
+          "accepted": {
+            "type": "boolean"
+          }
+        }
+      }
+    }
+  },
+  "e2eScenarios": [
+    {
+      "scenarioKey": "lookup",
+      "variantKey": "known-sku",
+      "invocation": {
+        "kind": "TOOL",
+        "name": "inventory.lookup"
+      },
+      "input": {
+        "mediaType": "application/json",
+        "json": {
+          "sku": "SKU-1"
+        }
+      },
+      "expected": {
+        "mediaType": "application/json",
+        "json": {
+          "available": true
+        }
+      },
+      "timeoutMs": 5000,
+      "deterministic": true,
+      "cleanup": {
+        "required": false
+      }
+    }
+  ],
+  "documentationEvidence": [
+    {
+      "key": "runbook",
+      "path": "docs/runbook.md",
+      "digest": "sha256:f3ccc2c0fc575cbb3c1f466411947dd0f2fe815ef9b0595c372a21cc166da608",
+      "content": {
+        "mediaType": "text/markdown",
+        "base64": "IyBSdW5ib29r"
+      }
+    }
+  ],
+  "secretPolicy": {
+    "authorizationAuthority": "KCML",
+    "allSecretsRequireGrant": true,
+    "auditLevel": "FULL"
+  },
+  "outboundPolicies": [],
+  "monitoring": {
+    "probes": [
+      {
+        "kind": "runtime",
+        "intervalSeconds": 60
+      }
+    ],
+    "staleAfterSeconds": 180,
+    "disableAfterSeconds": 600
+  },
+  "auditPolicy": {
+    "technicalAudit": "PLATFORM",
+    "payloadProtection": "ENCRYPTED",
+    "retentionDays": 365
+  }
+}

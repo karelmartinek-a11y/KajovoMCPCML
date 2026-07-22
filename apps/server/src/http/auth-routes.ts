@@ -3,7 +3,7 @@ import type { FastifyInstance } from "fastify";
 import type { OAuthConfig } from "../config.js";
 import type { Db } from "../db.js";
 import { issueAccessToken } from "../domain/auth.js";
-import { authorizeComponentCall, issueComponentAccessToken } from "../domain/component-auth.js";
+import { authorizeComponentCall } from "../domain/component-auth.js";
 import { authorizeManagedServiceToken } from "../domain/managed-service.js";
 import { hmacToken } from "../security/secrets.js";
 import { hostOf, sendError } from "./errors.js";
@@ -37,8 +37,10 @@ export function registerAuthRoutes(app: FastifyInstance, db: Db, config: OAuthCo
     if (body.grant_type !== "client_credentials") return sendError(reply, 400, "unsupported_grant_type", undefined, correlationId);
     if (!body.resource) return sendError(reply, 400, "invalid_resource", undefined, correlationId);
     try {
-      const issuer = /^KCML[0-9]{4,}-C[0-9]{2,}$/i.test(clientId) ? issueComponentAccessToken : issueAccessToken;
-      return await issuer(db, {
+      if (/^KCML[0-9]{4,}(?:-C[0-9]{2,})?$/i.test(clientId)) {
+        return sendError(reply, 410, "component_access_token_is_onboarding_handoff", undefined, correlationId);
+      }
+      return await issueAccessToken(db, {
         clientId,
         clientSecret,
         resource: body.resource,
@@ -63,7 +65,7 @@ export function registerAuthRoutes(app: FastifyInstance, db: Db, config: OAuthCo
     const body = request.body as { token?: string; resource?: string; operationId?: string; scope?: string; method?: string; path?: string };
     if (!body.token || !body.resource) return sendError(reply, 400, "invalid_request", undefined, correlationId);
     const digest = hmacToken(body.token, config.ACCESS_TOKEN_HMAC_KEY_BASE64);
-    const componentToken = await db.query("select 1 from component_access_token where lookup_digest=$1", [digest]);
+    const componentToken = await db.query("select 1 from principal_access_token where lookup_digest=$1", [digest]);
     if (componentToken.rowCount) {
       let resource: URL;
       try {

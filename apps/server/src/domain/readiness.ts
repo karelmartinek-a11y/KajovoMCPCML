@@ -1,71 +1,15 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { readdirSync, readFileSync } from "node:fs";
 import type { ReadinessConfig } from "../config.js";
 import type { Db } from "../db.js";
 import { appendAudit, verifyAuditChain } from "./audit.js";
-import { listServers } from "./catalog.js";
-import { evaluateRecertification } from "./recertification.js";
+import { ACTIVATION_GATES } from "./component.js";
 
-const EXPECTED_MIGRATIONS = [
-  "001_initial.sql",
-  "002_kaja_labels.sql",
-  "003_kaja_lifecycle_permissions.sql",
-  "004_permission_access_level.sql",
-  "005_automated_onboarding.sql",
-  "005_fix_mcp_hostname_constraint.sql",
-  "006_invocation_latency_metrics.sql",
-  "007_migration_ledger.sql",
-  "008_auth_hardening.sql",
-  "009_runtime_policies.sql",
-  "010_permissions.sql",
-  "011_admin_recovery.sql",
-  "012_operational_config.sql",
-  "013_integration_descriptor.sql",
-  "014_recertification.sql",
-  "015_monitoring_alerting.sql",
-  "016_audit_and_invocation.sql",
-  "017_managed_services.sql",
-  "018_managed_service_backfill.sql",
-  "019_postgres_http_rate_limiting.sql",
-  "020_managed_service_runtime_control.sql",
-  "021_external_api_runtime_enforcement.sql",
-  "022_runtime_egress_capability_backfill.sql",
-  "023_access_token_compatibility_and_mfa.sql",
-  "024_admin_session_lookup_and_login_throttle_hardening.sql",
-  "025_operational_config_versioning.sql",
-  "026_mcp_runtime_invariants.sql",
-  "027_admin_roles_and_bootstrap.sql",
-  "028_monitoring_profile_versioning.sql",
-  "029_operational_config_vault.sql",
-  "030_audit_archive_outbox.sql",
-  "031_admin_session_epoch.sql",
-  "032_runtime_domain_migration.sql",
-  "033_mfa_ciphertext_constraint.sql",
-  "034_audit_writer_owner_privileges.sql",
-  "035_audit_writer_returning_privilege.sql",
-  "036_audit_writer_security_contract.sql",
-  "037_audit_event_fk_lock_privilege.sql",
-  "038_drop_legacy_operational_config_constraint.sql",
-  "039_release_20260720_component_onboarding.sql",
-  "040_restore_active_runtime_jobs.sql",
-  "041_component_model_20260721.sql",
-  "042_secret_manager_20260722.sql",
-  "043_secret_reveal_binding_20260722.sql",
-  "044_component_identity_legacy_insert_bridge_20260722.sql",
-  "045_release_wave_blueprint_enforcement_20260723.sql",
-  "046_drop_stale_component_identity_triggers_20260723.sql",
-  "047_blueprint_release_generated_scope_20260723.sql",
-  "048_revoke_legacy_blueprint_platform_grants_20260723.sql",
-  "049_single_use_integration_tokens_20260724.sql",
-  "050_component_full_contract_20260724.sql",
-  "051_drop_admin_account_manual_fix_backup_20260720.sql",
-  "052_component_runtime_evidence_20260724.sql",
-  "053_component_activation_state_alignment_20260724.sql",
-  "054_component_audit_hash_chain_20260724.sql",
-  "055_release_epoch_20260724.sql",
-  "056_external_component_runtime_20260724.sql",
-  "057_external_gateway_component_tokens_20260724.sql",
-  "058_external_gateway_circuit_breaker_20260724.sql"
-] as const;
+const migrationDirectory = new URL("../migrations/", import.meta.url);
+const EXPECTED_MIGRATIONS = readdirSync(migrationDirectory)
+  .filter((name) => !name.startsWith("._") && name.endsWith(".sql"))
+  .sort()
+  .map((name, index) => ({ name, sequence: index + 1, checksum: createHash("sha256").update(readFileSync(new URL(name, migrationDirectory))).digest("hex") }));
 
 export type ReadinessReport = {
   ready: boolean;
@@ -76,6 +20,8 @@ export type ReadinessReport = {
   catalog: { ok: boolean; serverCount: number; servingCount: number; blocked: Array<{ code: string; reason: string }> };
   audit: { ok: boolean; chainValid: boolean; eventCount: number; rollbackWriteProbe: boolean; brokenEventId: number | null };
   monitor: { ok: boolean; enabled: boolean; lastCompletedAt: string | null; lastError: string | null };
+  workers: { ok: boolean; entries: Array<{ kind: string; workerId: string; buildId: string; lastHeartbeatAt: string; lastError: string | null; fresh: boolean }> };
+  operations: { ok: boolean; expiredDispatches: number; staleHeartbeats: number; invalidTokenBindings: number; platformWorkerAccessConfigured: boolean };
 };
 
 async function rollbackAuditWriteProbe(db: Db): Promise<boolean> {
@@ -102,33 +48,60 @@ async function rollbackAuditWriteProbe(db: Db): Promise<boolean> {
 export async function buildReadinessReport(db: Db, config: ReadinessConfig): Promise<ReadinessReport> {
   const checkedAt = new Date().toISOString();
   await db.query("select 1");
-  const migrationResult = await db.query("select version from schema_migration order by sequence_number,version");
+  const migrationResult = await db.query("select version,sequence_number,checksum_sha256 from schema_migration order by sequence_number,version");
   const applied = migrationResult.rows.map((row) => String(row.version));
-  const expected = new Set<string>(EXPECTED_MIGRATIONS);
+  const expected = new Map(EXPECTED_MIGRATIONS.map((migration) => [migration.name, migration]));
   const appliedSet = new Set(applied);
-  const missing = EXPECTED_MIGRATIONS.filter((migration) => !appliedSet.has(migration));
+  const missing = EXPECTED_MIGRATIONS.map((migration) => migration.name).filter((migration) => !appliedSet.has(migration));
   const unexpected = applied.filter((migration) => !expected.has(migration));
-  const migrationOk = missing.length === 0 && unexpected.length === 0;
+  const ledgerMismatch = migrationResult.rows.some((row) => {
+    const migration = expected.get(String(row.version));
+    return migration && (Number(row.sequence_number) !== migration.sequence || String(row.checksum_sha256) !== migration.checksum);
+  });
+  const migrationOk = missing.length === 0 && unexpected.length === 0 && !ledgerMismatch;
 
-  const servers = await listServers(db);
+  const components = await db.query(
+    `select c.id,c.code,c.enabled,c.lifecycle_state,c.activation_state,c.operational_state,c.monitoring_state,
+            c.active_revision_id,r.manifest_digest,rt_current.runtime_digest,
+            exists(select 1 from component_runtime_target rt where rt.component_id=c.id and rt.revision_id=c.active_revision_id and rt.status='HEALTHY') runtime_healthy,
+            not exists (
+              select 1 from unnest($1::text[]) required(gate_key)
+               where coalesce((
+                 select evidence.status
+                   from component_readiness_gate_evidence evidence
+                  where evidence.component_id=c.id and evidence.revision_id=c.active_revision_id
+                    and evidence.gate_key=required.gate_key
+                    and evidence.revision_digest=r.manifest_digest
+                    and evidence.runtime_digest is not distinct from rt_current.runtime_digest
+                    and evidence.artifact_digest is not distinct from rt_current.runtime_digest
+                  order by evidence.executed_at desc limit 1
+               ),'FAIL') <> 'PASS'
+               or coalesce((
+                 select evidence.expires_at <= now()
+                   from component_readiness_gate_evidence evidence
+                  where evidence.component_id=c.id and evidence.revision_id=c.active_revision_id
+                    and evidence.gate_key=required.gate_key
+                    and evidence.revision_digest=r.manifest_digest
+                    and evidence.runtime_digest is not distinct from rt_current.runtime_digest
+                    and evidence.artifact_digest is not distinct from rt_current.runtime_digest
+                  order by evidence.executed_at desc limit 1
+               ),false)
+            ) gates_valid
+       from component c
+       left join component_revision r on r.id=c.active_revision_id
+       left join component_runtime_target rt_current on rt_current.component_id=c.id and rt_current.revision_id=c.active_revision_id
+      where c.lifecycle_state<>'DEREGISTERED'
+      order by c.kcml_number`,
+    [[...ACTIVATION_GATES]]
+  );
   const blocked: Array<{ code: string; reason: string }> = [];
   let servingCount = 0;
-  for (const server of servers) {
-    const recertification = evaluateRecertification({
-      activeRevisionId: server.activeRevisionId,
-      validationState: server.registrationValidationState,
-      approvedAt: server.reviewApprovedAt,
-      reviewDueAt: server.reviewDueAt,
-      reviewIntervalDays: server.reviewIntervalDays
-    });
-    const serving = server.enabled
-      && ["ACTIVE", "TRIAL"].includes(server.registrationState)
-      && server.monitoringEnabled
-      && Boolean(server.monitoringProfileDigest)
-      && recertification.canServeExisting;
+  for (const row of components.rows) {
+    const serving = Boolean(row.enabled) && row.lifecycle_state === "ACTIVE" && row.activation_state === "ACTIVE"
+      && row.operational_state === "HEALTHY" && row.monitoring_state === "HEALTHY" && Boolean(row.runtime_healthy) && Boolean(row.gates_valid);
     if (serving) servingCount += 1;
-    else if (["ACTIVE", "TRIAL"].includes(server.registrationState)) {
-      blocked.push({ code: server.code, reason: recertification.reason ?? "monitoring_or_runtime_gate_missing" });
+    else if (row.lifecycle_state === "ACTIVE" || row.activation_state === "ACTIVE") {
+      blocked.push({ code: String(row.code), reason: !row.gates_valid ? "active_readiness_evidence_missing" : !row.runtime_healthy ? "runtime_target_unhealthy" : "component_state_not_healthy" });
     }
   }
 
@@ -141,14 +114,44 @@ export async function buildReadinessReport(db: Db, config: ReadinessConfig): Pro
   const monitorFresh = !config.MONITOR_ENABLED || Boolean(lastCompletedAt
     && Date.now() - new Date(lastCompletedAt).getTime() <= Math.max(180_000, config.MONITOR_INTERVAL_MS * 3));
   const monitorOk = monitorFresh && (!config.MONITOR_ENABLED || !monitorResult.rows[0]?.last_error);
-  const ready = migrationOk && blocked.length === 0 && auditChain.valid && rollbackWriteProbe && monitorOk;
+  const workerResult = await db.query("select worker_kind,worker_id,build_id,last_heartbeat_at,last_error from platform_worker_heartbeat order by worker_kind");
+  const workerEntries = workerResult.rows.map((row) => ({
+    kind: String(row.worker_kind), workerId: String(row.worker_id), buildId: String(row.build_id),
+    lastHeartbeatAt: new Date(row.last_heartbeat_at).toISOString(), lastError: row.last_error ? String(row.last_error) : null,
+    fresh: Date.now() - new Date(row.last_heartbeat_at).getTime() <= 180_000
+  }));
+  const requiredWorkers = new Set(["COMPONENT_CONTROL", "COMPONENT_E2E"]);
+  const workersOk = workerEntries.every((entry) => entry.fresh && !entry.lastError && entry.buildId === config.BUILD_ID)
+    && workerEntries.filter((entry) => requiredWorkers.has(entry.kind)).length === requiredWorkers.size;
+  const operationResult = await db.query(
+    `select
+       (select count(*)::int from component_control_dispatch where state in ('QUEUED','CLAIMED','SENT','ACK_PENDING') and deadline_at<=now()) expired_dispatches,
+       (select count(*)::int from component c where c.enabled and c.lifecycle_state='ACTIVE' and
+          not exists(select 1 from component_heartbeat h where h.component_id=c.id and h.validation_state='ACCEPTED' and h.heartbeat_at>now()-interval '3 minutes')) stale_heartbeats,
+       (select count(*)::int from principal_access_token token left join principal p on p.id=token.source_principal_id
+          where token.revoked_at is null and (p.id is null or token.issued_revocation_epoch<>p.revocation_epoch)) invalid_token_bindings,
+       exists(select 1 from platform_worker_access_identity identity
+         join principal_access_token token on token.id=identity.access_token_id
+         join principal on principal.id=identity.principal_id
+        where identity.singleton is true and token.revoked_at is null and token.expires_at>now()
+          and token.issued_revocation_epoch=principal.revocation_epoch and principal.status='ACTIVE') platform_worker_access_configured`
+  );
+  const operations = {
+    expiredDispatches: Number(operationResult.rows[0]?.expired_dispatches ?? 0),
+    staleHeartbeats: Number(operationResult.rows[0]?.stale_heartbeats ?? 0),
+    invalidTokenBindings: Number(operationResult.rows[0]?.invalid_token_bindings ?? 0),
+    platformWorkerAccessConfigured: Boolean(operationResult.rows[0]?.platform_worker_access_configured)
+  };
+  const operationsOk = operations.expiredDispatches === 0 && operations.staleHeartbeats === 0
+    && operations.invalidTokenBindings === 0 && operations.platformWorkerAccessConfigured;
+  const ready = migrationOk && blocked.length === 0 && auditChain.valid && rollbackWriteProbe && monitorOk && workersOk && operationsOk;
   return {
     ready,
     buildId: config.BUILD_ID,
     checkedAt,
     database: { ok: true },
     migrations: { ok: migrationOk, expected: EXPECTED_MIGRATIONS.length, applied: applied.length, missing: [...missing], unexpected },
-    catalog: { ok: blocked.length === 0, serverCount: servers.length, servingCount, blocked },
+    catalog: { ok: blocked.length === 0, serverCount: components.rows.length, servingCount, blocked },
     audit: {
       ok: auditChain.valid && rollbackWriteProbe,
       chainValid: auditChain.valid,
@@ -156,6 +159,8 @@ export async function buildReadinessReport(db: Db, config: ReadinessConfig): Pro
       rollbackWriteProbe,
       brokenEventId: auditChain.brokenEventId
     },
-    monitor: { ok: monitorOk, enabled: config.MONITOR_ENABLED, lastCompletedAt, lastError: monitorResult.rows[0]?.last_error ? String(monitorResult.rows[0].last_error) : null }
+    monitor: { ok: monitorOk, enabled: config.MONITOR_ENABLED, lastCompletedAt, lastError: monitorResult.rows[0]?.last_error ? String(monitorResult.rows[0].last_error) : null },
+    workers: { ok: workersOk, entries: workerEntries },
+    operations: { ok: operationsOk, ...operations }
   };
 }

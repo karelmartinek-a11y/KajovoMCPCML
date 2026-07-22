@@ -18,8 +18,10 @@ import { setComputedOperationalState, transitionServerState } from "../domain/se
 import { archivePendingAuditEvents } from "../domain/audit-archive.js";
 import { verifyAuditChain } from "../domain/audit.js";
 import { evaluateOperationalState } from "../domain/monitoring-policy.js";
+import { markStaleComponentHeartbeats, queueComponentHeartbeatChallenge, recordComponentMonitoringWatchdog } from "../domain/component.js";
 import { runSyntheticMonitoringProbe } from "./activation.js";
 import { OciRuntime } from "./oci.js";
+import { fetchThroughEgress } from "../domain/egress-client.js";
 
 type ProbeStatus = "PASS" | "FAIL" | "STALE";
 type Probe = { name: string; status: ProbeStatus; latencyMs: number; evidence: Record<string, unknown> };
@@ -247,6 +249,51 @@ export class MonitoringScheduler {
         } catch (error) {
           await this.recordInternalError(row, error);
         }
+      }
+      const componentCorrelationId = randomUUID();
+      const staleComponents = await markStaleComponentHeartbeats(this.db, 180, 600, componentCorrelationId);
+      await tx(this.db, async (client) => {
+        if (staleComponents > 0) {
+          await raiseAlert(client, { severity: "CRITICAL", alertType: "component.heartbeat.stale",
+            title: "Komponentové heartbeat překročily fail-closed limit", detail: { staleComponents }, correlationId: componentCorrelationId });
+        } else {
+          await closeAlert(client, { alertType: "component.heartbeat.stale", reason: "all_component_heartbeats_fresh", correlationId: componentCorrelationId });
+        }
+      });
+      const activeComponents = await this.db.query("select id from component where lifecycle_state='ACTIVE' and enabled=true order by kcml_number");
+      for (const component of activeComponents.rows) {
+        try {
+          await queueComponentHeartbeatChallenge(this.db, { componentId: String(component.id), correlationId: randomUUID() });
+        } catch (error) {
+          await tx(this.db, async (client) => raiseAlert(client, { severity: "HIGH", alertType: "component.heartbeat.challenge_failed",
+            title: "Heartbeat challenge komponenty se nepodařilo zařadit", detail: { componentId: component.id, error: error instanceof Error ? error.message : "unknown" }, correlationId: randomUUID() }));
+        }
+      }
+      const componentRuntimeTargets = await this.db.query(
+        `select component.id,component.hostname,target.transport,target.upstream,target.expected_tls_identity,target.socket_path
+           from component join component_runtime_target target on target.component_id=component.id and target.revision_id=component.active_revision_id
+          where component.lifecycle_state in ('REVIEW','APPROVED','ACTIVE') and component.deregistered_at is null
+          order by component.kcml_number`
+      );
+      for (const component of componentRuntimeTargets.rows) {
+        const correlationId = randomUUID();
+        const probe = await measured("readiness", async () => {
+          if (component.transport === "UDS") return socketHealth(String(component.socket_path));
+          if (component.transport !== "HTTPS" || !component.upstream || !component.expected_tls_identity) throw new Error("component_runtime_target_invalid");
+          const upstream = new URL(String(component.upstream));
+          if (upstream.protocol !== "https:" || upstream.hostname !== String(component.expected_tls_identity)) throw new Error("component_tls_identity_invalid");
+          const response = await fetchThroughEgress(this.config, {
+            url: new URL("/health", upstream).toString(), method: "GET",
+            allowlist: [String(component.expected_tls_identity)],
+            purpose: "component.monitoring.health", correlationId, ttlSeconds: 30
+          });
+          if (response.status !== 200) throw new Error(`component_health_status:${response.status}`);
+          return { status: response.status, tlsIdentity: component.expected_tls_identity, transportPolicy: "KCML_EGRESS" };
+        });
+        await recordComponentMonitoringWatchdog(this.db, {
+          componentId: String(component.id), pass: probe.status === "PASS",
+          evidence: { transport: component.transport, latencyMs: probe.latencyMs, ...probe.evidence }, correlationId
+        });
       }
       const externalTargets = await listExternalApiMonitoringTargets(this.db);
       for (const target of externalTargets) {

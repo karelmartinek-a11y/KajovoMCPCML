@@ -1,0 +1,874 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://register.hcasc.cz/schemas/component-manifest-2026.07.22-compliance.1.schema.json",
+  "title": "KCML generic component onboarding manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "registrationRevision",
+    "displayName",
+    "businessPurpose",
+    "kind",
+    "owners",
+    "contacts",
+    "criticality",
+    "artifact",
+    "runtime",
+    "capabilities",
+    "tools",
+    "endpoints",
+    "pulses",
+    "states",
+    "controlPlane",
+    "e2eScenarios",
+    "documentationEvidence",
+    "secretPolicy",
+    "outboundPolicies",
+    "monitoring",
+    "auditPolicy"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "2026.07.22-compliance.1"
+    },
+    "registrationRevision": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "displayName": {
+      "type": "string",
+      "minLength": 2,
+      "maxLength": 200
+    },
+    "businessPurpose": {
+      "type": "string",
+      "minLength": 10,
+      "maxLength": 4000
+    },
+    "kind": {
+      "type": "string",
+      "minLength": 2,
+      "maxLength": 120
+    },
+    "owners": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 2
+          },
+          "team": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "contacts": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "type",
+          "value"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "type": {
+            "enum": [
+              "EMAIL",
+              "SLACK",
+              "URL"
+            ]
+          },
+          "value": {
+            "type": "string",
+            "minLength": 3
+          }
+        }
+      }
+    },
+    "criticality": {
+      "type": "object",
+      "required": [
+        "level",
+        "reviewIntervalDays"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "level": {
+          "enum": [
+            "LOW",
+            "MEDIUM",
+            "HIGH",
+            "CRITICAL"
+          ]
+        },
+        "reviewIntervalDays": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 365
+        }
+      }
+    },
+    "artifact": {
+      "type": "object",
+      "required": [
+        "type",
+        "digest",
+        "provenance"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "enum": [
+            "OCI_IMAGE",
+            "SOURCE_PACKAGE",
+            "REMOTE_RUNTIME"
+          ]
+        },
+        "digest": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "provenance": {
+          "type": "object",
+          "minProperties": 1
+        },
+        "imageReference": {
+          "type": "string"
+        },
+        "sourceBundleDigest": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "buildContract": {
+          "type": "object"
+        }
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "required": [
+        "transport",
+        "runtimeDigest",
+        "resources"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "transport": {
+          "enum": [
+            "UDS",
+            "HTTPS"
+          ]
+        },
+        "runtimeDigest": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "upstream": {
+          "type": "string",
+          "format": "uri"
+        },
+        "socketPath": {
+          "type": "string",
+          "pattern": "^/"
+        },
+        "tlsIdentity": {
+          "type": "string"
+        },
+        "container": {
+          "type": "object"
+        },
+        "resources": {
+          "type": "object",
+          "required": [
+            "cpuMillis",
+            "memoryMiB",
+            "maxConcurrency"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "cpuMillis": {
+              "type": "integer",
+              "minimum": 10
+            },
+            "memoryMiB": {
+              "type": "integer",
+              "minimum": 16
+            },
+            "maxConcurrency": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        }
+      }
+    },
+    "capabilities": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 2,
+        "maxLength": 160
+      }
+    },
+    "tools": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "name",
+          "title",
+          "description",
+          "inputSchema",
+          "outputSchema",
+          "scope",
+          "timeoutMs",
+          "limits"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^[a-zA-Z0-9._-]+$"
+          },
+          "title": {
+            "type": "string",
+            "minLength": 2
+          },
+          "description": {
+            "type": "string",
+            "minLength": 5
+          },
+          "inputSchema": {
+            "type": "object",
+            "minProperties": 1
+          },
+          "outputSchema": {
+            "type": "object",
+            "minProperties": 1
+          },
+          "scope": {
+            "type": "string",
+            "minLength": 2
+          },
+          "timeoutMs": {
+            "type": "integer",
+            "minimum": 100,
+            "maximum": 300000
+          },
+          "limits": {
+            "type": "object",
+            "required": [
+              "requestMaxBytes",
+              "responseMaxBytes"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "requestMaxBytes": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "responseMaxBytes": {
+                "type": "integer",
+                "minimum": 1
+              }
+            }
+          },
+          "annotations": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    "endpoints": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "key",
+          "method",
+          "path",
+          "scope",
+          "requestSchema",
+          "responseSchema"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "key": {
+            "type": "string",
+            "minLength": 2
+          },
+          "method": {
+            "enum": [
+              "GET",
+              "POST",
+              "PUT",
+              "PATCH",
+              "DELETE"
+            ]
+          },
+          "path": {
+            "type": "string",
+            "pattern": "^/"
+          },
+          "scope": {
+            "type": "string",
+            "minLength": 2
+          },
+          "requestSchema": {
+            "type": "object",
+            "minProperties": 1
+          },
+          "responseSchema": {
+            "type": "object",
+            "minProperties": 1
+          }
+        }
+      }
+    },
+    "pulses": {
+      "type": "object",
+      "required": [
+        "incoming",
+        "outgoing"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "incoming": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/pulse"
+          }
+        },
+        "outgoing": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/pulse"
+          }
+        }
+      }
+    },
+    "states": {
+      "type": "object",
+      "required": [
+        "states",
+        "transitions"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "states": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": [
+              "key",
+              "category",
+              "schema"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "key": {
+                "type": "string",
+                "minLength": 2
+              },
+              "category": {
+                "type": "string",
+                "minLength": 2
+              },
+              "schema": {
+                "type": "object",
+                "minProperties": 1
+              },
+              "terminal": {
+                "type": "boolean"
+              }
+            }
+          }
+        },
+        "transitions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "from",
+              "to",
+              "trigger"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "from": {
+                "type": "string"
+              },
+              "to": {
+                "type": "string"
+              },
+              "trigger": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "controlPlane": {
+      "type": "object",
+      "required": [
+        "enable",
+        "disable",
+        "state",
+        "heartbeat"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "enable": {
+          "type": "object",
+          "required": [
+            "path",
+            "requestSchema",
+            "responseSchema"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "path": {
+              "type": "string",
+              "pattern": "^/"
+            },
+            "requestSchema": {
+              "type": "object",
+              "minProperties": 1
+            },
+            "responseSchema": {
+              "type": "object",
+              "minProperties": 1
+            }
+          }
+        },
+        "disable": {
+          "type": "object",
+          "required": [
+            "path",
+            "requestSchema",
+            "responseSchema"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "path": {
+              "type": "string",
+              "pattern": "^/"
+            },
+            "requestSchema": {
+              "type": "object",
+              "minProperties": 1
+            },
+            "responseSchema": {
+              "type": "object",
+              "minProperties": 1
+            }
+          }
+        },
+        "state": {
+          "type": "object",
+          "required": [
+            "path",
+            "requestSchema",
+            "responseSchema"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "path": {
+              "type": "string",
+              "pattern": "^/"
+            },
+            "requestSchema": {
+              "type": "object",
+              "minProperties": 1
+            },
+            "responseSchema": {
+              "type": "object",
+              "minProperties": 1
+            }
+          }
+        },
+        "heartbeat": {
+          "type": "object",
+          "required": [
+            "path",
+            "requestSchema",
+            "responseSchema"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "path": {
+              "type": "string",
+              "pattern": "^/"
+            },
+            "requestSchema": {
+              "type": "object",
+              "minProperties": 1
+            },
+            "responseSchema": {
+              "type": "object",
+              "minProperties": 1
+            }
+          }
+        }
+      }
+    },
+    "e2eScenarios": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "scenarioKey",
+          "variantKey",
+          "invocation",
+          "input",
+          "expected",
+          "timeoutMs",
+          "deterministic",
+          "cleanup"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "scenarioKey": {
+            "type": "string",
+            "minLength": 2
+          },
+          "variantKey": {
+            "type": "string",
+            "minLength": 1
+          },
+          "invocation": {
+            "type": "object",
+            "required": [
+              "kind",
+              "name"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "enum": [
+                  "TOOL",
+                  "PULSE",
+                  "ENDPOINT"
+                ]
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          "input": {
+            "oneOf": [
+              {
+                "type": "object",
+                "required": [
+                  "mediaType",
+                  "json"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "mediaType": {
+                    "const": "application/json"
+                  },
+                  "json": {}
+                }
+              },
+              {
+                "type": "object",
+                "required": [
+                  "mediaType",
+                  "base64"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "mediaType": {
+                    "type": "string",
+                    "minLength": 3
+                  },
+                  "base64": {
+                    "type": "string",
+                    "minLength": 1,
+                    "contentEncoding": "base64"
+                  }
+                }
+              }
+            ]
+          },
+          "expected": {
+            "oneOf": [
+              {
+                "type": "object",
+                "required": [
+                  "mediaType",
+                  "json"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "mediaType": {
+                    "const": "application/json"
+                  },
+                  "json": {}
+                }
+              },
+              {
+                "type": "object",
+                "required": [
+                  "mediaType",
+                  "base64"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "mediaType": {
+                    "type": "string",
+                    "minLength": 3
+                  },
+                  "base64": {
+                    "type": "string",
+                    "minLength": 1,
+                    "contentEncoding": "base64"
+                  }
+                }
+              }
+            ]
+          },
+          "timeoutMs": {
+            "type": "integer",
+            "minimum": 100,
+            "maximum": 600000
+          },
+          "deterministic": {
+            "const": true
+          },
+          "cleanup": {
+            "type": "object",
+            "required": [
+              "required"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "required": {
+                "type": "boolean"
+              },
+              "operation": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "documentationEvidence": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "key",
+          "path",
+          "digest",
+          "content"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "key": {
+            "type": "string",
+            "minLength": 2
+          },
+          "path": {
+            "type": "string",
+            "pattern": "^(?!/)(?!.*\\.\\.).+$"
+          },
+          "digest": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "content": {
+            "oneOf": [
+              {
+                "type": "object",
+                "required": [
+                  "mediaType",
+                  "json"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "mediaType": {
+                    "const": "application/json"
+                  },
+                  "json": {}
+                }
+              },
+              {
+                "type": "object",
+                "required": [
+                  "mediaType",
+                  "base64"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "mediaType": {
+                    "type": "string",
+                    "minLength": 3
+                  },
+                  "base64": {
+                    "type": "string",
+                    "minLength": 1,
+                    "contentEncoding": "base64"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    "secretPolicy": {
+      "type": "object",
+      "required": [
+        "authorizationAuthority",
+        "allSecretsRequireGrant",
+        "auditLevel"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "authorizationAuthority": {
+          "const": "KCML"
+        },
+        "allSecretsRequireGrant": {
+          "const": true
+        },
+        "auditLevel": {
+          "const": "FULL"
+        }
+      }
+    },
+    "outboundPolicies": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "target",
+          "pathPrefix",
+          "scope"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "target": {
+            "type": "string",
+            "minLength": 2
+          },
+          "pathPrefix": {
+            "type": "string",
+            "pattern": "^/"
+          },
+          "scope": {
+            "type": "string",
+            "minLength": 2
+          }
+        }
+      }
+    },
+    "monitoring": {
+      "type": "object",
+      "required": [
+        "probes",
+        "staleAfterSeconds",
+        "disableAfterSeconds"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "probes": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": [
+              "kind",
+              "intervalSeconds"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "type": "string",
+                "minLength": 2
+              },
+              "intervalSeconds": {
+                "type": "integer",
+                "minimum": 5
+              }
+            }
+          }
+        },
+        "staleAfterSeconds": {
+          "type": "integer",
+          "minimum": 10
+        },
+        "disableAfterSeconds": {
+          "type": "integer",
+          "minimum": 10
+        }
+      }
+    },
+    "auditPolicy": {
+      "type": "object",
+      "required": [
+        "technicalAudit",
+        "payloadProtection",
+        "retentionDays"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "technicalAudit": {
+          "const": "PLATFORM"
+        },
+        "payloadProtection": {
+          "const": "ENCRYPTED"
+        },
+        "retentionDays": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    }
+  },
+  "$defs": {
+    "pulse": {
+      "type": "object",
+      "required": [
+        "type",
+        "schema",
+        "scope"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "type": "string",
+          "minLength": 2
+        },
+        "schema": {
+          "type": "object",
+          "minProperties": 1
+        },
+        "scope": {
+          "type": "string",
+          "minLength": 2
+        }
+      }
+    }
+  }
+}

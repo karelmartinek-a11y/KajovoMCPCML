@@ -29,40 +29,30 @@ describe("onboarding handoff", () => {
     expect(text).toContain("UPLOAD_REVISION");
   });
 
-  it("points blueprint release handoff to native component intake with scoped components", () => {
+  it("points generic handoff to the canonical component intake", () => {
     const text = onboardingHandoffText({
-      label: "FlowFabric first wave",
+      label: "Obecná integrace",
       descriptor: {
-        summary: "První vlna komponent",
-        businessPurpose: "Generování a registrace baseline komponent FlowFabric",
+        summary: "Integrace prvku",
+        businessPurpose: "Registrace aplikačního prvku",
         serviceOwner: "KCML",
         technicalOwner: "Platform Engineering",
         criticality: "HIGH"
       },
-      token: "kci_blueprint",
+      token: "kci_generic",
       initialExpiresAt: "2026-07-24T14:00:00.000Z",
       programmerApiUrl: "https://register.hcasc.cz/v2/component-onboardings",
-      releaseWaveKey: "baseline-2026-07-24",
-      allowedBlueprintComponents: [
-        { componentId: "AI-CLS-001", registrationType: "KCML_ACCESS_CLIENT", releaseVersion: "2026.07.24", releaseWaveKey: "baseline-2026-07-24" },
-        { componentId: "MCP-RX-WA-001", registrationType: "MCP_SERVER", releaseVersion: "2026.07.24", releaseWaveKey: "baseline-2026-07-24" }
-      ],
       intakeUrls: {
         recommendedIntakeUrl: "https://register.hcasc.cz/v2/component-onboardings",
         nativeComponentIntakeUrl: "https://register.hcasc.cz/v2/component-onboardings",
-        legacyServiceIntakeUrl: "https://register.hcasc.cz/v1/service-onboardings",
-        externalApiIntakeUrl: "https://register.hcasc.cz/v1/service-onboardings",
-        componentCatalogUrl: "https://register.hcasc.cz/api/onboarding-catalogs/component/2026.07.24",
-        externalApiCatalogUrl: "https://register.hcasc.cz/api/onboarding-catalogs/external-api/1.0"
+        componentCatalogUrl: "https://register.hcasc.cz/api/onboarding-catalogs/component/2026.07.24"
       },
       catalogVersion: "2026.07.24"
     });
 
     expect(text).toContain("Automatická integrace prvku");
     expect(text).toContain("Doporučené programátorské API: https://register.hcasc.cz/v2/component-onboardings");
-    expect(text).toContain("Release wave: baseline-2026-07-24");
-    expect(text).toContain("AI-CLS-001:KCML_ACCESS_CLIENT");
-    expect(text).toContain("MCP-RX-WA-001:MCP_SERVER");
-    expect(text).toContain("Legacy service intake pouze pro kompatibilitu: https://register.hcasc.cz/v1/service-onboardings");
+    expect(text).toContain("Rozsah tokenu: registrace jednoho libovolného prvku");
+    expect(text).toContain("Kanonický component intake: https://register.hcasc.cz/v2/component-onboardings");
   });
 });

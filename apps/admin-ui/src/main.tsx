@@ -57,11 +57,14 @@ import {
   persistMonitoringProfile,
   retryAlertDelivery as retryAlertDeliveryRequest,
   runRegisteredServerTest,
+  runComponentE2E,
+  runComponentHeartbeatChallenge,
+  runComponentStateQuery,
   setComponentEnabled,
   setComponentLifecycle as setComponentLifecycleRequest,
   setComponentPermission as setComponentPermissionRequest,
-  revokeComponentCredential as revokeComponentCredentialRequest,
-  rotateComponentCredential as rotateComponentCredentialRequest,
+  revokeComponentAccessToken as revokeComponentAccessTokenRequest,
+  rotateComponentAccessToken as rotateComponentAccessTokenRequest,
   setServerEnabled,
   suppressOperationalAlert,
   testAlertChannels,
@@ -80,6 +83,8 @@ import {
   type Component,
   type ExternalPrincipal,
   type ExternalPermission,
+  type ExternalInboundPermission,
+  type PlatformWorkerAccessStatus,
   type ExternalTarget,
   type IntegrationSecret,
   type IntegrationToken,
@@ -103,7 +108,6 @@ import {
 import { ApiRequestError, api, csrf, describeApiError, formatDate, formatLocalDateTimeInput, prettyJson, setUiTimeZone } from "./ui-helpers.js";
 
 const integrationTokenActionLabel = "Vygenerovat Integrační token";
-const releaseWaveKey = "baseline-2026-07-24";
 
 function recertificationTone(phase: Server["recertification"]["phase"]): "ok" | "warn" | "danger" | "neutral" {
   if (phase === "VALID") return "ok";
@@ -235,7 +239,6 @@ function CreateIntegrationTokenModal({ catalogVersion, onClose, onCreated }: { c
         headers: { "x-csrf-token": csrf() },
         body: JSON.stringify({
           label: label.trim(),
-          releaseWave: releaseWaveKey,
           descriptor: {
             summary: summary.trim(),
             businessPurpose: businessPurpose.trim(),
@@ -288,8 +291,6 @@ function IntegrationSecretModal({ secret, catalogVersion, onClose }: { secret: I
       token: secret.token,
       initialExpiresAt: secret.initialExpiresAt,
       programmerApiUrl: secret.programmerApiUrl,
-      releaseWaveKey: secret.releaseWaveKey,
-      allowedBlueprintComponents: secret.allowedBlueprintComponents,
       intakeUrls: secret.intakeUrls,
       catalogVersion
     }));
@@ -303,8 +304,8 @@ function IntegrationSecretModal({ secret, catalogVersion, onClose }: { secret: I
         <div className="handoff-step"><span>1</span><div><strong>Onboarding katalog</strong><p>Závazný registrační kontrakt {catalogVersion}.</p><a className="button-link secondary" href={secret.onboardingCatalogUrl} download={secret.onboardingCatalogFileName}><Download size={16} /> Stáhnout onboarding katalog</a></div></div>
         <div className="handoff-step"><span>2</span><div><strong>Server descriptor</strong><p>{secret.descriptor.summary}</p><dl className="descriptor-dl"><dt>Účel</dt><dd>{secret.descriptor.businessPurpose}</dd><dt>Vlastník služby</dt><dd>{secret.descriptor.serviceOwner}</dd><dt>Technický vlastník</dt><dd>{secret.descriptor.technicalOwner}</dd><dt>Kritičnost</dt><dd>{secret.descriptor.criticality}</dd></dl></div></div>
         <div className="handoff-step"><span>3</span><div><strong>Integrační token</strong><p>Plnou hodnotu lze zobrazit i předat v tomto handoffu. První upload musí programátor provést do {formatDate(secret.initialExpiresAt)}.</p><div className="secret-once"><code>{secret.token}</code><small>Fingerprint {secret.fingerprint}</small></div><button type="button" className="secondary" onClick={() => { void copyToken(); }}><ClipboardCopy size={16} /> {copied === "token" ? "Token zkopírován" : "Zkopírovat token"}</button></div></div>
-        <div className="handoff-step"><span>4</span><div><strong>Programátorské API</strong><p>{recommendedIntakeUrl}</p>{secret.allowedBlueprintComponents?.length ? <dl className="descriptor-dl"><dt>Release wave</dt><dd>{secret.releaseWaveKey ?? releaseWaveKey}</dd><dt>Scope</dt><dd>{secret.allowedBlueprintComponents.length} komponent</dd><dt>Native intake</dt><dd>{secret.intakeUrls?.nativeComponentIntakeUrl ?? recommendedIntakeUrl}</dd></dl> : null}</div></div>
-        <div className="permission-preview"><strong>Co proběhne po uploadu</strong><span>Nativní component intake ověří blueprint identitu, release wave, manifest a readiness gates. KájovoCML přidělí KCML identitu, hostname, authorization snapshot a po úspěchu jednorázově předá přístupový token.</span></div>
+        <div className="handoff-step"><span>4</span><div><strong>Programátorské API</strong><p>{recommendedIntakeUrl}</p><dl className="descriptor-dl"><dt>Rozsah</dt><dd>Jeden libovolný prvek</dd><dt>Intake</dt><dd>{secret.intakeUrls?.nativeComponentIntakeUrl ?? recommendedIntakeUrl}</dd></dl></div></div>
+        <div className="permission-preview"><strong>Co proběhne po uploadu</strong><span>Kanonický component intake ověří generický manifest, skutečný runtime a readiness gates. KájovoCML přidělí identitu, jediný hostname a po úplném úspěchu jednorázově předá dlouhodobý přístupový token.</span></div>
         <footer className="modal-actions"><button className="secondary" onClick={onClose}>Zavřít</button><button onClick={() => { void copyInstructions(); }}><ClipboardCopy size={16} /> {copied === "instructions" ? "Pokyny zkopírovány" : "Zkopírovat pokyny i token"}</button></footer>
       </div>
     </Modal>
@@ -1073,7 +1074,7 @@ function IntegrationTokensPage({ tokens, jobs, onCreate, onOpenJob, onRevoke, on
         <button onClick={onCreate}><Plus size={17} /> {integrationTokenActionLabel}</button><IconButton label="Obnovit" onClick={onRefresh}><RefreshCw size={17} /></IconButton>
       </PageHeader>
       <section className="panel table-panel"><div className="panel-head"><div><h2>Vydané tokeny</h2><p>Plná hodnota je v create response a handoffu; tento přehled trvale uchovává fingerprint.</p></div><span className="panel-count">{filtered.length} záznamů</span></div>
-        {filtered.length === 0 ? <div className="empty-state"><Workflow size={34} /><strong>Žádné integrační tokeny</strong><p>Vygeneruj první token a předej jej programátorovi bezpečným kanálem.</p></div> : <div className="table-scroll"><table className="integration-token-table"><thead><tr><th>Token</th><th>KCML / job</th><th>Stav integrace</th><th>Platnost 24 hodin</th><th>Akce</th></tr></thead><tbody>{filtered.map((token) => <tr key={token.id}><td><strong>{token.label}</strong><span className="cell-subtitle">{token.descriptor.summary}</span><span className="cell-subtitle">Vydán {formatDate(token.issuedAt)}</span><code className="cell-fingerprint">{token.fingerprint}</code><span className="cell-subtitle">{token.releaseWaveKey ?? "bez wave"} · jednorázová úspěšná integrace</span></td><td>{token.code ?? "Čeká na upload"}<span className="cell-subtitle">{token.jobId ? token.jobId.slice(0, 8) : "Nevázaný"}</span></td><td><div className="integration-state-cell"><span className={`badge ${token.active ? "ok" : "danger"}`}>{token.jobState ?? (token.active ? "PŘIPRAVEN" : "NEPLATNÝ")}</span><IntegrationTokenRunIndicator token={token} nowMs={nowMs} /></div></td><td><div className="token-timing-cell"><IntegrationTokenExpiry token={token} nowMs={nowMs} /></div></td><td><div className="row-actions integration-row-actions">{token.jobId ? <button className="small-button" onClick={() => onOpenJob(token.jobId!)}>Detail</button> : null}<button className="small-button" disabled={!token.active} onClick={() => onRevoke(token)}>Revokovat</button><button className="small-button danger-link" onClick={() => onDelete(token)}>Smazat</button></div></td></tr>)}</tbody></table></div>}
+        {filtered.length === 0 ? <div className="empty-state"><Workflow size={34} /><strong>Žádné integrační tokeny</strong><p>Vygeneruj první token a předej jej programátorovi bezpečným kanálem.</p></div> : <div className="table-scroll"><table className="integration-token-table"><thead><tr><th>Token</th><th>KCML / job</th><th>Stav integrace</th><th>Platnost 24 hodin</th><th>Akce</th></tr></thead><tbody>{filtered.map((token) => <tr key={token.id}><td><strong>{token.label}</strong><span className="cell-subtitle">{token.descriptor.summary}</span><span className="cell-subtitle">Vydán {formatDate(token.issuedAt)}</span><code className="cell-fingerprint">{token.fingerprint}</code><span className="cell-subtitle">jeden libovolný prvek · spotřeba až po úplném úspěchu</span></td><td>{token.code ?? "Čeká na upload"}<span className="cell-subtitle">{token.jobId ? token.jobId.slice(0, 8) : "Nevázaný"}</span></td><td><div className="integration-state-cell"><span className={`badge ${token.active ? "ok" : "danger"}`}>{token.jobState ?? (token.active ? "PŘIPRAVEN" : "NEPLATNÝ")}</span><IntegrationTokenRunIndicator token={token} nowMs={nowMs} /></div></td><td><div className="token-timing-cell"><IntegrationTokenExpiry token={token} nowMs={nowMs} /></div></td><td><div className="row-actions integration-row-actions">{token.jobId ? <button className="small-button" onClick={() => onOpenJob(token.jobId!)}>Detail</button> : null}<button className="small-button" disabled={!token.active} onClick={() => onRevoke(token)}>Revokovat</button><button className="small-button danger-link" onClick={() => onDelete(token)}>Smazat</button></div></td></tr>)}</tbody></table></div>}
       </section>
       <section className="panel"><div className="panel-head"><h2>Onboardingové joby</h2><span className="panel-count">{jobs.length} jobů</span></div>{jobs.length === 0 ? <div className="empty-state server-empty"><Rocket size={32} /><strong>Zatím nebyl zahájen žádný upload</strong></div> : <div className="job-cards">{jobs.map((job) => <button key={job.id} onClick={() => onOpenJob(job.id)}><span className={`status-dot ${job.state === "ACTIVE" ? "ok" : ["FAILED", "QUARANTINED", "CANCELLED"].includes(job.state) ? "danger" : "warn"}`} /><span><strong>{job.code ?? "Čeká na identitu"}</strong><small>{job.state} · {formatDate(job.updatedAt)}</small></span><ChevronDown className="item-chevron" size={15} /></button>)}</div>}</section>
     </>
@@ -1086,6 +1087,8 @@ function Dashboard({ accountName, role, releaseInfo, onLogout }: { accountName: 
   const [externalPrincipals, setExternalPrincipals] = useState<ExternalPrincipal[]>([]);
   const [externalTargets, setExternalTargets] = useState<ExternalTarget[]>([]);
   const [externalPermissions, setExternalPermissions] = useState<ExternalPermission[]>([]);
+  const [externalInboundPermissions, setExternalInboundPermissions] = useState<ExternalInboundPermission[]>([]);
+  const [platformWorkerAccess, setPlatformWorkerAccess] = useState<PlatformWorkerAccessStatus | null>(null);
   const [servers, setServers] = useState<Server[]>([]);
   const [credentials, setCredentials] = useState<AccessTokenCredential[]>([]);
   const [events, setEvents] = useState<AuditEvent[]>([]);
@@ -1116,11 +1119,13 @@ function Dashboard({ accountName, role, releaseInfo, onLogout }: { accountName: 
   async function load() {
     setError("");
     try {
-      const [componentRes, externalPrincipalRes, externalTargetRes, externalPermissionRes, serverRes, credentialRes, auditRes, integrationRes, jobsRes, probesRes, monitoringRes, securityRes, integrityRes, adminAccountsRes, configRes, secretsRes] = await Promise.all([
+      const [componentRes, externalPrincipalRes, externalTargetRes, externalPermissionRes, externalInboundPermissionRes, platformWorkerAccessRes, serverRes, credentialRes, auditRes, integrationRes, jobsRes, probesRes, monitoringRes, securityRes, integrityRes, adminAccountsRes, configRes, secretsRes] = await Promise.all([
         api<{ components: Component[] }>("/api/components"),
         api<{ principals: ExternalPrincipal[] }>("/api/external-principals"),
         api<{ targets: ExternalTarget[] }>("/api/external-targets"),
         api<{ permissions: ExternalPermission[] }>("/api/external-permissions"),
+        api<{ permissions: ExternalInboundPermission[] }>("/api/external-inbound-permissions"),
+        api<{ status: PlatformWorkerAccessStatus }>("/api/platform-worker-access"),
         api<{ servers: Server[] }>("/api/mcp-servers"),
         api<{ credentials: AccessTokenCredential[] }>("/api/kaja"),
         api<AuditResponse>("/api/audit"),
@@ -1138,6 +1143,8 @@ function Dashboard({ accountName, role, releaseInfo, onLogout }: { accountName: 
       setExternalPrincipals(externalPrincipalRes.principals);
       setExternalTargets(externalTargetRes.targets);
       setExternalPermissions(externalPermissionRes.permissions);
+      setExternalInboundPermissions(externalInboundPermissionRes.permissions);
+      setPlatformWorkerAccess(platformWorkerAccessRes.status);
       setServers(serverRes.servers);
       setCredentials(credentialRes.credentials);
       setEvents(auditRes.events);
@@ -1503,22 +1510,27 @@ function Dashboard({ accountName, role, releaseInfo, onLogout }: { accountName: 
       </>}
     >
       <PageRouter page={page} routes={{
-        components: <ComponentCatalogPage components={components} role={role} onRefresh={() => { void load(); }} onLoadDetail={loadComponentDetail} onToggle={toggleComponent}
+        components: <ComponentCatalogPage components={components} platformWorkerAccess={platformWorkerAccess} role={role} onRefresh={() => { void load(); }} onLoadDetail={loadComponentDetail} onToggle={toggleComponent}
+          onRotatePlatformWorkerAccess={async () => { const result = await api<{ status: PlatformWorkerAccessStatus; accessToken: { token: string; fingerprint: string } }>("/api/platform-worker-access/rotate", { method: "POST", headers: { "x-csrf-token": csrf() }, body: "{}" }); setPlatformWorkerAccess(result.status); return result.accessToken; }}
           onLifecycle={(component, action) => updateComponent(component, () => setComponentLifecycleRequest(component, action), "Změna lifecycle komponenty selhala")}
           onPermission={(component, permissionId, enabled) => updateComponent(component, () => setComponentPermissionRequest(component, permissionId, enabled), "Změna oprávnění selhala")}
-          onCredentialRevoke={(component, credentialId) => updateComponent(component, () => revokeComponentCredentialRequest(component, credentialId), "Revokace přístupového tokenu selhala")}
-          onCredentialRotate={async (component, credentialId) => {
-            const result = await rotateComponentCredentialRequest(component, credentialId);
+          onAccessTokenRevoke={(component, tokenId) => updateComponent(component, () => revokeComponentAccessTokenRequest(component, tokenId), "Revokace přístupového tokenu selhala")}
+          onAccessTokenRotate={async (component, tokenId) => {
+            const result = await rotateComponentAccessTokenRequest(component, tokenId);
             setComponents((current) => current.map((entry) => entry.id === result.component.id ? result.component : entry));
             return result;
-          }} />,
-        external: <ExternalComponentsPage principals={externalPrincipals} targets={externalTargets} permissions={externalPermissions} components={components} role={role} onRefresh={() => { void load(); }}
+          }}
+          onRunE2E={runComponentE2E}
+          onRunStateQuery={runComponentStateQuery}
+          onRunHeartbeatChallenge={runComponentHeartbeatChallenge} />,
+        external: <ExternalComponentsPage principals={externalPrincipals} targets={externalTargets} permissions={externalPermissions} inboundPermissions={externalInboundPermissions} components={components} role={role} onRefresh={() => { void load(); }}
           onCreatePrincipal={async (input) => { await api("/api/external-principals", { method: "POST", headers: { "x-csrf-token": csrf() }, body: JSON.stringify(input) }); await load(); }}
           onCreateTarget={async (input) => { await api("/api/external-targets", { method: "POST", headers: { "x-csrf-token": csrf() }, body: JSON.stringify(input) }); await load(); }}
-          onRotatePrincipal={async (principal) => { const result = await api<{ credential: { clientId: string; clientSecret: string; fingerprint: string } }>(`/api/external-principals/${principal.id}/credentials/rotate`, { method: "POST", headers: { "x-csrf-token": csrf() }, body: "{}" }); await load(); return result.credential; }}
+          onRotatePrincipal={async (principal) => { const result = await api<{ accessToken: { token: string; fingerprint: string } }>(`/api/external-principals/${principal.id}/access-tokens/rotate`, { method: "POST", headers: { "x-csrf-token": csrf() }, body: "{}" }); await load(); return result.accessToken; }}
           onSetPrincipalStatus={async (principal, status) => { await api(`/api/external-principals/${principal.id}/status`, { method: "POST", headers: { "x-csrf-token": csrf() }, body: JSON.stringify({ status }) }); await load(); }}
           onSetTargetStatus={async (target, status) => { await api(`/api/external-targets/${target.id}/status`, { method: "POST", headers: { "x-csrf-token": csrf() }, body: JSON.stringify({ status }) }); await load(); }}
-          onSetPermission={async (input) => { await api("/api/external-permissions", { method: "PUT", headers: { "x-csrf-token": csrf() }, body: JSON.stringify(input) }); await load(); }} />,
+          onSetPermission={async (input) => { await api("/api/external-permissions", { method: "PUT", headers: { "x-csrf-token": csrf() }, body: JSON.stringify(input) }); await load(); }}
+          onSetInboundPermission={async (input) => { await api("/api/external-inbound-permissions", { method: "POST", headers: { "x-csrf-token": csrf() }, body: JSON.stringify(input) }); await load(); }} />,
         monitoring: <MonitoringPage servers={servers} accountName={accountName} catalogVersion={catalogVersion} probes={probes} overview={monitoringOverview} onRefresh={() => { void load(); }} onAutomatedOnboarding={() => setIntegrationCreate(true)} onToggleEnabled={toggleServerEnabled} onRunTest={runServerTest} onLoadMonitoringProfile={loadMonitoringProfile} onSaveMonitoringProfile={saveMonitoringProfile} onStartRevision={startServerRevision} onDeleteServer={deleteServerRegistration} onTestWebhook={testAlertWebhooks} onAcknowledgeAlert={acknowledgeAlert} onSuppressAlert={suppressAlert} onRetryDelivery={retryAlertDelivery} />,
         integration: <IntegrationTokensPage tokens={integrationTokens} jobs={onboardingJobs} onCreate={() => setIntegrationCreate(true)} onOpenJob={setSelectedJobId} onRevoke={(token) => setIntegrationConfirm({ token, action: "revoke" })} onDelete={(token) => setIntegrationConfirm({ token, action: "delete" })} onRefresh={() => { void load(); }} />,
         secrets: role !== "AUDITOR" ? <SecretsPage secrets={managedSecrets} accountName={accountName} onRefresh={() => { void refreshSecrets(); }} /> : null,

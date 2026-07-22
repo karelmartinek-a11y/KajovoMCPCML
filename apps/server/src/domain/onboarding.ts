@@ -7,12 +7,7 @@ import { fingerprintSecret, hmacToken } from "../security/secrets.js";
 import { appendAudit } from "./audit.js";
 import { kcmlCodeFromNumber, kcmlHostnameForCode } from "./hostnames.js";
 import type { OnboardingManifest } from "./registration.js";
-import {
-  blueprintComponentContract,
-  KCML_BLUEPRINT_COMPONENT_IDS,
-  KCML_RELEASE,
-  KCML_RELEASE_WAVE_KEY
-} from "./release.js";
+import { KCML_RELEASE } from "./release.js";
 import { transitionServerState } from "./server-state.js";
 
 export const ONBOARDING_JOB_STATES = [
@@ -79,18 +74,11 @@ export type IntegrationTokenPrincipal = {
   fingerprint: string;
   expiresAt: string;
   maxExpiresAt: string;
-  serviceKind: "MCP" | "EXTERNAL_API";
-  allowedPipeline: "MCP_ONBOARDING" | "EXTERNAL_API_REGISTRATION";
-  tokenKind: "SINGLE_COMPONENT" | "BLUEPRINT_RELEASE";
+  serviceKind: "COMPONENT" | "MCP" | "EXTERNAL_API";
+  allowedPipeline: "COMPONENT_ONBOARDING" | "MCP_ONBOARDING" | "EXTERNAL_API_REGISTRATION";
+  tokenKind: "SINGLE_COMPONENT";
   releaseVersion: string;
-  releaseWaveKey: string | null;
   maxChildJobs: number;
-  allowedBlueprintComponents: Array<{
-    componentId: string;
-    registrationType: string;
-    releaseVersion: string;
-    releaseWaveKey: string | null;
-  }>;
 };
 
 export type SourceEvidence = {
@@ -110,12 +98,10 @@ export type OnboardingDescriptor = {
 };
 
 export type CreateIntegrationTokenOptions = {
-  serviceKind?: "MCP" | "EXTERNAL_API";
-  allowedPipeline?: "MCP_ONBOARDING" | "EXTERNAL_API_REGISTRATION";
-  tokenKind?: "SINGLE_COMPONENT" | "BLUEPRINT_RELEASE";
+  serviceKind?: "COMPONENT" | "MCP" | "EXTERNAL_API";
+  allowedPipeline?: "COMPONENT_ONBOARDING" | "MCP_ONBOARDING" | "EXTERNAL_API_REGISTRATION";
+  tokenKind?: "SINGLE_COMPONENT";
   releaseVersion?: string;
-  releaseWaveKey?: string;
-  allowedBlueprintComponentIds?: string[];
   maxChildJobs?: number;
 };
 
@@ -202,13 +188,11 @@ function mapToken(row: Record<string, unknown>) {
       criticality: typeof descriptor.criticality === "string" ? descriptor.criticality as OnboardingDescriptor["criticality"] : "MEDIUM"
     } satisfies OnboardingDescriptor,
     legacyBackfill: Boolean(row.legacy_backfill),
-    serviceKind: optionalText(row.service_kind) ?? "MCP",
-    allowedPipeline: optionalText(row.allowed_pipeline) ?? "MCP_ONBOARDING",
+    serviceKind: optionalText(row.service_kind) ?? "COMPONENT",
+    allowedPipeline: optionalText(row.allowed_pipeline) ?? "COMPONENT_ONBOARDING",
     tokenKind: optionalText(row.token_kind) ?? "SINGLE_COMPONENT",
     releaseVersion: optionalText(row.release_version) ?? KCML_RELEASE.catalogVersion,
-    releaseWaveKey: optionalText(row.release_wave_key),
     maxChildJobs: Number(row.max_child_jobs ?? 1),
-    allowedBlueprintComponents: Array.isArray(row.allowed_blueprint_components) ? row.allowed_blueprint_components : [],
     jobId: optionalText(row.onboarding_job_id),
     issuedAt: asIso(row.issued_at) ?? "",
     initialExpiresAt: asIso(row.initial_expires_at) ?? "",
@@ -226,29 +210,16 @@ function mapToken(row: Record<string, unknown>) {
   };
 }
 
-function normalizeTokenOptions(options?: CreateIntegrationTokenOptions): Required<Pick<CreateIntegrationTokenOptions, "serviceKind" | "allowedPipeline" | "tokenKind" | "releaseVersion" | "releaseWaveKey" | "maxChildJobs">> & { allowedBlueprintComponentIds: string[] } {
-  const tokenKind = "BLUEPRINT_RELEASE";
+function normalizeTokenOptions(options?: CreateIntegrationTokenOptions): Required<Pick<CreateIntegrationTokenOptions, "serviceKind" | "allowedPipeline" | "tokenKind" | "releaseVersion" | "maxChildJobs">> {
+  const tokenKind = "SINGLE_COMPONENT";
   const releaseVersion = options?.releaseVersion ?? KCML_RELEASE.catalogVersion;
-  const releaseWaveKey = options?.releaseWaveKey ?? KCML_RELEASE_WAVE_KEY;
-  const selected = [...KCML_BLUEPRINT_COMPONENT_IDS];
   const maxChildJobs = 1;
-  if (selected.length === 0) {
-    throw Object.assign(new Error("blueprint_components_required"), { statusCode: 400 });
-  }
-  for (const componentId of selected) {
-    const contract = blueprintComponentContract(componentId);
-    if (!contract || contract.releaseVersion !== releaseVersion || contract.releaseWaveKey !== releaseWaveKey) {
-      throw Object.assign(new Error("unknown_blueprint_component"), { statusCode: 400 });
-    }
-  }
   return {
-    serviceKind: options?.serviceKind ?? "MCP",
-    allowedPipeline: options?.allowedPipeline ?? "MCP_ONBOARDING",
+    serviceKind: options?.serviceKind ?? "COMPONENT",
+    allowedPipeline: options?.allowedPipeline ?? "COMPONENT_ONBOARDING",
     tokenKind,
     releaseVersion,
-    releaseWaveKey,
-    maxChildJobs,
-    allowedBlueprintComponentIds: selected
+    maxChildJobs
   };
 }
 
@@ -271,32 +242,17 @@ export async function createIntegrationToken(
     const inserted = await client.query(
       `insert into integration_token
         (label, lookup_digest, key_id, fingerprint, created_by, onboarding_job_id,
-         descriptor, service_kind, allowed_pipeline, token_kind, release_version, release_wave_key,
-         blueprint_release_version, max_child_jobs, auto_activate_after_pass,
+         descriptor, service_kind, allowed_pipeline, token_kind, release_version,
+         max_child_jobs, auto_activate_after_pass,
          manual_approval_required_after_issuance, issued_at, initial_expires_at, expires_at, max_expires_at)
-       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
        returning *`,
       [label, digest, config.INTEGRATION_TOKEN_HMAC_KEY_ID, secret.fingerprint, actorId, resumeJobId ?? null, descriptor,
         normalizedOptions.serviceKind, normalizedOptions.allowedPipeline, normalizedOptions.tokenKind,
-        normalizedOptions.releaseVersion, normalizedOptions.releaseWaveKey, normalizedOptions.releaseVersion,
-        normalizedOptions.maxChildJobs, false,
+        normalizedOptions.releaseVersion, normalizedOptions.maxChildJobs, false,
         false,
         deadlines.issuedAt, deadlines.initialExpiresAt, deadlines.expiresAt, deadlines.maxExpiresAt]
     );
-    for (const componentId of normalizedOptions.allowedBlueprintComponentIds) {
-      const contract = blueprintComponentContract(componentId);
-      if (!contract) throw Object.assign(new Error("unknown_blueprint_component"), { statusCode: 400 });
-      await client.query(
-        `insert into integration_token_allowed_component(
-           token_id, blueprint_component_id, registration_type, release_version, release_wave_key
-         ) values ($1,$2,$3,$4,$5)
-         on conflict (token_id, blueprint_component_id) do update
-           set registration_type=excluded.registration_type,
-               release_version=excluded.release_version,
-               release_wave_key=excluded.release_wave_key`,
-        [inserted.rows[0].id, componentId, contract.registrationType, normalizedOptions.releaseVersion, normalizedOptions.releaseWaveKey]
-      );
-    }
     await appendAudit(client, {
       eventType: "integration_token.created",
       actorType: "admin",
@@ -310,8 +266,7 @@ export async function createIntegrationToken(
          allowedPipeline: normalizedOptions.allowedPipeline,
          tokenKind: "LEGACY_INTERNAL_METADATA",
          releaseVersion: normalizedOptions.releaseVersion,
-         releaseWaveKey: normalizedOptions.releaseWaveKey,
-         allowedBlueprintComponentIds: normalizedOptions.allowedBlueprintComponentIds,
+         genericComponentScope: true,
          maxChildJobs: normalizedOptions.maxChildJobs,
          fingerprint: secret.fingerprint,
          initialExpiresAt: deadlines.initialExpiresAt,
@@ -323,12 +278,6 @@ export async function createIntegrationToken(
   });
   return {
     ...mapToken(result),
-    allowedBlueprintComponents: normalizedOptions.allowedBlueprintComponentIds.map((componentId) => ({
-      componentId,
-      registrationType: blueprintComponentContract(componentId)?.registrationType ?? "",
-      releaseVersion: normalizedOptions.releaseVersion,
-      releaseWaveKey: normalizedOptions.releaseWaveKey
-    })),
     token: secret.value
   };
 }
@@ -412,17 +361,7 @@ export async function releaseQuarantinedOnboardingJob(
 
 export async function listIntegrationTokens(db: Db) {
   const result = await db.query(`
-    select it.*, oj.state as job_state, oj.code, oj.hostname, oj.heartbeat_at, oj.token_extended_at,
-      coalesce((
-        select jsonb_agg(jsonb_build_object(
-          'componentId', allowed.blueprint_component_id,
-          'registrationType', allowed.registration_type,
-          'releaseVersion', allowed.release_version,
-          'releaseWaveKey', allowed.release_wave_key
-        ) order by allowed.blueprint_component_id)
-        from integration_token_allowed_component allowed
-        where allowed.token_id=it.id
-      ), '[]'::jsonb) as allowed_blueprint_components
+    select it.*, oj.state as job_state, oj.code, oj.hostname, oj.heartbeat_at, oj.token_extended_at
       from integration_token it
       left join onboarding_job oj on oj.id=it.onboarding_job_id
      where it.deleted_at is null
@@ -436,18 +375,7 @@ export async function authenticateIntegrationToken(db: Db, token: string, config
   const digest = hmacToken(token, config.INTEGRATION_TOKEN_HMAC_KEY_BASE64);
   const result = await db.query(
     `select it.id, it.onboarding_job_id, it.fingerprint, it.expires_at, it.max_expires_at,
-            it.service_kind, it.allowed_pipeline, it.token_kind, it.release_version,
-            it.release_wave_key, it.max_child_jobs,
-            coalesce((
-              select jsonb_agg(jsonb_build_object(
-                'componentId', allowed.blueprint_component_id,
-                'registrationType', allowed.registration_type,
-                'releaseVersion', allowed.release_version,
-                'releaseWaveKey', allowed.release_wave_key
-              ) order by allowed.blueprint_component_id)
-              from integration_token_allowed_component allowed
-              where allowed.token_id=it.id
-            ), '[]'::jsonb) as allowed_blueprint_components
+            it.service_kind, it.allowed_pipeline, it.token_kind, it.release_version,it.max_child_jobs
        from integration_token it
        left join onboarding_job oj on oj.id=it.onboarding_job_id
       where it.lookup_digest=$1
@@ -466,15 +394,11 @@ export async function authenticateIntegrationToken(db: Db, token: string, config
     fingerprint: String(result.rows[0].fingerprint),
     expiresAt: String(result.rows[0].expires_at),
     maxExpiresAt: String(result.rows[0].max_expires_at),
-    serviceKind: (optionalText(result.rows[0].service_kind) ?? "MCP") as IntegrationTokenPrincipal["serviceKind"],
-    allowedPipeline: (optionalText(result.rows[0].allowed_pipeline) ?? "MCP_ONBOARDING") as IntegrationTokenPrincipal["allowedPipeline"],
+    serviceKind: (optionalText(result.rows[0].service_kind) ?? "COMPONENT") as IntegrationTokenPrincipal["serviceKind"],
+    allowedPipeline: (optionalText(result.rows[0].allowed_pipeline) ?? "COMPONENT_ONBOARDING") as IntegrationTokenPrincipal["allowedPipeline"],
     tokenKind: (optionalText(result.rows[0].token_kind) ?? "SINGLE_COMPONENT") as IntegrationTokenPrincipal["tokenKind"],
     releaseVersion: optionalText(result.rows[0].release_version) ?? KCML_RELEASE.catalogVersion,
-    releaseWaveKey: optionalText(result.rows[0].release_wave_key),
-    maxChildJobs: Number(result.rows[0].max_child_jobs ?? 1),
-    allowedBlueprintComponents: Array.isArray(result.rows[0].allowed_blueprint_components)
-      ? result.rows[0].allowed_blueprint_components as IntegrationTokenPrincipal["allowedBlueprintComponents"]
-      : []
+    maxChildJobs: Number(result.rows[0].max_child_jobs ?? 1)
   };
 }
 

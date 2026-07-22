@@ -12,7 +12,7 @@ afterEach(() => cleanup());
 describe("external component administration", () => {
   it("renders circuit policy, accepts keyboard input and has no axe violations", async () => {
     const target: ExternalTarget = { id: "target-1", targetKey: "payroll", displayName: "Payroll", baseUrl: "https://api.example.com", auditRequired: true, allowedPathPrefixes: ["/mcp"], connectTimeoutMs: 5000, requestTimeoutMs: 15000, maxRetries: 1, circuitState: "CLOSED", circuitFailureCount: 0, circuitFailureThreshold: 5, circuitOpenSeconds: 60, status: "ACTIVE", createdAt: "2026-07-21T00:00:00Z", revokedAt: null };
-    const { container } = render(<ExternalComponentsPage principals={[]} targets={[target]} permissions={[]} components={[]} role="ADMIN" onRefresh={vi.fn()} onCreatePrincipal={vi.fn()} onCreateTarget={vi.fn()} onRotatePrincipal={vi.fn()} onSetPrincipalStatus={vi.fn()} onSetTargetStatus={vi.fn()} onSetPermission={vi.fn()} />);
+    const { container } = render(<ExternalComponentsPage principals={[]} targets={[target]} permissions={[]} inboundPermissions={[]} components={[]} role="ADMIN" onRefresh={vi.fn()} onCreatePrincipal={vi.fn()} onCreateTarget={vi.fn()} onRotatePrincipal={vi.fn()} onSetPrincipalStatus={vi.fn()} onSetTargetStatus={vi.fn()} onSetPermission={vi.fn()} onSetInboundPermission={vi.fn()} />);
     expect(screen.getByText("CLOSED")).toBeTruthy();
     expect(screen.getByText("0/5, cooldown 60s")).toBeTruthy();
     const threshold = screen.getByLabelText("Circuit threshold");

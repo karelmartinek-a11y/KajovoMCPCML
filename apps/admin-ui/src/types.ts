@@ -69,15 +69,16 @@ export type ComponentPermission = {
   granted_at: string;
   revoked_at: string | null;
 };
-export type ComponentCredential = {
+export type ComponentAccessToken = {
   id: string;
-  public_id: string;
-  secret_fingerprint: string;
-  status: string;
+  fingerprint: string;
+  audience: string;
+  scope_names: string[];
   issued_at: string;
-  expires_at: string | null;
   last_used_at: string | null;
   revoked_at: string | null;
+  rotated_at: string | null;
+  rotation_reason: string | null;
 };
 export type Component = {
   id: string;
@@ -115,10 +116,12 @@ export type Component = {
     integrityReason: string | null;
   };
   releaseVersion: string;
+  artifact?: Record<string, unknown> | null;
+  manifestDigest?: string | null;
   createdAt: string;
   updatedAt: string;
   permissions?: ComponentPermission[];
-  credentials?: ComponentCredential[];
+  accessTokens?: ComponentAccessToken[];
   readinessGates?: Array<{
     gate_key: string;
     status: string;
@@ -176,10 +179,22 @@ export type Component = {
     challenge_id: string | null;
     challenge_nonce: string | null;
   }>;
+  runtimeTargets?: Array<Record<string, unknown>>;
+  tools?: Array<Record<string, unknown>>;
+  endpoints?: Array<Record<string, unknown>>;
+  pulseMasks?: Array<Record<string, unknown>>;
+  stateContracts?: Array<Record<string, unknown>>;
+  stateTransitions?: Array<Record<string, unknown>>;
+  stateSnapshots?: Array<Record<string, unknown>>;
+  e2eRuns?: Array<Record<string, unknown>>;
+  documentation?: Array<Record<string, unknown>>;
+  operationLeases?: Array<Record<string, unknown>>;
 };
-export type ExternalPrincipal = { id: string; publicId: string; displayName: string; description: string; status: string; createdAt: string; revokedAt: string | null; credentialCount: number };
+export type ExternalPrincipal = { id: string; publicId: string; displayName: string; description: string; status: string; createdAt: string; revokedAt: string | null; accessTokenCount: number };
 export type ExternalTarget = { id: string; targetKey: string; displayName: string; baseUrl: string; auditRequired: boolean; allowedPathPrefixes: string[]; connectTimeoutMs: number; requestTimeoutMs: number; maxRetries: number; circuitState: string; circuitFailureCount: number; circuitFailureThreshold: number; circuitOpenSeconds: number; status: string; createdAt: string; revokedAt: string | null };
 export type ExternalPermission = { id: string; component_id: string | null; external_principal_id: string | null; external_target_id: string; route_pattern: string; scope_name: string; granted_at: string; revoked_at: string | null; target_key: string; target_display_name: string; component_code: string | null; external_principal_public_id: string | null };
+export type ExternalInboundPermission = { id: string; external_principal_id: string; external_principal_public_id: string; target_component_id: string; target_component_code: string; route_pattern: string; scope_name: string; granted_at: string; revoked_at: string | null };
+export type PlatformWorkerAccessStatus = { configured: boolean; fingerprint: string | null; principalPublicId: string; principalStatus: string; rotatedAt: string | null; lastUsedAt: string | null; revokedAt: string | null };
 export type ManagedSecret = {
   id: string;
   stableName: string;
@@ -199,7 +214,7 @@ export type ManagedSecret = {
 };
 export type SecretGrant = {
   id: string;
-  principalKind: "KAJA" | "COMPONENT" | "INTEGRATION_TOKEN";
+  principalKind: "KAJA" | "COMPONENT";
   principalId: string | null;
   principalPublicId: string | null;
   allSecrets: boolean;
@@ -273,17 +288,7 @@ export type IntegrationToken = {
     technicalOwner: string;
     criticality: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
   };
-  serviceKind?: "MCP" | "EXTERNAL_API";
-  allowedPipeline?: "MCP_ONBOARDING" | "EXTERNAL_API_REGISTRATION";
   releaseVersion?: string;
-  releaseWaveKey?: string | null;
-  maxChildJobs?: number;
-  allowedBlueprintComponents?: Array<{
-    componentId: string;
-    registrationType: string;
-    releaseVersion: string;
-    releaseWaveKey: string | null;
-  }>;
   jobId: string | null;
   issuedAt: string;
   initialExpiresAt: string;
@@ -306,10 +311,7 @@ export type IntegrationSecret = IntegrationToken & {
   intakeUrls?: {
     recommendedIntakeUrl: string;
     nativeComponentIntakeUrl: string;
-    legacyServiceIntakeUrl: string;
-    externalApiIntakeUrl: string;
     componentCatalogUrl: string;
-    externalApiCatalogUrl: string;
   };
 };
 export type OnboardingGate = { gate_name: string; stage: string; status: string; evidence: Record<string, unknown>; correlation_id: string; started_at: string | null; completed_at: string | null };

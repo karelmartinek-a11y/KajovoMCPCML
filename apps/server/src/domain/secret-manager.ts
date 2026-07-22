@@ -9,12 +9,11 @@ import {
   encryptManagedSecret,
   fingerprintSecret,
   hmacToken,
-  decryptMfaSecret,
-  verifyPasswordLikeSecret
+  decryptMfaSecret
 } from "../security/secrets.js";
 import { appendAudit } from "./audit.js";
 
-export const SECRET_MANAGER_CATALOG_VERSION = "2026.07.22";
+export const SECRET_MANAGER_CATALOG_VERSION = "2026.07.22-compliance.1";
 const NAME_PATTERN = /^[A-Z][A-Z0-9_]{2,127}$/;
 const REVEAL_GRANT_MS = 15_000;
 
@@ -38,7 +37,7 @@ export type SecretSummary = {
 
 export type SecretGrantSummary = {
   id: string;
-  principalKind: "KAJA" | "COMPONENT" | "INTEGRATION_TOKEN";
+  principalKind: "KAJA" | "COMPONENT";
   principalId: string | null;
   principalPublicId: string | null;
   allSecrets: boolean;
@@ -59,11 +58,10 @@ export type SecretVersionSummary = {
 };
 
 export type SecretPrincipal = {
-  kind: "KAJA" | "COMPONENT" | "INTEGRATION_TOKEN";
+  kind: "KAJA" | "COMPONENT";
   id: string | null;
   publicId: string;
-  auditActorType: "kaja" | "component" | "integration_token";
-  tokenKind?: string;
+  auditActorType: "kaja" | "component";
 };
 
 type SecretManagerConfig = {
@@ -401,7 +399,7 @@ export async function restoreSecret(db: Db, actorId: string, correlationId: stri
 }
 
 export async function grantSecret(db: Db, actorId: string, correlationId: string, secretId: string, input: {
-  principalKind: "KAJA" | "COMPONENT" | "INTEGRATION_TOKEN";
+  principalKind: "KAJA" | "COMPONENT";
   principalId?: string | null;
   principalPublicId?: string | null;
   allSecrets?: boolean;
@@ -409,7 +407,7 @@ export async function grantSecret(db: Db, actorId: string, correlationId: string
   await tx(db, async (client) => {
     const secret = await client.query("select stable_name from secret_record where id=$1 and deleted_at is null for update", [secretId]);
     if (!secret.rowCount) throw Object.assign(new Error("not_found"), { statusCode: 404 });
-    if (!["KAJA", "COMPONENT", "INTEGRATION_TOKEN"].includes(input.principalKind)) throw Object.assign(new Error("invalid_secret_principal"), { statusCode: 400 });
+    if (!["KAJA", "COMPONENT"].includes(input.principalKind)) throw Object.assign(new Error("invalid_secret_principal"), { statusCode: 400 });
     const principalPublicId = normalizeSecretPrincipalPublicId(input.principalPublicId);
     if (!input.principalId && !principalPublicId) throw Object.assign(new Error("invalid_secret_principal"), { statusCode: 400 });
     const allSecrets = input.allSecrets === true;
@@ -465,71 +463,30 @@ export async function revokeSecretGrant(db: Db, actorId: string, correlationId: 
   });
 }
 
-export async function authenticateClientSecret(db: Db, config: SecretManagerConfig, clientId: string, clientSecret: string): Promise<SecretPrincipal | null> {
-  if (!clientId || !clientSecret) return null;
-  if (/^KCML[0-9]{4,}-C[0-9]{2,}$/i.test(clientId)) {
-    const digest = hmacToken(clientSecret, config.ACCESS_TOKEN_HMAC_KEY_BASE64);
-    const result = await db.query(
-      `select credential.id, credential.component_id, credential.public_id,
-              component.enabled, component.activation_state, component.lifecycle_state, component.operational_state,
-              component.egress_enabled, component.deregistered_at
-         from component_credential credential
-         join component on component.id=credential.component_id
-        where credential.public_id=$1
-          and credential.secret_digest=$2
-          and credential.status='ACTIVE'
-          and credential.revoked_at is null
-          and (credential.expires_at is null or credential.expires_at > now())
-          and component.enabled is true
-          and component.egress_enabled is true
-          and component.activation_state='ACTIVE'
-          and component.lifecycle_state='ACTIVE'
-          and component.operational_state not in ('QUARANTINED','RETIRED')
-          and component.deregistered_at is null`,
-      [clientId, digest]
-    );
-    if (!result.rowCount) return null;
-    await db.query("update component_credential set last_used_at=now() where id=$1", [result.rows[0].id]);
-    return { kind: "COMPONENT", id: String(result.rows[0].component_id), publicId: String(result.rows[0].public_id), auditActorType: "component" };
-  }
+export async function authenticatePrincipalAccessToken(db: Db, token: string, config: SecretManagerConfig): Promise<SecretPrincipal | null> {
+  if (!token.startsWith("kca_") || token.length < 80 || token.length > 120) return null;
+  const digest = hmacToken(token, config.ACCESS_TOKEN_HMAC_KEY_BASE64);
   const result = await db.query(
-    `select id, public_id, secret_hash
-       from kaja_credential
-      where public_id=$1
-        and active=true
-        and revoked_at is null
-        and deleted_at is null
-        and (expires_at is null or expires_at > now())`,
-    [clientId]
+    `select access.id,access.scope_names,access.issued_policy_epoch,access.issued_revocation_epoch,
+            principal.id principal_id,principal.public_id,principal.status,principal.policy_epoch,principal.revocation_epoch,
+            component.id component_id,component.enabled,component.egress_enabled,component.activation_state,
+            component.lifecycle_state,component.operational_state,component.deregistered_at
+       from principal_access_token access
+       join principal on principal.id=access.source_principal_id
+       join component on component.principal_id=principal.id
+      where access.lookup_digest=$1 and access.revoked_at is null and access.expires_at>now()`,
+    [digest]
   );
   if (!result.rowCount) return null;
-  const verified = await verifyPasswordLikeSecret(String(result.rows[0].secret_hash), clientSecret);
-  if (!verified) return null;
-  return { kind: "KAJA", id: String(result.rows[0].id), publicId: String(result.rows[0].public_id), auditActorType: "kaja" };
-}
-
-export async function authenticateSecretIntegrationToken(db: Db, token: string, config: SecretManagerConfig): Promise<SecretPrincipal | null> {
-  if (!token.startsWith("kci_") || token.length < 80 || token.length > 100) return null;
-  const digest = hmacToken(token, config.INTEGRATION_TOKEN_HMAC_KEY_BASE64);
-  const result = await db.query(
-    `select it.id, it.fingerprint, it.token_kind
-       from integration_token it
-      where it.lookup_digest=$1
-        and it.key_id=$2
-        and it.revoked_at is null
-        and it.deleted_at is null
-        and it.expires_at > now()`,
-    [digest, config.INTEGRATION_TOKEN_HMAC_KEY_ID]
-  );
-  if (!result.rowCount) return null;
-  await db.query("update integration_token set last_used_at=now(), usage_count=usage_count+1 where id=$1", [result.rows[0].id]);
-  return {
-    kind: "INTEGRATION_TOKEN",
-    id: String(result.rows[0].id),
-    publicId: String(result.rows[0].fingerprint),
-    auditActorType: "integration_token",
-    tokenKind: String(result.rows[0].token_kind ?? "SINGLE_COMPONENT")
-  };
+  const row = result.rows[0];
+  const scopes = row.scope_names as unknown;
+  if (!Array.isArray(scopes) || !(scopes as unknown[]).some((scope) => scope === "*" || scope === "secret.resolve")) return null;
+  if (row.status !== "ACTIVE" || Number(row.issued_policy_epoch) !== Number(row.policy_epoch)
+    || Number(row.issued_revocation_epoch) !== Number(row.revocation_epoch)
+    || !row.enabled || !row.egress_enabled || row.activation_state !== "ACTIVE" || row.lifecycle_state !== "ACTIVE"
+    || ["QUARANTINED", "RETIRED"].includes(String(row.operational_state)) || row.deregistered_at) return null;
+  await db.query("update principal_access_token set last_used_at=now() where id=$1", [row.id]);
+  return { kind: "COMPONENT", id: String(row.component_id), publicId: String(row.public_id), auditActorType: "component" };
 }
 
 async function assertGrant(client: pg.PoolClient, secretId: string, principal: SecretPrincipal): Promise<boolean> {

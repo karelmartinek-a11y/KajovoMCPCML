@@ -1,29 +1,30 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import type { AppServerConfig } from "../config.js";
 import type { Db } from "../db.js";
 import { ingestComponentAuditEvent } from "../domain/component-audit.js";
-import { authorizeComponentCall } from "../domain/component-auth.js";
+import { authorizeComponentCall, componentSourceIdentityMatches } from "../domain/component-auth.js";
 import {
   cancelComponentOnboarding,
-  claimComponentCredential,
   COMPONENT_CATALOG_VERSION,
   createComponentOnboarding,
   evaluateComponentReadiness,
   getComponent,
-  getComponentDiscovery,
   getComponentOnboarding,
   ingestComponentOperationEvent,
   ingestComponentPulse,
   listComponents,
+  queueComponentE2ERun,
+  queueComponentHeartbeatChallenge,
+  queueComponentStateQuery,
   recordComponentControlAck,
-  recordComponentE2EResult,
   recordComponentHeartbeat,
   recordComponentStateObservation,
-  revokeComponentCredential,
+  recordComponentStateSnapshot,
+  revokeComponentAccessToken,
   reviseComponentOnboarding,
-  rotateComponentCredential,
+  rotateComponentAccessToken,
   setComponentActivation,
   setComponentLifecycle,
   setComponentPermissionEnabled,
@@ -31,15 +32,18 @@ import {
   validateComponentManifest
 } from "../domain/component.js";
 import { authenticateIntegrationToken } from "../domain/onboarding.js";
-import { resolveSecret } from "../domain/secret-manager.js";
+import { fetchThroughEgress } from "../domain/egress-client.js";
+import { getPlatformWorkerAccessStatus, rotatePlatformWorkerAccessToken } from "../domain/platform-worker-access.js";
 import {
   createExternalPrincipal,
   createExternalTarget,
   dispatchExternalComponentCall,
   listExternalPermissions,
+  listExternalInboundPermissions,
   listExternalPrincipals,
   listExternalTargets,
-  rotateExternalPrincipalCredential,
+  rotateExternalPrincipalAccessToken,
+  setExternalInboundPermission,
   setExternalEntityStatus,
   setExternalPermission
 } from "../domain/external-component.js";
@@ -47,7 +51,6 @@ import { requireCsrf, sessionAccount } from "./admin-routes.js";
 import { hostOf, sendError } from "./errors.js";
 
 const idempotencyKeyPattern = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/;
-const claimSchema = z.object({ claimToken: z.string().min(32) }).strict();
 const activationSchema = z.object({ enabled: z.boolean() }).strict();
 const lifecycleSchema = z.object({ action: z.enum(["QUARANTINE", "RESTORE", "RETIRE", "DEREGISTER"]) }).strict();
 const permissionSchema = z.object({ enabled: z.boolean() }).strict();
@@ -56,24 +59,8 @@ const externalPrincipalSchema = z.object({ publicId: z.string().min(3).max(120).
 const externalTargetSchema = z.object({ targetKey: z.string().min(3).max(120).regex(/^[a-z0-9][a-z0-9.-]*$/), displayName: z.string().min(2).max(200), baseUrl: z.string().url(), allowedPathPrefixes: z.array(z.string().min(1).max(500)).max(30).optional(), requestTimeoutMs: z.number().int().min(100).max(60000).default(15000), maxRetries: z.number().int().min(0).max(3).default(1), circuitFailureThreshold: z.number().int().min(1).max(100).default(5), circuitOpenSeconds: z.number().int().min(1).max(3600).default(60) }).strict();
 const externalStatusSchema = z.object({ status: z.enum(["ACTIVE", "DISABLED", "REVOKED"]) }).strict();
 const externalPermissionSchema = z.object({ componentId: z.string().uuid().optional(), externalPrincipalId: z.string().uuid().optional(), externalTargetId: z.string().uuid(), routePattern: z.string().min(1).max(500), scopeName: z.string().min(2).max(200), enabled: z.boolean() }).strict();
+const externalInboundPermissionSchema = z.object({ externalPrincipalId: z.string().uuid(), targetComponentId: z.string().uuid(), routePattern: z.string().startsWith("/").max(500), scopeName: z.string().min(2).max(200), enabled: z.boolean() }).strict();
 const outboundGatewaySchema = z.object({ targetKey: z.string().min(3).max(120), routePath: z.string().startsWith("/").max(500), scopeName: z.string().min(2).max(200), payload: requiredJson }).strict();
-const componentMcpSchema = z.object({ jsonrpc: z.literal("2.0"), id: z.union([z.string(), z.number(), z.null()]).optional(), method: z.enum(["initialize", "notifications/initialized", "tools/list", "tools/call"]), params: z.unknown().optional() }).strict();
-const componentMcpCallSchema = z.object({ name: z.string(), arguments: z.record(z.unknown()).default({}) }).strict();
-const COMPONENT_RUNTIME_TOOLS = [
-  "kcml.pulse.accept", "kcml.pulse.emit", "kcml.audit.append", "kcml.state.push",
-  "kcml.state.query", "kcml.control.ack", "kcml.heartbeat.push", "kcml.heartbeat.challenge", "kcml.secret.resolve"
-] as const;
-const COMPONENT_RUNTIME_TOOL_SCHEMAS: Record<typeof COMPONENT_RUNTIME_TOOLS[number], Record<string, unknown>> = {
-  "kcml.pulse.accept": { type: "object", required: ["pulseType", "direction", "source", "target", "input", "output", "correlationId", "occurredAt"], additionalProperties: true },
-  "kcml.pulse.emit": { type: "object", required: ["targetKey", "routePath", "scopeName", "payload"], additionalProperties: false },
-  "kcml.audit.append": { type: "object", required: ["sequenceNumber", "eventType", "occurredAt", "inputDigest", "inputPayload", "processTrace", "outputDigest", "outputPayload", "success", "correlationId", "catalogVersion"], additionalProperties: true },
-  "kcml.state.push": { type: "object", required: ["stateKey", "observedAt", "correlationId", "declaredClientId", "componentCode", "policyEpoch", "statePayload"], additionalProperties: false },
-  "kcml.state.query": { type: "object", additionalProperties: false },
-  "kcml.control.ack": { type: "object", required: ["commandId", "commandType", "status", "ackPayload", "correlationId", "declaredClientId", "componentCode", "policyEpoch"], additionalProperties: false },
-  "kcml.heartbeat.push": { type: "object", required: ["heartbeatAt", "operationalState", "correlationId", "declaredClientId", "componentCode", "policyEpoch"], additionalProperties: true },
-  "kcml.heartbeat.challenge": { type: "object", additionalProperties: false },
-  "kcml.secret.resolve": { type: "object", required: ["stableName"], additionalProperties: false, properties: { stableName: { type: "string", minLength: 3, maxLength: 128 } } }
-};
 const identitySchema = z.object({
   clientId: z.string().min(3).max(160),
   componentCode: z.string().min(3).max(120),
@@ -118,6 +105,11 @@ const stateObservationSchema = z.object({
   queryId: z.string().uuid().optional(),
   statePayload: requiredJson
 }).strict();
+const stateSnapshotSchema = z.object({
+  queryId: z.string().uuid(), queryNonce: z.string().uuid(), observedAt: z.string().datetime({ offset: true }),
+  correlationId: z.string().uuid(), declaredClientId: z.string().min(3).max(160), componentCode: z.string().min(3).max(120),
+  policyEpoch: z.number().int().nonnegative(), states: z.record(z.unknown())
+}).strict();
 const controlAckSchema = z.object({
   commandId: z.string().uuid(),
   commandType: z.enum(["enable", "disable", "state", "heartbeat"]),
@@ -127,12 +119,6 @@ const controlAckSchema = z.object({
   declaredClientId: z.string().min(3).max(160),
   componentCode: z.string().min(3).max(120),
   policyEpoch: z.number().int().nonnegative()
-}).strict();
-const e2eResultSchema = z.object({
-  scenarioKey: z.string().min(2).max(160),
-  generatedOutput: requiredJson,
-  generatedOutputDigest: z.string().startsWith("sha256:").optional(),
-  correlationId: z.string().uuid()
 }).strict();
 type StateObservationBody = {
   stateKey: string;
@@ -233,12 +219,7 @@ function assertSourceIdentity(
   decision: Awaited<ReturnType<typeof authorizeComponentCall>>
 ) {
   if (!decision?.allow) return;
-  if (declared.clientId !== decision.sourceClientId) {
-    throw Object.assign(new Error("client_id_mismatch"), { statusCode: 403 });
-  }
-  if (declared.componentCode !== decision.sourceComponentCode) {
-    throw Object.assign(new Error("source_component_mismatch"), { statusCode: 403 });
-  }
+  if (!componentSourceIdentityMatches(decision, declared)) throw Object.assign(new Error("source_identity_mismatch"), { statusCode: 403 });
 }
 
 function assertTargetIdentity(
@@ -265,8 +246,7 @@ export function registerComponentRoutes(app: FastifyInstance, db: Db, config: Ap
     try {
       const manifest = validateComponentManifest(request.body);
       const job = await createComponentOnboarding(db, {
-        integrationTokenId: principal.id, idempotencyKey: key, manifest,
-        claimHmacKey: config.INTEGRATION_TOKEN_HMAC_KEY_BASE64, baseDomain: config.PUBLIC_BASE_DOMAIN, correlationId
+        integrationTokenId: principal.id, idempotencyKey: key, manifest, correlationId
       });
       return reply.code(202).header("etag", etagFor(job)).header("cache-control", "no-store").send({ job });
     } catch (error) {
@@ -319,8 +299,21 @@ export function registerComponentRoutes(app: FastifyInstance, db: Db, config: Ap
     try {
       const result = await evaluateComponentReadiness(db, {
         jobId: (request.params as { id: string }).id, integrationTokenId: principal.id,
-        claimHmacKey: config.INTEGRATION_TOKEN_HMAC_KEY_BASE64, correlationId
+        accessTokenHmacKey: config.ACCESS_TOKEN_HMAC_KEY_BASE64,
+        accessTokenHmacKeyId: config.ACCESS_TOKEN_HMAC_KEY_ID,
+        vaultMasterKey: config.CONFIG_VAULT_MASTER_KEY_BASE64,
+        vaultMasterKeyId: config.CONFIG_VAULT_MASTER_KEY_ID,
+        integrationTokenHmacKey: config.INTEGRATION_TOKEN_HMAC_KEY_BASE64,
+        integrationTokenHmacKeyId: config.INTEGRATION_TOKEN_HMAC_KEY_ID,
+        correlationId
       });
+      if (!result.accessToken) {
+        await queueComponentE2ERun(db, {
+          jobId: (request.params as { id: string }).id,
+          integrationTokenId: principal.id,
+          correlationId
+        });
+      }
       return reply.header("etag", etagFor(result.job)).header("cache-control", "no-store").send(result);
     } catch (error) {
       return routeError(reply, error, correlationId);
@@ -330,42 +323,13 @@ export function registerComponentRoutes(app: FastifyInstance, db: Db, config: Ap
   app.post("/v2/component-onboardings/:id/credential-claims", async (request, reply) => {
     const correlationId = randomUUID();
     if (hostOf(request.headers.host) !== config.REGISTER_HOST) return sendError(reply, 404, "not_found", undefined, correlationId);
-    const principal = await integrationPrincipal(db, config, request, reply, correlationId);
-    if (!principal) return;
-    try {
-      const body = claimSchema.parse(request.body);
-      const credential = await claimComponentCredential(db, {
-        jobId: (request.params as { id: string }).id, integrationTokenId: principal.id, claimToken: body.claimToken,
-        claimHmacKey: config.INTEGRATION_TOKEN_HMAC_KEY_BASE64,
-        credentialHmacKey: config.ACCESS_TOKEN_HMAC_KEY_BASE64,
-        keyId: config.ACCESS_TOKEN_HMAC_KEY_ID,
-        correlationId
-      });
-      return reply.header("cache-control", "no-store").send({ credential });
-    } catch (error) {
-      return routeError(reply, error, correlationId);
-    }
+    return sendError(reply, 410, "credential_claim_replaced_by_access_token_handoff", undefined, correlationId);
   });
 
   app.post("/v2/component-onboardings/:id/e2e-results", async (request, reply) => {
     const correlationId = randomUUID();
     if (hostOf(request.headers.host) !== config.REGISTER_HOST) return sendError(reply, 404, "not_found", undefined, correlationId);
-    const principal = await integrationPrincipal(db, config, request, reply, correlationId);
-    if (!principal) return;
-    try {
-      const body = e2eResultSchema.parse(request.body);
-      const result = await recordComponentE2EResult(db, {
-        jobId: (request.params as { id: string }).id,
-        integrationTokenId: principal.id,
-        scenarioKey: body.scenarioKey,
-        generatedOutput: body.generatedOutput,
-        generatedOutputDigest: body.generatedOutputDigest,
-        correlationId: body.correlationId
-      });
-      return reply.code(result.status === "PASS" ? 202 : 409).header("cache-control", "no-store").send({ ...result, correlationId: body.correlationId });
-    } catch (error) {
-      return routeError(reply, error, correlationId);
-    }
+    return sendError(reply, 410, "client_supplied_e2e_results_forbidden", "KCML executes and records onboarding E2E evidence.", correlationId);
   });
 
   app.delete("/v2/component-onboardings/:id", async (request, reply) => {
@@ -386,6 +350,23 @@ export function registerComponentRoutes(app: FastifyInstance, db: Db, config: Ap
     return { components: await listComponents(db), catalogVersion: COMPONENT_CATALOG_VERSION };
   });
 
+  app.get("/api/platform-worker-access", async (request, reply) => {
+    const correlationId = randomUUID();
+    if (!await adminPrincipal(db, config, request, reply, correlationId)) return;
+    return { status: await getPlatformWorkerAccessStatus(db) };
+  });
+
+  app.post("/api/platform-worker-access/rotate", async (request, reply) => {
+    const correlationId = randomUUID();
+    const actorId = await adminPrincipal(db, config, request, reply, correlationId, true);
+    if (!actorId) return;
+    try {
+      return reply.header("cache-control", "no-store").send(await rotatePlatformWorkerAccessToken(db, config, { actorId, correlationId }));
+    } catch (error) {
+      return routeError(reply, error, correlationId);
+    }
+  });
+
   app.get("/api/external-principals", async (request, reply) => {
     const correlationId = randomUUID();
     if (!await adminPrincipal(db, config, request, reply, correlationId)) return;
@@ -400,12 +381,28 @@ export function registerComponentRoutes(app: FastifyInstance, db: Db, config: Ap
     catch (error) { return routeError(reply, error, correlationId); }
   });
 
-  app.post("/api/external-principals/:id/credentials/rotate", async (request, reply) => {
+  app.post("/api/external-principals/:id/access-tokens/rotate", async (request, reply) => {
     const correlationId = randomUUID();
     const actorId = await adminPrincipal(db, config, request, reply, correlationId, true);
     if (!actorId) return;
-    try { return await rotateExternalPrincipalCredential(db, { principalId: (request.params as { id: string }).id, actorId, hmacKey: config.ACCESS_TOKEN_HMAC_KEY_BASE64, keyId: config.ACCESS_TOKEN_HMAC_KEY_ID, correlationId }); }
+    try { return reply.header("cache-control", "no-store").send(await rotateExternalPrincipalAccessToken(db, { principalId: (request.params as { id: string }).id, actorId, hmacKey: config.ACCESS_TOKEN_HMAC_KEY_BASE64, hmacKeyId: config.ACCESS_TOKEN_HMAC_KEY_ID, correlationId })); }
     catch (error) { return routeError(reply, error, correlationId); }
+  });
+
+  app.post("/api/external-principals/:id/credentials/rotate", async (_request, reply) => sendError(reply, 410, "external_principal_credentials_retired"));
+
+  app.post("/api/external-inbound-permissions", async (request, reply) => {
+    const correlationId = randomUUID();
+    const actorId = await adminPrincipal(db, config, request, reply, correlationId, true);
+    if (!actorId) return;
+    try { await setExternalInboundPermission(db, { ...externalInboundPermissionSchema.parse(request.body), actorId, correlationId }); return { ok: true }; }
+    catch (error) { return routeError(reply, error, correlationId); }
+  });
+
+  app.get("/api/external-inbound-permissions", async (request, reply) => {
+    const correlationId = randomUUID();
+    if (!await adminPrincipal(db, config, request, reply, correlationId)) return;
+    return { permissions: await listExternalInboundPermissions(db) };
   });
 
   app.post("/api/external-principals/:id/status", async (request, reply) => {
@@ -503,75 +500,88 @@ export function registerComponentRoutes(app: FastifyInstance, db: Db, config: Ap
     }
   });
 
-  app.post("/api/components/:id/credentials/:credentialId/revoke", async (request, reply) => {
+  app.post("/api/components/:id/access-tokens/:tokenId/revoke", async (request, reply) => {
     const correlationId = randomUUID();
     const actorId = await adminPrincipal(db, config, request, reply, correlationId, true);
     if (!actorId) return;
     try {
-      const params = request.params as { id: string; credentialId: string };
-      return { component: await revokeComponentCredential(db, {
-        componentId: params.id, credentialId: params.credentialId, actorId, correlationId
+      const params = request.params as { id: string; tokenId: string };
+      return { component: await revokeComponentAccessToken(db, {
+        componentId: params.id, tokenId: params.tokenId, actorId, correlationId
       }) };
     } catch (error) {
       return routeError(reply, error, correlationId);
     }
   });
 
-  app.post("/api/components/:id/credentials/:credentialId/rotate", async (request, reply) => {
+  app.post("/api/components/:id/access-tokens/:tokenId/rotate", async (request, reply) => {
     const correlationId = randomUUID();
     const actorId = await adminPrincipal(db, config, request, reply, correlationId, true);
     if (!actorId) return;
     try {
-      const params = request.params as { id: string; credentialId: string };
-      return reply.header("cache-control", "no-store").send(await rotateComponentCredential(db, {
-        componentId: params.id, credentialId: params.credentialId, actorId,
-        credentialHmacKey: config.ACCESS_TOKEN_HMAC_KEY_BASE64, keyId: config.ACCESS_TOKEN_HMAC_KEY_ID, correlationId
+      const params = request.params as { id: string; tokenId: string };
+      return reply.header("cache-control", "no-store").send(await rotateComponentAccessToken(db, {
+        componentId: params.id, tokenId: params.tokenId, actorId,
+        accessTokenHmacKey: config.ACCESS_TOKEN_HMAC_KEY_BASE64, accessTokenHmacKeyId: config.ACCESS_TOKEN_HMAC_KEY_ID, correlationId
       }));
     } catch (error) {
       return routeError(reply, error, correlationId);
     }
   });
 
-  app.get("/.well-known/kcml-component", { config: { rateLimit: { max: 60, timeWindow: "1 minute" } } }, async (request, reply) => {
+  app.post("/api/components/:id/credentials/:credentialId/revoke", async (_request, reply) =>
+    sendError(reply, 410, "component_credentials_retired"));
+  app.post("/api/components/:id/credentials/:credentialId/rotate", async (_request, reply) =>
+    sendError(reply, 410, "component_credentials_retired"));
+
+  app.post("/api/components/:id/e2e-runs", async (request, reply) => {
     const correlationId = randomUUID();
-    const host = hostOf(request.headers.host);
+    const actorId = await adminPrincipal(db, config, request, reply, correlationId, true);
+    if (!actorId) return;
     try {
-      const component = await getComponentDiscovery(db, host);
-      return reply.header("cache-control", "no-store").send({ component, catalogVersion: COMPONENT_CATALOG_VERSION });
+      const run = await queueComponentE2ERun(db, { componentId: (request.params as { id: string }).id, correlationId });
+      return reply.code(202).send({ run, correlationId });
     } catch (error) {
       return routeError(reply, error, correlationId);
     }
   });
 
+  app.post("/api/components/:id/state-queries", async (request, reply) => {
+    const correlationId = randomUUID();
+    const actorId = await adminPrincipal(db, config, request, reply, correlationId, true);
+    if (!actorId) return;
+    try {
+      const dispatch = await queueComponentStateQuery(db, { componentId: (request.params as { id: string }).id, actorId, correlationId });
+      return reply.code(202).send({ dispatch, correlationId });
+    } catch (error) { return routeError(reply, error, correlationId); }
+  });
+
+  app.post("/api/components/:id/heartbeat-challenges", async (request, reply) => {
+    const correlationId = randomUUID();
+    const actorId = await adminPrincipal(db, config, request, reply, correlationId, true);
+    if (!actorId) return;
+    try {
+      const dispatch = await queueComponentHeartbeatChallenge(db, { componentId: (request.params as { id: string }).id, actorId, correlationId });
+      return reply.code(202).send({ dispatch, correlationId });
+    } catch (error) { return routeError(reply, error, correlationId); }
+  });
+
+  app.get("/.well-known/kcml-component", { config: { rateLimit: { max: 60, timeWindow: "1 minute" } } }, async (request, reply) => {
+    const correlationId = randomUUID();
+    const host = hostOf(request.headers.host);
+    if (!host || host === config.ADMIN_HOST || host === config.AUTH_HOST || host === config.REGISTER_HOST) {
+      return sendError(reply, 404, "not_found", undefined, correlationId);
+    }
+    return reply.header("cache-control", "public, max-age=300").send({
+      mcpEndpoint: `https://${host}/mcp`,
+      protectedResourceMetadata: `https://${host}/.well-known/oauth-protected-resource`,
+      catalogVersion: COMPONENT_CATALOG_VERSION
+    });
+  });
+
   app.post("/v2/component-mcp", { config: { rateLimit: { max: 240, timeWindow: "1 minute" } } }, async (request, reply) => {
     const correlationId = randomUUID();
-    const body = componentMcpSchema.safeParse(request.body);
-    if (!body.success) return reply.send({ jsonrpc: "2.0", id: null, error: { code: -32600, message: "Invalid Request", data: { correlationId } } });
-    const requiredScope = body.data.method === "initialize" ? "mcp.initialize" : body.data.method === "notifications/initialized" ? "mcp.notifications.initialized" : body.data.method === "tools/list" ? "mcp.tools.list" : "mcp.tools.call";
-    const decision = await authorizeRuntime(db, config, request, requiredScope, "/v2/component-mcp", correlationId);
-    if (!decision?.allow || !decision.targetComponentId) return reply.send({ jsonrpc: "2.0", id: body.data.id ?? null, error: { code: -32001, message: "Unauthorized", data: { code: decision?.reasonCode ?? "invalid_token", correlationId } } });
-    if (body.data.method === "initialize") return reply.send({ jsonrpc: "2.0", id: body.data.id ?? null, result: { protocolVersion: "2025-11-25", capabilities: { tools: { listChanged: false } }, serverInfo: { name: "kcml-component-runtime", version: COMPONENT_CATALOG_VERSION } } });
-    if (body.data.method === "notifications/initialized") return reply.code(202).send();
-    if (body.data.method === "tools/list") return reply.send({ jsonrpc: "2.0", id: body.data.id ?? null, result: { tools: COMPONENT_RUNTIME_TOOLS.map((name) => ({ name, description: `KCML component runtime operation ${name}`, inputSchema: COMPONENT_RUNTIME_TOOL_SCHEMAS[name] })) } });
-    const call = componentMcpCallSchema.safeParse(body.data.params);
-    if (!call.success || !COMPONENT_RUNTIME_TOOLS.includes(call.data.name as typeof COMPONENT_RUNTIME_TOOLS[number])) return reply.send({ jsonrpc: "2.0", id: body.data.id ?? null, error: { code: -32602, message: "Invalid tool", data: { correlationId } } });
-    try {
-      const args = call.data.arguments;
-      let result: unknown;
-      if (call.data.name === "kcml.pulse.accept") { const pulse = fullPulseSchema.parse(args) as ComponentPulseEnvelope; assertSourceIdentity(pulse.source as { clientId: string; componentCode: string }, decision); assertTargetIdentity(pulse.target as { componentCode: string; audience?: string }, decision); result = await ingestComponentPulse(db, decision.targetComponentId, pulse); }
-      else if (call.data.name === "kcml.audit.append") result = await ingestComponentAuditEvent(db, decision.targetComponentId, auditEventSchema.parse(args));
-      else if (call.data.name === "kcml.state.push") { const state = stateObservationSchema.parse(args) as StateObservationBody; if (state.declaredClientId !== decision.sourceClientId || state.componentCode !== decision.targetComponentCode) throw Object.assign(new Error("client_id_mismatch"), { statusCode: 403 }); result = await recordComponentStateObservation(db, decision.targetComponentId, { ...state, declaredComponentCode: state.componentCode }); }
-      else if (call.data.name === "kcml.control.ack") { const ack = controlAckSchema.parse(args) as ControlAckBody; if (ack.declaredClientId !== decision.sourceClientId || ack.componentCode !== decision.targetComponentCode) throw Object.assign(new Error("client_id_mismatch"), { statusCode: 403 }); result = await recordComponentControlAck(db, decision.targetComponentId, { ...ack, declaredComponentCode: ack.componentCode }); }
-      else if (call.data.name === "kcml.heartbeat.push") { const heartbeat = heartbeatSchema.parse(args); if (heartbeat.declaredClientId !== decision.sourceClientId || heartbeat.componentCode !== decision.targetComponentCode) throw Object.assign(new Error("client_id_mismatch"), { statusCode: 403 }); result = await recordComponentHeartbeat(db, decision.targetComponentId, { ...heartbeat, declaredComponentCode: heartbeat.componentCode }); }
-      else if (call.data.name === "kcml.pulse.emit") { const outbound = outboundGatewaySchema.parse(args); result = await dispatchExternalComponentCall(db, { sourceComponentId: decision.sourceComponentId ?? decision.targetComponentId, targetKey: outbound.targetKey, routePath: outbound.routePath, scopeName: outbound.scopeName, payload: outbound.payload, correlationId, hmacKey: config.ACCESS_TOKEN_HMAC_KEY_BASE64, keyId: config.ACCESS_TOKEN_HMAC_KEY_ID }); }
-      else if (call.data.name === "kcml.state.query") result = (await db.query("select id,status,requested_at,deadline_at from component_state_query_run where component_id=$1 order by requested_at desc limit 1", [decision.targetComponentId])).rows[0] ?? null;
-      else if (call.data.name === "kcml.heartbeat.challenge") result = (await db.query("select id,challenge_nonce,expires_at,status from component_heartbeat_challenge where component_id=$1 order by created_at desc limit 1", [decision.targetComponentId])).rows[0] ?? null;
-      else { if (!decision.sourceComponentId || !decision.sourceClientId) throw Object.assign(new Error("component_identity_required"), { statusCode: 403 }); result = await resolveSecret(db, config, { kind: "COMPONENT", id: decision.sourceComponentId, publicId: decision.sourceClientId, auditActorType: "component" }, String(args.stableName), correlationId); }
-      return reply.send({ jsonrpc: "2.0", id: body.data.id ?? null, result: { structuredContent: result } });
-    } catch (error) {
-      const code = error instanceof Error ? error.message.split(":")[0] : "runtime_tool_failed";
-      return reply.send({ jsonrpc: "2.0", id: body.data.id ?? null, error: { code: -32602, message: code, data: { correlationId } } });
-    }
+    return sendError(reply, 410, "component_mcp_moved", "Use the canonical POST /mcp endpoint.", correlationId);
   });
 
   app.post("/v2/component-pulse", { config: { rateLimit: { max: 120, timeWindow: "1 minute" } } }, async (request, reply) => {
@@ -582,7 +592,10 @@ export function registerComponentRoutes(app: FastifyInstance, db: Db, config: Ap
       const body = fullPulseSchema.parse(request.body) as ComponentPulseEnvelope;
       assertSourceIdentity(body.source as { clientId: string; componentCode: string }, decision);
       assertTargetIdentity(body.target as { componentCode: string; audience?: string }, decision);
-      const receipt = await ingestComponentPulse(db, decision.targetComponentId, body);
+      if (body.accessTokenFingerprint !== decision.tokenFingerprint) return sendError(reply, 403, "access_token_fingerprint_mismatch", undefined, correlationId);
+      const receipt = await ingestComponentPulse(db, decision.targetComponentId, body, {
+        tokenFingerprint: decision.tokenFingerprint ?? "", permissionEpoch: decision.policyEpoch ?? 0, sourceClientId: decision.sourceClientId ?? ""
+      });
       return reply.code(202).send({ ...receipt, policyEpoch: decision.policyEpoch });
     } catch (error) {
       return routeError(reply, error, correlationId);
@@ -596,6 +609,8 @@ export function registerComponentRoutes(app: FastifyInstance, db: Db, config: Ap
     try {
       const gateway = outboundGatewaySchema.safeParse(request.body);
       if (gateway.success) {
+        const accessToken = bearer(request);
+        if (!accessToken || !decision.tokenFingerprint) return sendError(reply, 401, "invalid_token", undefined, correlationId);
         return reply.code(202).send(await dispatchExternalComponentCall(db, {
           sourceComponentId: decision.sourceComponentId,
           targetKey: gateway.data.targetKey,
@@ -603,15 +618,45 @@ export function registerComponentRoutes(app: FastifyInstance, db: Db, config: Ap
           scopeName: gateway.data.scopeName,
           payload: gateway.data.payload,
           correlationId,
-          hmacKey: config.ACCESS_TOKEN_HMAC_KEY_BASE64,
-          keyId: config.ACCESS_TOKEN_HMAC_KEY_ID
+          accessToken,
+          tokenFingerprint: decision.tokenFingerprint
         }));
       }
       const body = fullPulseSchema.parse(request.body) as ComponentPulseEnvelope;
       if (body.direction !== "OUTGOING") return sendError(reply, 400, "invalid_pulse_direction", undefined, correlationId);
       assertSourceIdentity(body.source as { clientId: string; componentCode: string }, decision);
-      const receipt = await ingestComponentPulse(db, decision.sourceComponentId, body);
-      return reply.code(202).send({ ...receipt, policyEpoch: decision.policyEpoch });
+      if (body.accessTokenFingerprint !== decision.tokenFingerprint) return sendError(reply, 403, "access_token_fingerprint_mismatch", undefined, correlationId);
+      const rawTargetCode = (body.target as Record<string, unknown>).componentCode;
+      const targetCode = typeof rawTargetCode === "string" ? rawTargetCode : "";
+      const target = await db.query("select id,hostname from component where code=$1 and lifecycle_state<>'DEREGISTERED'", [targetCode]);
+      if (!target.rowCount) return sendError(reply, 404, "target_component_not_found", undefined, correlationId);
+      const targetHostname = String(target.rows[0].hostname);
+      const token = bearer(request);
+      if (!token) return sendError(reply, 401, "invalid_token", undefined, correlationId);
+      const deliveredEnvelope = { ...body, direction: "INCOMING" as const };
+      try {
+        const delivered = await fetchThroughEgress(config, {
+          url: `https://${targetHostname}/v2/component-pulse`, method: "POST",
+          headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+          body: Buffer.from(JSON.stringify(deliveredEnvelope)), allowlist: [targetHostname],
+          purpose: "component.pulse.registered_dispatch", correlationId: body.correlationId, ttlSeconds: 45
+        });
+        if (delivered.status < 200 || delivered.status >= 300) throw new Error(`pulse_delivery_http_${delivered.status}`);
+        const receipt = await ingestComponentPulse(db, decision.sourceComponentId, body, {
+          tokenFingerprint: decision.tokenFingerprint ?? "", permissionEpoch: decision.policyEpoch ?? 0, sourceClientId: decision.sourceClientId ?? ""
+        });
+        return reply.code(202).send({ ...receipt, delivered: true, targetHostname, policyEpoch: decision.policyEpoch });
+      } catch (error) {
+        const output = { error: error instanceof Error ? error.message : "pulse_delivery_failed", targetHostname };
+        await ingestComponentOperationEvent(db, decision.sourceComponentId, {
+          operationKey: `pulse:${body.pulseType}:delivery`, inputDigest: `sha256:${createHash("sha256").update(JSON.stringify(body.input)).digest("hex")}`,
+          inputPayload: body.input, processTrace: { transport: "KCML_EGRESS", targetHostname },
+          outputDigest: `sha256:${createHash("sha256").update(JSON.stringify(output)).digest("hex")}`, outputPayload: output,
+          success: false, correlationId: body.correlationId, causationId: body.causationId, traceId: body.traceId,
+          accessTokenFingerprint: decision.tokenFingerprint ?? undefined, occurredAt: new Date().toISOString()
+        });
+        return sendError(reply, 502, "pulse_delivery_failed", undefined, correlationId);
+      }
     } catch (error) {
       return routeError(reply, error, correlationId);
     }
@@ -630,7 +675,7 @@ export function registerComponentRoutes(app: FastifyInstance, db: Db, config: Ap
         ...body,
         declaredComponentCode: body.componentCode
       });
-      return reply.code(202).send({ ...receipt, correlationId: body.correlationId });
+      return reply.code(receipt.accepted ? 202 : 422).send({ ...receipt, correlationId: body.correlationId });
     } catch (error) {
       return routeError(reply, error, correlationId);
     }
@@ -649,7 +694,7 @@ export function registerComponentRoutes(app: FastifyInstance, db: Db, config: Ap
         ...body,
         declaredComponentCode: body.componentCode
       });
-      return reply.code(202).send({ ...receipt, correlationId: body.correlationId });
+      return reply.code(receipt.accepted ? 202 : 422).send({ ...receipt, correlationId: body.correlationId });
     } catch (error) {
       return routeError(reply, error, correlationId);
     }
@@ -657,18 +702,20 @@ export function registerComponentRoutes(app: FastifyInstance, db: Db, config: Ap
 
   app.post("/v2/component-state-query", { config: { rateLimit: { max: 120, timeWindow: "1 minute" } } }, async (request, reply) => {
     const correlationId = randomUUID();
-    const decision = await authorizeRuntime(db, config, request, "component.state.query", "/v2/component-state-query", correlationId);
+    return sendError(reply, 410, "state_query_requires_control_dispatch", "KCML issues state queries through the durable control-dispatch worker.", correlationId);
+  });
+
+  app.post("/v2/component-state-response", { config: { rateLimit: { max: 120, timeWindow: "1 minute" } } }, async (request, reply) => {
+    const correlationId = randomUUID();
+    const decision = await authorizeRuntime(db, config, request, "component.state.query", "/v2/component-state-response", correlationId);
     if (!decision?.allow || !decision.targetComponentId) return sendError(reply, 403, decision?.reasonCode ?? "invalid_token", undefined, correlationId);
     try {
-      const body = stateObservationSchema.parse(request.body) as StateObservationBody;
+      const body = stateSnapshotSchema.parse(request.body);
       if (body.declaredClientId !== decision.sourceClientId || body.componentCode !== decision.targetComponentCode) {
         return sendError(reply, 403, "client_id_mismatch", undefined, correlationId);
       }
-      const receipt = await recordComponentStateObservation(db, decision.targetComponentId, {
-        ...body,
-        declaredComponentCode: body.componentCode
-      });
-      return reply.code(202).header("warning", `299 - legacy state query endpoint acts as state.push; use /v2/component-state-push`).send({ ...receipt, correlationId: body.correlationId });
+      const receipt = await recordComponentStateSnapshot(db, decision.targetComponentId, { ...body, declaredComponentCode: body.componentCode });
+      return reply.code(receipt.accepted ? 202 : 422).send({ ...receipt, correlationId: body.correlationId });
     } catch (error) {
       return routeError(reply, error, correlationId);
     }

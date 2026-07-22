@@ -1,6 +1,6 @@
 {
   "name": "@kcml/server",
-  "version": "2026.07.24",
+  "version": "2026.7.22-compliance.1",
   "private": true,
   "type": "module",
   "scripts": {
@@ -9,6 +9,10 @@
     "start": "node dist/index.js",
     "start:worker": "node dist/cli/onboarding-worker.js",
     "worker": "tsx src/cli/onboarding-worker.ts",
+    "start:component-control-worker": "node dist/cli/component-control-worker.js",
+    "component-control-worker": "tsx src/cli/component-control-worker.ts",
+    "start:component-e2e-worker": "node dist/cli/component-e2e-worker.js",
+    "component-e2e-worker": "tsx src/cli/component-e2e-worker.ts",
     "start:monitor": "node dist/cli/monitor.js",
     "monitor": "tsx src/cli/monitor.ts",
     "start:egress-proxy": "node dist/cli/egress-proxy.js",

@@ -12,20 +12,10 @@ export type OnboardingHandoff = {
   token: string;
   initialExpiresAt: string;
   programmerApiUrl: string;
-  releaseWaveKey?: string | null;
-  allowedBlueprintComponents?: Array<{
-    componentId: string;
-    registrationType: string;
-    releaseVersion: string;
-    releaseWaveKey: string | null;
-  }>;
   intakeUrls?: {
     recommendedIntakeUrl: string;
     nativeComponentIntakeUrl: string;
-    legacyServiceIntakeUrl: string;
-    externalApiIntakeUrl: string;
     componentCatalogUrl: string;
-    externalApiCatalogUrl: string;
   };
   catalogVersion: string;
 };
@@ -33,15 +23,6 @@ export type OnboardingHandoff = {
 export function onboardingHandoffText(handoff: OnboardingHandoff): string {
   const expiresAt = formatDate(handoff.initialExpiresAt);
   const intakeUrl = handoff.intakeUrls?.recommendedIntakeUrl ?? handoff.programmerApiUrl;
-  const componentScope = handoff.allowedBlueprintComponents?.map((component) => `${component.componentId}:${component.registrationType}`).join(", ");
-  const scopeLines = handoff.allowedBlueprintComponents?.length
-    ? [
-      `Release wave: ${handoff.releaseWaveKey ?? "neuvedeno"}`,
-      `Povolené blueprint komponenty: ${componentScope || "žádné"}`,
-      `Native component intake: ${handoff.intakeUrls?.nativeComponentIntakeUrl ?? intakeUrl}`,
-      `Legacy service intake pouze pro kompatibilitu: ${handoff.intakeUrls?.legacyServiceIntakeUrl ?? handoff.programmerApiUrl}`
-    ]
-    : [];
   return [
     "Automatická integrace prvku do KajovoMCPCML",
     "",
@@ -54,7 +35,8 @@ export function onboardingHandoffText(handoff: OnboardingHandoff): string {
     `Integrační token: ${handoff.token}`,
     `První upload proveďte nejpozději do: ${expiresAt}`,
     `Doporučené programátorské API: ${intakeUrl}`,
-    ...scopeLines,
+    `Kanonický component intake: ${handoff.intakeUrls?.nativeComponentIntakeUrl ?? intakeUrl}`,
+    "Rozsah tokenu: registrace jednoho libovolného prvku; token se spotřebuje až po úplném úspěchu.",
     "",
     `Postupujte přesně podle přiloženého dokumentu KajovoCML ${handoff.catalogVersion}.`,
     "Po přijetí manifestu systém sám přidělí KCML identitu, hostname, authorization snapshot a po úspěšném ověření předá přístupový token.",

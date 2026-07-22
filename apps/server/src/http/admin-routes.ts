@@ -136,7 +136,7 @@ const secretStatusSchema = z.object({
   status: z.enum(["ACTIVE", "DISABLED"])
 }).strict();
 const secretGrantSchema = z.object({
-  principalKind: z.enum(["KAJA", "COMPONENT", "INTEGRATION_TOKEN"]),
+  principalKind: z.enum(["KAJA", "COMPONENT"]),
   principalId: z.string().uuid().nullable().optional(),
   principalPublicId: z.string().trim().min(1).max(160).nullable().optional(),
   allSecrets: z.boolean().optional()

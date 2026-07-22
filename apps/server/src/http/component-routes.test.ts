@@ -43,24 +43,8 @@ describe("component public route protection", () => {
     expect(routeRateLimits.get("POST /v2/component-mcp")).toEqual({ max: 240, timeWindow: "1 minute" });
   });
 
-  it("returns a public discovery projection without credentials, permissions, contacts or audit internals", async () => {
-    const query = vi.fn(async (sql: string, params?: unknown[]) => {
-      expect(sql).toContain("from component c");
-      expect(params).toEqual(["kcml0002.hcasc.cz"]);
-      return {
-        rowCount: 1,
-        rows: [{
-        id: "00000000-0000-0000-0000-000000000002", code: "KCML0002", hostname: "kcml0002.hcasc.cz",
-        display_name: "Referenční komponenta", description: "Veřejný popis", category: "MCP_SERVER",
-        registration_type: "MCP_SERVER", component_role: "SERVICE", lifecycle_state: "ACTIVE", activation_state: "ACTIVE",
-        operational_state: "HEALTHY", monitoring_state: "HEALTHY", recertification_state: "CURRENT", enabled: true,
-        policy_epoch: 4, release_version: KCML_RELEASE.catalogVersion, created_at: "2026-07-19T00:00:00.000Z",
-        updated_at: "2026-07-19T00:00:00.000Z", revision: "1.0.0", capabilities: ["mcp.tools.list"],
-        protocols: ["MCP"], transports: ["STREAMABLE_HTTP"], owners: { secret: "internal" }, contacts: { email: "internal@example.test" },
-        secret_fingerprint: "must-not-leak", permissions: [{ scope_name: "internal" }], gap_state: "CONTIGUOUS"
-        }]
-      };
-    });
+  it("returns only endpoint metadata and does not query component identity or state", async () => {
+    const query = vi.fn(async () => ({ rowCount: 0, rows: [] }));
     const discoveryApp = Fastify();
     registerComponentRoutes(discoveryApp, { query } as unknown as Db, loadConfig({
       NODE_ENV: "test", DATABASE_URL: "postgres://unused/test", PUBLIC_BASE_DOMAIN: "hcasc.cz",
@@ -74,10 +58,13 @@ describe("component public route protection", () => {
     await discoveryApp.close();
 
     expect(response.statusCode).toBe(200);
-    expect(response.headers["cache-control"]).toBe("no-store");
-    expect(response.json()).toMatchObject({ catalogVersion: KCML_RELEASE.catalogVersion, component: { code: "KCML0002", revision: "1.0.0" } });
-    expect(JSON.stringify(response.json())).not.toMatch(/credential|permission|fingerprint|contact|owner|gapState|highest/i);
-    expect(String(query.mock.calls[0]?.[0])).not.toMatch(/credential|permission|audit_stream|owners|contacts/i);
+    expect(response.headers["cache-control"]).toBe("public, max-age=300");
+    expect(response.json()).toEqual({
+      mcpEndpoint: "https://kcml0002.hcasc.cz/mcp",
+      protectedResourceMetadata: "https://kcml0002.hcasc.cz/.well-known/oauth-protected-resource",
+      catalogVersion: KCML_RELEASE.catalogVersion
+    });
+    expect(query).not.toHaveBeenCalled();
   });
 
   it("requires idempotency key and If-Match for v2 component revisions", async () => {
@@ -91,10 +78,9 @@ describe("component public route protection", () => {
         max_expires_at: new Date(Date.now() + 120_000).toISOString(),
         service_kind: "MCP",
         allowed_pipeline: "MCP_ONBOARDING",
-        token_kind: "BLUEPRINT_RELEASE",
+        token_kind: "SINGLE_COMPONENT",
         release_version: KCML_RELEASE.catalogVersion,
-        release_wave_key: "baseline-2026-07-24",
-        max_child_jobs: 20
+        max_child_jobs: 1
       }]
     }));
     const revisionApp = Fastify();
@@ -119,9 +105,9 @@ describe("component public route protection", () => {
     expect(query).toHaveBeenCalledTimes(2);
   });
 
-  it("exposes the component MCP endpoint as strict JSON-RPC", async () => {
+  it("retires the parallel component MCP endpoint", async () => {
     const response = await app.inject({ method: "POST", url: "/v2/component-mcp", headers: { host: "kcml0002.hcasc.cz" }, payload: { method: "tools/list" } });
-    expect(response.statusCode).toBe(200);
-    expect(response.json()).toMatchObject({ jsonrpc: "2.0", id: null, error: { code: -32600, message: "Invalid Request" } });
+    expect(response.statusCode).toBe(410);
+    expect(response.json()).toMatchObject({ error: "component_mcp_moved" });
   });
 });

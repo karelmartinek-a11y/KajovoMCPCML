@@ -72,35 +72,6 @@ render_nginx_config() {
   node "$source_dir/deploy/scripts/render-nginx-config.mjs" \
     "$template" "$target" "$PUBLIC_BASE_DOMAIN" "$ADMIN_HOST" "$AUTH_HOST" "$REGISTER_HOST" "$tls_cert_path" "$tls_key_path"
 }
-run_kcml0002_runtime_refresh() {
-  local worker_env_args=()
-  local key value vault_master_key
-  local podman_runtime_dir="/run/user/${kcml_uid}"
-  test -S "${podman_runtime_dir}/bus"
-  vault_master_key="$(< /etc/kcml/credentials/config_vault_master_key)"
-  while IFS='=' read -r key value; do
-    [ -n "$key" ] || continue
-    case "$key" in \#*) continue ;; esac
-    worker_env_args+=("$key=$value")
-  done < /etc/kcml/worker.env
-  runuser -u kcml -- env \
-    -u CONFIG_VAULT_MASTER_KEY_BASE64_FILE \
-    "${worker_env_args[@]}" \
-    KCML_PROCESS_ROLE=worker \
-    ONBOARDING_WORKER_ENABLED=false \
-    MONITOR_ENABLED=false \
-    DATABASE_URL_FILE=/etc/kcml/credentials/worker/database_url \
-    CONFIG_VAULT_MASTER_KEY_BASE64="$vault_master_key" \
-    HOME=/var/lib/kcml/podman \
-    XDG_DATA_HOME=/var/lib/kcml/podman/data \
-    XDG_CONFIG_HOME=/var/lib/kcml/podman/config \
-    XDG_RUNTIME_DIR="$podman_runtime_dir" \
-    DBUS_SESSION_BUS_ADDRESS="unix:path=${podman_runtime_dir}/bus" \
-    REGISTRY_AUTH_FILE=/var/lib/kcml/podman/auth.json \
-    DOCKER_CONFIG=/var/lib/kcml/podman/.docker \
-    BUILD_ID="$release_id" \
-    node "$release_dir/apps/server/dist/cli/release-kcml0002-runtime-refresh.js"
-}
 wait_for_sql_equals() {
   local label="$1" expected="$2" query="$3" attempts="${4:-1}" delay="${5:-2}"
   local actual=""
@@ -141,7 +112,7 @@ render_nginx_config "$source_dir/deploy/nginx/kcml.conf" /etc/nginx/sites-availa
 ln -sfn /etc/nginx/sites-available/kcml.conf /etc/nginx/sites-enabled/kcml.conf
 install -m 0755 "$source_dir/deploy/scripts/kcml-deploy-wrapper.sh" /usr/local/sbin/kcml-deploy-wrapper
 install -m 0755 "$source_dir/deploy/scripts/kcml-handler-preload-wrapper.sh" /usr/local/sbin/kcml-handler-preload-wrapper
-for unit in kcml.service kcml-onboarding-worker.service kcml-monitor.service kcml-egress-proxy.service kcml-alert-primary.service kcml-alert-backup.service; do
+for unit in kcml.service kcml-onboarding-worker.service kcml-component-control-worker.service kcml-component-e2e-worker.service kcml-monitor.service kcml-egress-proxy.service kcml-alert-primary.service kcml-alert-backup.service; do
   install -m 0644 "$source_dir/deploy/systemd/$unit" "/etc/systemd/system/$unit"
 done
 install -d -m 0755 /opt/kcml/alert-sink
@@ -212,7 +183,7 @@ switched=true
 
 step activate-services
 systemctl daemon-reload
-systemctl enable kcml kcml-onboarding-worker kcml-monitor kcml-egress-proxy kcml-alert-primary kcml-alert-backup
+systemctl enable kcml kcml-onboarding-worker kcml-component-control-worker kcml-component-e2e-worker kcml-monitor kcml-egress-proxy kcml-alert-primary kcml-alert-backup
 systemctl restart kcml-alert-primary
 systemctl restart kcml-alert-backup
 nginx -t
@@ -244,6 +215,8 @@ SQL
 systemctl restart kcml
 systemctl restart kcml-egress-proxy
 systemctl restart kcml-onboarding-worker
+systemctl restart kcml-component-control-worker
+systemctl restart kcml-component-e2e-worker
 systemctl restart kcml-monitor
 
 admin_host="${ADMIN_HOST:?ADMIN_HOST is required}"
@@ -254,6 +227,8 @@ for _attempt in $(seq 1 45); do
     && systemctl is-active --quiet kcml \
     && systemctl is-active --quiet kcml-egress-proxy \
     && systemctl is-active --quiet kcml-onboarding-worker \
+    && systemctl is-active --quiet kcml-component-control-worker \
+    && systemctl is-active --quiet kcml-component-e2e-worker \
     && systemctl is-active --quiet kcml-monitor \
     && systemctl is-active --quiet kcml-alert-primary \
     && systemctl is-active --quiet kcml-alert-backup \
@@ -267,8 +242,8 @@ for _attempt in $(seq 1 45); do
 done
 
 if [ "$healthy" != "true" ]; then
-  systemctl status kcml kcml-egress-proxy kcml-onboarding-worker kcml-monitor kcml-alert-primary kcml-alert-backup --no-pager -l || true
-  for service in kcml kcml-egress-proxy kcml-onboarding-worker kcml-monitor; do
+  systemctl status kcml kcml-egress-proxy kcml-onboarding-worker kcml-component-control-worker kcml-component-e2e-worker kcml-monitor kcml-alert-primary kcml-alert-backup --no-pager -l || true
+  for service in kcml kcml-egress-proxy kcml-onboarding-worker kcml-component-control-worker kcml-component-e2e-worker kcml-monitor; do
     echo "==== journal:$service ====" >&2
     journalctl -u "$service" --no-pager -n 80 || true
   done
@@ -345,32 +320,19 @@ SQL
 
 step verify-final-invariants
 wait_for_sql_equals "audit_chain" "t" "select valid from verify_audit_chain()"
-kcml0002_server_id="$(psql "$app_database_url" --no-psqlrc --tuples-only --no-align --quiet --command \
-  "select id from mcp_server where code='KCML0002'")"
-if [ -n "$kcml0002_server_id" ]; then
-  kcml0002_state="$(psql "$app_database_url" --no-psqlrc --tuples-only --no-align --quiet --command \
-    "select registration_state::text || '/' || operational_state::text from mcp_server where code='KCML0002'")"
-  echo "release-check:mcp_kcml0002_initial_state=$kcml0002_state"
-  run_kcml0002_runtime_refresh
-  KCML_PROCESS_ROLE=web \
-  DATABASE_URL_FILE=/etc/kcml/credentials/web/database_url \
-  CONFIG_VAULT_MASTER_KEY_BASE64_FILE=/etc/kcml/credentials/config_vault_master_key \
-  NODE_ENV=production \
-  BUILD_ID="$release_id" \
-    node "$release_dir/apps/server/dist/cli/release-kcml0002-smoke.js"
-  curl -fsS -H "Host: kcml0002.${PUBLIC_BASE_DOMAIN:?PUBLIC_BASE_DOMAIN is required}" \
+wait_for_sql_equals "canonical_component_identity" "0" "select count(*) from component where code <> ('KCML' || lpad(kcml_number::text,4,'0')) or hostname <> (lower(code) || '.${PUBLIC_BASE_DOMAIN:?PUBLIC_BASE_DOMAIN is required}')" 1 1
+wait_for_sql_equals "retired_component_credentials" "0" "select count(*) from component_credential where status='ACTIVE' and revoked_at is null" 1 1
+wait_for_sql_equals "integration_secret_grants" "0" "select count(*) from secret_grant where principal_kind='INTEGRATION_TOKEN' and revoked_at is null" 1 1
+wait_for_sql_equals "integration_token_lifetime" "0" "select count(*) from integration_token where revoked_at is null and (initial_expires_at <> issued_at + interval '24 hours' or expires_at <> issued_at + interval '24 hours' or max_expires_at <> issued_at + interval '24 hours')" 1 1
+canonical_component_hostname="$(psql "$app_database_url" --no-psqlrc --tuples-only --no-align --quiet --command \
+  "select hostname from component where deregistered_at is null order by kcml_number limit 1")"
+if [ -n "$canonical_component_hostname" ]; then
+  curl -fsS -H "Host: $canonical_component_hostname" \
     "http://127.0.0.1:${PORT:-3010}/.well-known/oauth-protected-resource/mcp" \
-    | jq -e --arg resource "https://kcml0002.${PUBLIC_BASE_DOMAIN}/mcp" '.resource == $resource' >/dev/null
-  if [ "$kcml0002_state" != "ACTIVE/HEALTHY" ] && {
-    [ "${kcml0002_state#TRIAL/}" != "$kcml0002_state" ] || [ "${kcml0002_state#REGISTERED_DISABLED/}" != "$kcml0002_state" ];
-  }; then
-    kcml0002_state="$(psql "$app_database_url" --no-psqlrc --tuples-only --no-align --quiet --command \
-      "select registration_state::text || '/' || operational_state::text from mcp_server where code='KCML0002'")"
-    echo "release-check:mcp_kcml0002_promoted_state=$kcml0002_state"
-  fi
-  wait_for_sql_equals "mcp_kcml0002_state" "ACTIVE/HEALTHY" "select registration_state::text || '/' || operational_state::text from mcp_server where code='KCML0002'" 90 2
+    | jq -e --arg resource "https://${canonical_component_hostname}/mcp" '.resource == $resource' >/dev/null
+  echo "release-check:canonical_component_metadata=PASS"
 else
-  echo "release-check:mcp_kcml0002_state=SKIPPED clean_start_no_registered_server"
+  echo "release-check:canonical_component_metadata=SKIPPED clean_start_no_registered_component"
 fi
 wait_for_sql_equals "migration_019" "1" "select count(*) from schema_migration where version='019_postgres_http_rate_limiting.sql'"
 wait_for_sql_equals "migration_022" "1" "select count(*) from schema_migration where version='022_runtime_egress_capability_backfill.sql'"

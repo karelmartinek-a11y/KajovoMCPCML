@@ -29,15 +29,15 @@
 5. Apply checksum-locked forward migrations under advisory lock and timeouts.
 6. Create/update the non-owner `kcml_app` role through local PostgreSQL administration and revoke direct audit-table mutation.
 7. Synchronize only the deployment-managed bootstrap admin password from `PASS` and the server-held MFA secret.
-8. Snapshot the prior nginx/systemd process contract, atomically switch `/opt/kcml/current`, and start web, onboarding, monitor, egress and both alert sinks.
-9. Require all services active, both signed webhook deliveries confirmed, admin login from `PASS`, OAuth metadata, Secret API metadata on `secrets.<PUBLIC_BASE_DOMAIN>`, unknown-host rejection, KCML0002 discovery, egress socket, audit chain, the complete migration ledger through `044`, and KCML0002 `ACTIVE/HEALTHY`.
+8. Snapshot the prior nginx/systemd process contract, atomically switch `/opt/kcml/current`, and start web, onboarding, canonical component control, canonical component E2E, monitor, egress and both alert sinks.
+9. Require all services and database-backed worker heartbeats current, both signed webhook deliveries confirmed, admin login from `PASS`, OAuth and Secret API metadata, unknown-host rejection, egress socket, audit chain, the complete checksummed migration ledger, the two-token invariants and canonical identity consistency. If components exist, probe the first assigned hostname dynamically; no component is privileged by deployment code.
 
 ## Secret Manager Operations
 
 - Secret values are authoritative in PostgreSQL and manageable through the KCML admin Secrets page. Do not add application `.env` keys or GitHub Actions secrets for managed values.
 - Encryption uses the existing `CONFIG_VAULT_MASTER_KEY_BASE64` and `CONFIG_VAULT_MASTER_KEY_ID`; rotating that bootstrap key requires the normal config-vault key-rotation procedure and a Secret Manager re-encryption migration plan.
-- Runtime clients call `POST https://secrets.<PUBLIC_BASE_DOMAIN>/v1/secrets/resolve` with either `Authorization: Bearer <integration_token>` for a single-component integration token or `Authorization: Basic base64(client_id:client_secret)` for a registered `client_secret`.
-- The Secret API deliberately does not accept short-lived OAuth access tokens and does not apply OAuth scope/audience/component-lifecycle gates inside resolve. Valid unconsumed integration tokens and long-lived access tokens (`client_secret` on the wire) remain eligible regardless of component activation/quarantine state; resolve then requires an active secret plus an explicit grant and returns indistinguishable `secret_unavailable` errors for missing, inactive, deleted or ungranted names.
+- Runtime clients call `POST https://secrets.<PUBLIC_BASE_DOMAIN>/v1/secrets/resolve` only with the component's long-lived KCML access bearer and the `secret.resolve` scope.
+- Every resolve rechecks the current principal and component lifecycle, activation, egress, policy epoch and revocation epoch. It then requires an active secret plus a current explicit or all-secrets grant. Integration tokens and retired component client secrets are never runtime secret identities; missing, inactive, deleted and ungranted names remain indistinguishable as `secret_unavailable`.
 
 ## Backup and restore evidence
 

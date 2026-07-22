@@ -5,8 +5,7 @@ import type { AppServerConfig } from "../config.js";
 import type { Db } from "../db.js";
 import { appendAudit } from "../domain/audit.js";
 import {
-  authenticateClientSecret,
-  authenticateSecretIntegrationToken,
+  authenticatePrincipalAccessToken,
   resolveSecret,
   secretRequestDigest,
   type SecretPrincipal
@@ -26,35 +25,15 @@ function bearer(request: FastifyRequest): string | null {
   return authorization?.startsWith("Bearer ") ? authorization.slice("Bearer ".length).trim() : null;
 }
 
-function requestedCredentialKind(request: FastifyRequest): "client_secret" | "integration_token" | "missing" {
-  if (basicCredential(request)) return "client_secret";
-  if (bearer(request)) return "integration_token";
+function requestedCredentialKind(request: FastifyRequest): "access_token" | "unsupported" | "missing" {
+  if (bearer(request)) return "access_token";
+  if (request.headers.authorization) return "unsupported";
   return "missing";
 }
 
-export function parseSecretApiBasicAuthorization(authorization: string | undefined): { clientId: string; clientSecret: string } | null {
-  authorization ??= "";
-  if (!authorization.startsWith("Basic ")) return null;
-  const encoded = authorization.slice("Basic ".length).trim();
-  if (!encoded) return null;
-  const decoded = Buffer.from(encoded, "base64").toString("utf8");
-  const sep = decoded.indexOf(":");
-  if (sep < 1) return null;
-  return {
-    clientId: decoded.slice(0, sep),
-    clientSecret: decoded.slice(sep + 1)
-  };
-}
-
-function basicCredential(request: FastifyRequest): { clientId: string; clientSecret: string } | null {
-  return parseSecretApiBasicAuthorization(request.headers.authorization);
-}
-
 async function principalFor(db: Db, config: AppServerConfig, request: FastifyRequest): Promise<SecretPrincipal | null> {
-  const basic = basicCredential(request);
-  if (basic) return authenticateClientSecret(db, config, basic.clientId, basic.clientSecret);
   const token = bearer(request);
-  if (token) return authenticateSecretIntegrationToken(db, token, config);
+  if (token) return authenticatePrincipalAccessToken(db, token, config);
   return null;
 }
 
@@ -69,8 +48,8 @@ export function registerSecretApiRoutes(app: FastifyInstance, db: Db, config: Ap
     return reply.header("cache-control", "no-store").send({
       issuer: `https://${secretHost(config)}`,
       resolveEndpoint: `https://${secretHost(config)}/v1/secrets/resolve`,
-      auth: ["client_secret_basic", "integration_token_bearer"],
-      catalogVersion: "2026.07.22"
+      auth: ["access_token_bearer"],
+      catalogVersion: "2026.07.22-compliance.1"
     });
   });
 

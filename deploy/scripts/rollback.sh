@@ -11,7 +11,7 @@ set -a
 set +a
 : "${ADMIN_HOST:?ADMIN_HOST is required}"
 bash "$(dirname "$0")/release-config.sh" restore "$release" "$target"
-for unit in kcml kcml-onboarding-worker kcml-monitor kcml-egress-proxy kcml-alert-primary kcml-alert-backup; do
+for unit in kcml kcml-onboarding-worker kcml-component-control-worker kcml-component-e2e-worker kcml-monitor kcml-egress-proxy kcml-alert-primary kcml-alert-backup; do
   if systemctl cat "$unit.service" >/dev/null 2>&1; then systemctl is-active --quiet "$unit.service"; fi
 done
 curl -fsS "https://${ADMIN_HOST}/health" >/dev/null
