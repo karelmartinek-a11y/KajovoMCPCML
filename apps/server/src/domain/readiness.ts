@@ -9,7 +9,7 @@ const migrationDirectory = new URL("../migrations/", import.meta.url);
 const EXPECTED_MIGRATIONS = readdirSync(migrationDirectory)
   .filter((name) => !name.startsWith("._") && name.endsWith(".sql"))
   .sort()
-  .map((name, index) => ({ name, sequence: index + 1, checksum: createHash("sha256").update(readFileSync(new URL(name, migrationDirectory))).digest("hex") }));
+  .map((name) => ({ name, sequence: Number(name.slice(0, 3)), checksum: createHash("sha256").update(readFileSync(new URL(name, migrationDirectory))).digest("hex") }));
 
 export type ReadinessReport = {
   ready: boolean;

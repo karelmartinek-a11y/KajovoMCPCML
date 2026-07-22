@@ -18,6 +18,7 @@ Current contract: `2026.07.22-compliance.1`. Historical catalogs remain immutabl
 | Secrets | `domain/secret-manager.ts`, `http/secret-api-routes.ts`, Secrets GUI | encrypted versioned storage, masked administration, grants and audit; runtime resolution accepts only a scoped long-lived access bearer |
 | External communication | canonical principal/permission tables and protected egress | registered-to-registered, external inbound and external outbound use the same current-state authorization and operation evidence model |
 | Deployment | release scripts, nginx and systemd units | immutable CI artifact; server, onboarding, monitor, control and E2E workers run separately with database-backed heartbeats |
+| Upgrade reconciliation | migration `087`, numeric migration-prefix readiness ledger | an active legacy component without complete current revision/runtime evidence is generically quarantined, communication-disabled and credential-invalidated; no synthetic gate PASS is created |
 | Compatibility | `docs/releases/2026.07.22-compliance.1/compatibility-matrix.md` | breaking catalog change is user-approved; historical artifacts are preserved; new intake uses only the generic catalog |
 
 Verification results belong in the completion report and must be recorded only after the named command has actually run.

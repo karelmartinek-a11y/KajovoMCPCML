@@ -25,7 +25,7 @@ describe("readiness report", () => {
     const query = vi.fn(async (sql: string) => {
       if (sql === "select 1") return { rowCount: 1, rows: [{ "?column?": 1 }] };
       if (sql === "select version,sequence_number,checksum_sha256 from schema_migration order by sequence_number,version") {
-        return { rowCount: migrations.length, rows: migrations.map((version, index) => ({ version, sequence_number: index + 1,
+        return { rowCount: migrations.length, rows: migrations.map((version) => ({ version, sequence_number: Number(version.slice(0, 3)),
           checksum_sha256: createHash("sha256").update(readFileSync(new URL(`../migrations/${version}`, import.meta.url))).digest("hex") })) };
       }
       if (sql === "select last_completed_at,last_error from monitoring_scheduler_heartbeat where singleton=true") {

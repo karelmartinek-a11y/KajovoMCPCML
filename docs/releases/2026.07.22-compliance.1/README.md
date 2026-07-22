@@ -13,3 +13,5 @@ Machine-readable artifacts:
 - `docs/onboarding-manifest-2026.07.22-compliance.1.example.json`
 
 Rollback deploys the preceding immutable release. Database changes are forward-only and retained for a migration-compatible rollback.
+
+During upgrade, a legacy component that is still marked active but lacks the complete current revision/runtime evidence set is preserved in the registry and moved fail-closed to `QUARANTINED/BLOCKED`. Its communication directions and runtime target are disabled, authorization epochs advance, credentials are revoked, and an alert plus audit event are recorded. Restoration requires explicit recertification against the current 38-gate contract; rollback does not fabricate evidence or reactivate the component.

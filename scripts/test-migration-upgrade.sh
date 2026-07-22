@@ -239,9 +239,9 @@ SQL
 
 psql "$KCML_UPGRADE_DATABASE_URL" --no-psqlrc --set ON_ERROR_STOP=1 --tuples-only --no-align <<'SQL' | grep -Fx 'upgrade-ok'
 select case when
-  (select count(*) from schema_migration) = 87
+  (select count(*) from schema_migration) = 88
   and (select count(*) from legacy_schema_migration) = 9
-  and (select count(*) from audit_event) = 1165
+  and (select count(*) from audit_event) = 1166
   and (select valid from verify_audit_chain()) is true
   and (
     select pg_get_userbyid(proowner) <> 'kcml_app'
@@ -287,11 +287,20 @@ select case when
       join managed_service service on service.component_id=component.id
      where component.id='00000000-0000-0000-0000-000000000002'
        and component.code='KCML0002'
-       and component.hostname='kcml0002.hcasc.cz'
-       and component.enabled=true
-       and component.lifecycle_state='ACTIVE'
-       and component.activation_state='ACTIVE'
-       and component.revocation_epoch=server.revocation_epoch
+       and component.hostname='kcml0002.kajovocml.hcasc.cz'
+       and component.enabled=false
+       and component.ingress_enabled=false
+       and component.pulse_enabled=false
+       and component.egress_enabled=false
+       and component.lifecycle_state='QUARANTINED'
+       and component.activation_state='BLOCKED'
+       and component.operational_state='QUARANTINED'
+       and component.monitoring_state='FAILED'
+       and exists (
+         select 1 from audit_event event
+          where event.event_type='component.readiness_reconciliation.quarantined'
+            and event.object_id=component.id::text
+       )
        and service.legacy_mcp_server_id=server.id
   )
   and exists (
