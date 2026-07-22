@@ -30,7 +30,11 @@ export function kcmlHostnameForCode(code: string): string {
 }
 
 export function isKcmlHostname(hostname: string): boolean {
-  return new RegExp(`^kcml[0-9]{4,}\\.${escapeRegex(CANONICAL_COMPONENT_HOST_SUFFIX)}$`, "i").test(hostname);
+  return canonicalKcmlHostnamePattern().test(hostname);
+}
+
+export function canonicalKcmlHostnamePattern(): RegExp {
+  return new RegExp(`^kcml[0-9]{4,}\\.${escapeRegex(CANONICAL_COMPONENT_HOST_SUFFIX)}$`, "i");
 }
 
 export function resourceForHostname(hostname: string): string {

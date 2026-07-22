@@ -51,8 +51,8 @@ describe("external API gateway route", () => {
     state.service = {
       managedServiceId: "service-1",
       code: "KCML0007",
-      hostname: "kcml0007.example.invalid",
-      resourceUri: "https://kcml0007.example.invalid",
+      hostname: "kcml0007.kajovocml.hcasc.cz",
+      resourceUri: "https://kcml0007.kajovocml.hcasc.cz",
       manifest: { environment: "production" },
       upstreamBaseUrl: "https://upstream.example.com",
       loggingContract: { correlationHeader: "x-correlation-id", redactHeaders: ["authorization", "cookie", "set-cookie"] },
@@ -87,10 +87,19 @@ describe("external API gateway route", () => {
     const response = await app.inject({
       method: "GET",
       url: "/v1/shifts/emp-42",
-      headers: { host: "kcml0007.example.invalid" }
+      headers: { host: "kcml0007.kajovocml.hcasc.cz" }
     });
     expect(response.statusCode).toBe(401);
     expect(response.json()).toMatchObject({ error: "invalid_token" });
+  });
+
+  it("does not bind the gateway route to the legacy public base domain", async () => {
+    const response = await app.inject({
+      method: "GET",
+      url: "/v1/shifts/emp-42",
+      headers: { host: "kcml0007.example.invalid" }
+    });
+    expect(response.statusCode).toBe(404);
   });
 
   it("returns 413 before proxying oversized bodies", async () => {
@@ -106,7 +115,7 @@ describe("external API gateway route", () => {
     const response = await app.inject({
       method: "POST",
       url: "/v1/time-off",
-      headers: { host: "kcml0007.example.invalid", authorization: "Bearer token" },
+      headers: { host: "kcml0007.kajovocml.hcasc.cz", authorization: "Bearer token" },
       payload: { employeeId: "emp-42", days: 2 }
     });
     expect(response.statusCode).toBe(413);
@@ -117,7 +126,7 @@ describe("external API gateway route", () => {
     const response = await app.inject({
       method: "GET",
       url: "/v1/shifts/emp-42",
-      headers: { host: "kcml0007.example.invalid", authorization: "Bearer token" }
+      headers: { host: "kcml0007.kajovocml.hcasc.cz", authorization: "Bearer token" }
     });
     expect(response.statusCode).toBe(200);
     expect(response.headers["x-correlation-id"]).toBeTruthy();

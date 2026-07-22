@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import type { ExternalApiGatewayConfig } from "../config.js";
 import type { Db } from "../db.js";
+import { canonicalKcmlHostnamePattern } from "../domain/hostnames.js";
 import { authorizeManagedServiceToken } from "../domain/managed-service.js";
 import { loadExternalApiGatewayService, matchExternalApiOperation, proxyExternalApiOperation } from "../domain/external-api.js";
 import { hmacToken } from "../security/secrets.js";
@@ -10,7 +11,7 @@ import { hostOf, sendError } from "./errors.js";
 export function registerExternalApiRoutes(app: FastifyInstance, db: Db, config: ExternalApiGatewayConfig): void {
   app.all("/*", {
     constraints: {
-      host: new RegExp(`^kcml[0-9]{4,}\\.${config.PUBLIC_BASE_DOMAIN.replaceAll(".", "\\.")}$`, "i")
+      host: canonicalKcmlHostnamePattern()
     },
     config: { rateLimit: { max: 120, timeWindow: "1 minute", groupId: "external-api-http" } },
   }, async (request, reply) => {
