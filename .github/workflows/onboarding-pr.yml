@@ -16,13 +16,53 @@ jobs:
   path-policy:
     name: path-policy
     runs-on: ubuntu-latest
+    outputs:
+      mode: ${{ steps.classify.outputs.mode }}
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0, persist-credentials: false }
-      - run: scripts/onboarding/handler-dir.sh "origin/${{ github.base_ref }}"
+      - id: classify
+        name: Validate handler onboarding or complete retirement
+        run: |
+          base="origin/${{ github.base_ref }}"
+          mapfile -t changes < <(git diff --name-status "$base...HEAD" -- handlers/)
+          if ((${#changes[@]} == 0)); then
+            echo "No handler changes" >&2
+            exit 1
+          fi
+          retirement=true
+          handler_dir=""
+          for change in "${changes[@]}"; do
+            status="${change%%$'\t'*}"
+            file="${change#*$'\t'}"
+            if [[ "$status" != "D" || ! "$file" =~ ^handlers/KCML[0-9]{4,}/ ]]; then
+              retirement=false
+              break
+            fi
+            candidate="$(cut -d/ -f1-2 <<<"$file")"
+            if [[ -n "$handler_dir" && "$candidate" != "$handler_dir" ]]; then
+              echo "One PR may retire only one handler directory" >&2
+              exit 1
+            fi
+            handler_dir="$candidate"
+          done
+          if [[ "$retirement" == "true" ]]; then
+            test -n "$handler_dir"
+            if [[ -n "$(git ls-tree -r --name-only HEAD -- "$handler_dir")" ]]; then
+              echo "Handler retirement must delete the complete directory" >&2
+              exit 1
+            fi
+            echo "Validated complete handler retirement: $handler_dir"
+            echo "mode=retirement" >> "$GITHUB_OUTPUT"
+          else
+            scripts/onboarding/handler-dir.sh "$base"
+            echo "mode=onboarding" >> "$GITHUB_OUTPUT"
+          fi
 
   manifest-schema:
     name: manifest-schema
+    needs: path-policy
+    if: needs.path-policy.outputs.mode == 'onboarding'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -42,12 +82,13 @@ jobs:
 
   lint:
     name: lint
+    needs: path-policy
+    if: needs.path-policy.outputs.mode == 'onboarding'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0, persist-credentials: false }
       - uses: pnpm/action-setup@v4
-        with: { version: 9.15.4 }
       - uses: actions/setup-node@v4
         with: { node-version: 24 }
       - run: |
@@ -58,12 +99,13 @@ jobs:
 
   typecheck:
     name: typecheck
+    needs: path-policy
+    if: needs.path-policy.outputs.mode == 'onboarding'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0, persist-credentials: false }
       - uses: pnpm/action-setup@v4
-        with: { version: 9.15.4 }
       - uses: actions/setup-node@v4
         with: { node-version: 24 }
       - run: |
@@ -74,12 +116,13 @@ jobs:
 
   unit-tests:
     name: unit-tests
+    needs: path-policy
+    if: needs.path-policy.outputs.mode == 'onboarding'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0, persist-credentials: false }
       - uses: pnpm/action-setup@v4
-        with: { version: 9.15.4 }
       - uses: actions/setup-node@v4
         with: { node-version: 24 }
       - run: |
@@ -90,12 +133,13 @@ jobs:
 
   contract-tests:
     name: contract-tests
+    needs: path-policy
+    if: needs.path-policy.outputs.mode == 'onboarding'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0, persist-credentials: false }
       - uses: pnpm/action-setup@v4
-        with: { version: 9.15.4 }
       - uses: actions/setup-node@v4
         with: { node-version: 24 }
       - run: |
@@ -108,6 +152,8 @@ jobs:
 
   secret-scan:
     name: secret-scan
+    needs: path-policy
+    if: needs.path-policy.outputs.mode == 'onboarding'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -121,6 +167,8 @@ jobs:
 
   sast:
     name: sast
+    needs: path-policy
+    if: needs.path-policy.outputs.mode == 'onboarding'
     runs-on: ubuntu-latest
     permissions:
       actions: read
@@ -137,12 +185,13 @@ jobs:
 
   sca-license:
     name: sca-license
+    needs: path-policy
+    if: needs.path-policy.outputs.mode == 'onboarding'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0, persist-credentials: false }
       - uses: pnpm/action-setup@v4
-        with: { version: 9.15.4 }
       - uses: actions/setup-node@v4
         with: { node-version: 24 }
       - run: |
@@ -162,6 +211,8 @@ jobs:
 
   sbom:
     name: sbom
+    needs: path-policy
+    if: needs.path-policy.outputs.mode == 'onboarding'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -176,12 +227,13 @@ jobs:
 
   reproducible-build:
     name: reproducible-build
+    needs: path-policy
+    if: needs.path-policy.outputs.mode == 'onboarding'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0, persist-credentials: false }
       - uses: pnpm/action-setup@v4
-        with: { version: 9.15.4 }
       - uses: actions/setup-node@v4
         with: { node-version: 24 }
       - run: |

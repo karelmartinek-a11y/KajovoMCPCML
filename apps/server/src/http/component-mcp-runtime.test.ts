@@ -68,7 +68,7 @@ describe("canonical component MCP runtime", () => {
     const app = Fastify();
     const db = fakeDb(socketPath);
     const config = { ACCESS_TOKEN_HMAC_KEY_BASE64: hmacKey } as AppServerConfig;
-    app.post("/mcp", (request, reply) => handleCanonicalMcp(request, reply, db, config, component, "90000000-0000-4000-8000-000000000004"));
+    app.post("/mcp", { config: { rateLimit: { max: 120, timeWindow: "1 minute", groupId: "mcp-http-test" } } }, (request, reply) => handleCanonicalMcp(request, reply, db, config, component, "90000000-0000-4000-8000-000000000004"));
     const reply = await app.inject({
       method: "POST", url: "/mcp", headers: { authorization: "Bearer long-lived-token", host: component.hostname },
       payload: { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "inventory", arguments: {} } }
@@ -84,7 +84,7 @@ describe("canonical component MCP runtime", () => {
   it("returns a retryable JSON-RPC saturation error before runtime dispatch", async () => {
     const app = Fastify();
     const config = { ACCESS_TOKEN_HMAC_KEY_BASE64: hmacKey } as AppServerConfig;
-    app.post("/mcp", (request, reply) => handleCanonicalMcp(request, reply, fakeDb("/unused/runtime.sock", 1), config, component, "90000000-0000-4000-8000-000000000006"));
+    app.post("/mcp", { config: { rateLimit: { max: 120, timeWindow: "1 minute", groupId: "mcp-http-test" } } }, (request, reply) => handleCanonicalMcp(request, reply, fakeDb("/unused/runtime.sock", 1), config, component, "90000000-0000-4000-8000-000000000006"));
     const reply = await app.inject({
       method: "POST", url: "/mcp", headers: { authorization: "Bearer long-lived-token", host: component.hostname },
       payload: { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "inventory", arguments: {} } }

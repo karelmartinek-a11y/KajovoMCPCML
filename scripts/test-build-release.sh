@@ -44,8 +44,8 @@ grep -Fq "node \"\$source_dir/apps/server/dist/cli/sync-admin-password.js\"" "$t
 if grep -q 'admin_sync_totp_file' "$tmpdir/release/deploy/scripts/install-release.sh"; then
   exit 1
 fi
-grep -Fq "podman_runtime_dir=\"/run/user/\${kcml_uid}\"" "$tmpdir/release/deploy/scripts/install-release.sh"
-grep -Fq "DBUS_SESSION_BUS_ADDRESS=\"unix:path=\${podman_runtime_dir}/bus\"" "$tmpdir/release/deploy/scripts/install-release.sh"
+grep -Fq 'XDG_RUNTIME_DIR="/run/user/${kcml_uid}"' "$tmpdir/release/deploy/scripts/preflight.sh"
+grep -Fq 'DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${kcml_uid}/bus"' "$tmpdir/release/deploy/scripts/preflight.sh"
 grep -q 'kcml-handler-preload-wrapper' "$tmpdir/release/deploy/scripts/install-release.sh"
 if grep -R -E 'hcasc\.cz|karmar78' "$tmpdir/release/deploy/nginx" "$tmpdir/release/deploy/systemd" "$tmpdir/release/deploy/scripts" >/dev/null; then
   exit 1
