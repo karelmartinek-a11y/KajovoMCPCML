@@ -8,6 +8,10 @@ certificate_path="${3:?certificate path required}"
 private_key_path="${4:?private key path required}"
 status_root="/var/www/letsencrypt/.well-known/acme-challenge"
 status_file="$status_root/kcml-dns-challenge.json"
+legacy_status_file="/var/www/letsencrypt/kcml-dns-challenge.json"
+runtime_dir="/run/kcml"
+pid_file="$runtime_dir/canonical-certbot.pid"
+certbot_pid=""
 
 for domain in "$base_domain" "$component_suffix"; do
   case "$domain" in
@@ -34,15 +38,56 @@ fi
 
 command -v certbot >/dev/null
 command -v dig >/dev/null
+command -v pkill >/dev/null
+command -v setsid >/dev/null
 install -d -m 0755 "$status_root"
+install -d -m 0700 "$runtime_dir"
 workdir="$(mktemp -d)"
 auth_hook="$workdir/auth-hook.sh"
 deploy_hook="$workdir/deploy-hook.sh"
+terminate_pid() {
+  local pid="$1"
+  [[ "$pid" =~ ^[0-9]+$ ]] || return 0
+  if ! kill -0 "$pid" 2>/dev/null; then return 0; fi
+  pkill -TERM -P "$pid" 2>/dev/null || true
+  kill -TERM "$pid" 2>/dev/null || true
+  for _attempt in $(seq 1 20); do
+    if ! kill -0 "$pid" 2>/dev/null; then return 0; fi
+    sleep 0.5
+  done
+  kill -KILL "$pid" 2>/dev/null || true
+}
+terminate_stale_certbot() {
+  local pid command
+  if [ -s "$pid_file" ]; then
+    pid="$(cat "$pid_file")"
+    if [[ "$pid" =~ ^[0-9]+$ ]]; then
+      command="$(ps -p "$pid" -o args= 2>/dev/null || true)"
+      case "$command" in
+        *certbot*certonly*"--cert-name kcml-wildcards"*) terminate_pid "$pid" ;;
+      esac
+    fi
+  fi
+  while read -r pid command; do
+    case "$command" in
+      *certbot*certonly*"--cert-name kcml-wildcards"*) terminate_pid "$pid" ;;
+    esac
+  done < <(ps -eo pid=,args=)
+  rm -f "$pid_file" "$legacy_status_file"
+}
 cleanup() {
+  if [ -n "$certbot_pid" ] && kill -0 "$certbot_pid" 2>/dev/null; then
+    kill -TERM -- "-$certbot_pid" 2>/dev/null || true
+  fi
+  rm -f "$pid_file"
   rm -f "$status_file"
   rm -rf "$workdir"
 }
 trap cleanup EXIT
+trap 'exit 143' TERM
+trap 'exit 130' INT
+
+terminate_stale_certbot
 
 cat >"$auth_hook" <<'HOOK'
 #!/usr/bin/env bash
@@ -75,10 +120,11 @@ install -m 0600 "$RENEWED_LINEAGE/privkey.pem" "$KCML_TLS_KEY_PATH"
 HOOK
 chmod 0700 "$auth_hook" "$deploy_hook"
 
-KCML_ACME_STATUS_FILE="$status_file" \
-KCML_TLS_CERT_PATH="$certificate_path" \
-KCML_TLS_KEY_PATH="$private_key_path" \
-certbot certonly \
+setsid env \
+  KCML_ACME_STATUS_FILE="$status_file" \
+  KCML_TLS_CERT_PATH="$certificate_path" \
+  KCML_TLS_KEY_PATH="$private_key_path" \
+  certbot certonly \
   --non-interactive \
   --agree-tos \
   --register-unsafely-without-email \
@@ -91,7 +137,17 @@ certbot certonly \
   --force-renewal \
   -d "$base_domain" \
   -d "*.${base_domain}" \
-  -d "*.${component_suffix}"
+  -d "*.${component_suffix}" &
+certbot_pid="$!"
+printf '%s\n' "$certbot_pid" >"$pid_file"
+chmod 0600 "$pid_file"
+set +e
+wait "$certbot_pid"
+certbot_exit="$?"
+set -e
+certbot_pid=""
+rm -f "$pid_file"
+test "$certbot_exit" = 0
 
 certificate_covers_runtime
 echo "canonical-tls:ISSUED"

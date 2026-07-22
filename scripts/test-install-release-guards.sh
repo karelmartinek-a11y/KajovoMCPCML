@@ -29,6 +29,11 @@ grep -Fq 'export KCML_COMPONENT_HOST_SUFFIX="$component_hostname_suffix"' "$inst
 grep -Fq 'curl -fsS "https://${canonical_component_hostname}/.well-known/oauth-protected-resource/mcp"' "$install_script"
 grep -Fq 'deploy/scripts/ensure-canonical-tls.sh' "$install_script"
 grep -Fq 'status_root="/var/www/letsencrypt/.well-known/acme-challenge"' deploy/scripts/ensure-canonical-tls.sh
+grep -Fq 'pid_file="$runtime_dir/canonical-certbot.pid"' deploy/scripts/ensure-canonical-tls.sh
+grep -Fq 'command="$(ps -p "$pid" -o args= 2>/dev/null || true)"' deploy/scripts/ensure-canonical-tls.sh
+grep -Fq '*certbot*certonly*"--cert-name kcml-wildcards"*' deploy/scripts/ensure-canonical-tls.sh
+grep -Fq 'kill -TERM -- "-$certbot_pid"' deploy/scripts/ensure-canonical-tls.sh
+grep -Fq 'setsid env' deploy/scripts/ensure-canonical-tls.sh
 grep -Fq 'canonical-tls:WAITING_DNS record=$record value=$CERTBOT_VALIDATION' deploy/scripts/ensure-canonical-tls.sh
 grep -Fq -- '-d "*.${component_suffix}"' deploy/scripts/ensure-canonical-tls.sh
 if bash deploy/scripts/ensure-canonical-tls.sh 'hcasc.cz|kajovocml.hcasc.cz' 'kajovocml.hcasc.cz' /missing/cert /missing/key 2>/dev/null; then
