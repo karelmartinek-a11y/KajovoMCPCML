@@ -46,9 +46,13 @@ const onboardingDescriptorSchema = z.object({
   technicalOwner: z.string().trim().min(2).max(160),
   criticality: z.enum(["LOW", "MEDIUM", "HIGH", "CRITICAL"])
 }).strict();
+const integrationIntentServiceKindSchema = z.enum(["COMPONENT", "EXTERNAL_API"]);
 const integrationTokenRequestSchema = z.object({
   label: z.string().trim().min(1).max(120),
   descriptor: onboardingDescriptorSchema
+}).strict();
+const integrationIntentRequestSchema = integrationTokenRequestSchema.extend({
+  serviceKind: integrationIntentServiceKindSchema.optional()
 }).strict();
 
 export function verifyEncryptedMfaTotp(
@@ -162,10 +166,36 @@ function adminHost(config: Pick<HostRoutingConfig, "ADMIN_HOST">, request: Fasti
 
 function onboardingHandoffUrls(registerHost: string) {
   const nativeComponentIntakeUrl = `https://${registerHost}/v2/component-onboardings`;
+  const externalApiIntakeUrl = `https://${registerHost}/v1/service-onboardings`;
   return {
     recommendedIntakeUrl: nativeComponentIntakeUrl,
     nativeComponentIntakeUrl,
+    externalApiIntakeUrl,
     componentCatalogUrl: `https://${registerHost}/api/onboarding-catalogs/component/${MCP_CATALOG_VERSION}`,
+    externalApiCatalogUrl: `https://${registerHost}/api/onboarding-catalogs/external-api/1.0`
+  };
+}
+
+function integrationIntentContract(registerHost: string, serviceKind: "COMPONENT" | "EXTERNAL_API") {
+  const urls = onboardingHandoffUrls(registerHost);
+  if (serviceKind === "EXTERNAL_API") {
+    return {
+      serviceKind,
+      intakeUrl: urls.externalApiIntakeUrl,
+      intakeUrls: {
+        recommendedIntakeUrl: urls.externalApiIntakeUrl,
+        externalApiIntakeUrl: urls.externalApiIntakeUrl
+      },
+      catalogUrl: urls.externalApiCatalogUrl,
+      registration: { serviceKind: "EXTERNAL_API", identityAssignedBy: "KCML" as const }
+    };
+  }
+  return {
+    serviceKind,
+    intakeUrl: urls.recommendedIntakeUrl,
+    intakeUrls: urls,
+    catalogUrl: urls.componentCatalogUrl,
+    registration: { componentKind: "GENERIC", identityAssignedBy: "KCML" as const }
   };
 }
 
@@ -287,26 +317,30 @@ export function registerOnboardingRoutes(app: FastifyInstance, db: Db, config: O
     const correlationId = randomUUID();
     const accountId = await adminIdentity(db, config, request, reply, correlationId, true);
     if (!accountId) return;
-    let parsed: z.infer<typeof integrationTokenRequestSchema>;
+    let parsed: z.infer<typeof integrationIntentRequestSchema>;
     try {
-      parsed = integrationTokenRequestSchema.parse(request.body);
+      parsed = integrationIntentRequestSchema.parse(request.body);
     } catch (error) {
       return sendError(reply, 400, "invalid_integration_descriptor", error instanceof Error ? error.message : undefined, correlationId);
     }
+    const serviceKind = parsed.serviceKind ?? "COMPONENT";
+    const tokenOptions = serviceKind === "EXTERNAL_API"
+      ? { serviceKind: "EXTERNAL_API" as const, allowedPipeline: "EXTERNAL_API_REGISTRATION" as const }
+      : { serviceKind: "COMPONENT" as const, allowedPipeline: "COMPONENT_ONBOARDING" as const };
+    const contract = integrationIntentContract(config.REGISTER_HOST, serviceKind);
     try {
       const intent = await createIntegrationToken(db, config, accountId, correlationId, parsed.label, parsed.descriptor, undefined, {
-        serviceKind: "COMPONENT",
-        allowedPipeline: "COMPONENT_ONBOARDING",
-          releaseVersion: KCML_RELEASE.catalogVersion
+        ...tokenOptions,
+        releaseVersion: KCML_RELEASE.catalogVersion
       });
       return {
         integrationIntentId: intent.id,
         integrationToken: intent.token,
-        serviceKind: "COMPONENT",
+        serviceKind: contract.serviceKind,
         expiresAt: intent.expiresAt,
-        intakeUrl: onboardingHandoffUrls(config.REGISTER_HOST).recommendedIntakeUrl,
-        intakeUrls: onboardingHandoffUrls(config.REGISTER_HOST),
-        catalogUrl: `https://${config.REGISTER_HOST}/api/onboarding-catalogs/component/${MCP_CATALOG_VERSION}`
+        intakeUrl: contract.intakeUrl,
+        intakeUrls: contract.intakeUrls,
+        catalogUrl: contract.catalogUrl
       };
     } catch (error) {
       return sendError(reply, statusCode(error), errorCode(error), undefined, correlationId);
@@ -474,6 +508,8 @@ export function registerOnboardingRoutes(app: FastifyInstance, db: Db, config: O
     if (hostOf(request.headers.host) !== config.REGISTER_HOST) return sendError(reply, 404, "not_found", undefined, correlationId);
     const principal = await programmerPrincipal(db, config, request, reply);
     if (!principal) return;
+    const serviceKind = principal.serviceKind === "EXTERNAL_API" ? "EXTERNAL_API" : "COMPONENT";
+    const contract = integrationIntentContract(config.REGISTER_HOST, serviceKind);
     return reply.header("cache-control", "no-store").send({
       release: KCML_RELEASE,
       token: {
@@ -484,10 +520,10 @@ export function registerOnboardingRoutes(app: FastifyInstance, db: Db, config: O
         expiresAt: principal.expiresAt,
         maxExpiresAt: principal.maxExpiresAt
       },
-      registration: { componentKind: "GENERIC", identityAssignedBy: "KCML" },
-      intakeUrl: onboardingHandoffUrls(config.REGISTER_HOST).recommendedIntakeUrl,
-      intakeUrls: onboardingHandoffUrls(config.REGISTER_HOST),
-      catalogUrl: `https://${config.REGISTER_HOST}/api/onboarding-catalogs/component/${MCP_CATALOG_VERSION}`,
+      registration: contract.registration,
+      intakeUrl: contract.intakeUrl,
+      intakeUrls: contract.intakeUrls,
+      catalogUrl: contract.catalogUrl,
       correlationId
     });
   });

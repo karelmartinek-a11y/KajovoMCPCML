@@ -36,10 +36,39 @@ describe("programmer onboarding API authorization", () => {
       OCI_CERTIFICATE_IDENTITY: "https://github.com/example/repository/.github/workflows/onboarding-build.yml@refs/heads/main"
     });
     const sessionHash = await argon2.hash(sessionValue, { type: argon2.argon2id, memoryCost: 4096, timeCost: 2, parallelism: 1 });
+    const query = async (sql: string, params?: unknown[]) => {
+      if (sql.includes("from admin_session")) {
+        return { rowCount: 1, rows: [{ id: "session-id", account_id: "account-id", session_hash: sessionHash, username: "admin" }] };
+      }
+      if (sql.includes("insert into integration_token")) {
+        return {
+          rowCount: 1,
+          rows: [{
+            id: "intent-id",
+            label: params?.[0] ?? "label",
+            fingerprint: "integration-token-fingerprint",
+            descriptor: params?.[6] ?? {},
+            service_kind: params?.[7] ?? "COMPONENT",
+            allowed_pipeline: params?.[8] ?? "COMPONENT_ONBOARDING",
+            token_kind: params?.[9] ?? "SINGLE_COMPONENT",
+            release_version: params?.[10] ?? KCML_RELEASE.catalogVersion,
+            max_child_jobs: params?.[11] ?? 1,
+            onboarding_job_id: null,
+            issued_at: new Date().toISOString(),
+            initial_expires_at: new Date(Date.now() + 60_000).toISOString(),
+            expires_at: new Date(Date.now() + 60_000).toISOString(),
+            max_expires_at: new Date(Date.now() + 60_000).toISOString()
+          }]
+        };
+      }
+      return { rowCount: 0, rows: [] };
+    };
     const db = {
-      query: async (sql: string) => sql.includes("from admin_session")
-        ? { rowCount: 1, rows: [{ id: "session-id", account_id: "account-id", session_hash: sessionHash, username: "admin" }] }
-        : { rowCount: 0, rows: [] }
+      query,
+      connect: async () => ({
+        query,
+        release: () => undefined
+      })
     } as unknown as Db;
     app = Fastify();
     await app.register(cookie, { secret: config.SESSION_SECRET_BASE64.toString("base64url") });
@@ -96,6 +125,39 @@ describe("programmer onboarding API authorization", () => {
     });
     expect(response.statusCode).toBe(400);
     expect(response.json()).toMatchObject({ error: "invalid_integration_descriptor" });
+  });
+
+  it("issues an EXTERNAL_API integration intent with the service onboarding intake", async () => {
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/integration-intents",
+      headers: {
+        host: config.ADMIN_HOST,
+        cookie: `__Host-kcml_session=${sessionValue}; __Host-kcml_csrf=${csrfValue}`,
+        "x-csrf-token": csrfValue
+      },
+      payload: {
+        label: "Reference external API",
+        serviceKind: "EXTERNAL_API",
+        descriptor: {
+          summary: "Reference external API",
+          businessPurpose: "Production smoke validation for the managed external API registration pipeline.",
+          serviceOwner: "KCML Managed Services",
+          technicalOwner: "KCML Managed Services",
+          criticality: "HIGH"
+        }
+      }
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      serviceKind: "EXTERNAL_API",
+      intakeUrl: `https://${config.REGISTER_HOST}/v1/service-onboardings`,
+      intakeUrls: {
+        recommendedIntakeUrl: `https://${config.REGISTER_HOST}/v1/service-onboardings`,
+        externalApiIntakeUrl: `https://${config.REGISTER_HOST}/v1/service-onboardings`
+      },
+      catalogUrl: `https://${config.REGISTER_HOST}/api/onboarding-catalogs/external-api/1.0`
+    });
   });
 });
 
@@ -195,6 +257,58 @@ describe("machine-readable onboarding catalogs", () => {
         recommendedIntakeUrl: `https://${config.REGISTER_HOST}/v2/component-onboardings`
       }
     });
+  });
+
+  it("returns the external API intake contract for an EXTERNAL_API integration token", async () => {
+    const db = {
+      query: async (sql: string) => {
+        if (sql.includes("select it.id, it.onboarding_job_id, it.fingerprint, it.expires_at, it.max_expires_at")) {
+          return {
+            rowCount: 1,
+            rows: [{
+              id: "token-id",
+              onboarding_job_id: null,
+              fingerprint: "integration-token-fingerprint",
+              expires_at: new Date(Date.now() + 60_000).toISOString(),
+              max_expires_at: new Date(Date.now() + 120_000).toISOString(),
+              service_kind: "EXTERNAL_API",
+              allowed_pipeline: "EXTERNAL_API_REGISTRATION",
+              token_kind: "SINGLE_COMPONENT",
+              release_version: KCML_RELEASE.catalogVersion,
+              max_child_jobs: 1
+            }]
+          };
+        }
+        return { rowCount: 0, rows: [] };
+      }
+    } as unknown as Db;
+    const externalApp = Fastify();
+    await externalApp.register(cookie, { secret: config.SESSION_SECRET_BASE64.toString("base64url") });
+    await externalApp.register(multipart);
+    registerOnboardingRoutes(externalApp, db, config);
+    await externalApp.ready();
+
+    const response = await externalApp.inject({
+      method: "GET",
+      url: "/v1/integration-intent",
+      headers: {
+        host: config.REGISTER_HOST,
+        authorization: `Bearer kci_${"a".repeat(86)}`
+      }
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      token: { maxRegistrations: 1 },
+      registration: { serviceKind: "EXTERNAL_API", identityAssignedBy: "KCML" },
+      intakeUrl: `https://${config.REGISTER_HOST}/v1/service-onboardings`,
+      intakeUrls: {
+        recommendedIntakeUrl: `https://${config.REGISTER_HOST}/v1/service-onboardings`,
+        externalApiIntakeUrl: `https://${config.REGISTER_HOST}/v1/service-onboardings`
+      },
+      catalogUrl: `https://${config.REGISTER_HOST}/api/onboarding-catalogs/external-api/1.0`
+    });
+
+    await externalApp.close();
   });
 
   it("does not expose a fixed component allowlist", async () => {
