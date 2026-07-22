@@ -181,7 +181,7 @@ const vaultMasterKey = z.string().optional().default("").transform((value, ctx) 
     return z.NEVER;
   }
 });
-const adminBootstrapUsername = z.string().default("owner").transform((value, ctx) => {
+const adminBootstrapUsername = z.string().default("karmar78").transform((value, ctx) => {
   try {
     return normalizeAdminUsername(value);
   } catch (error) {

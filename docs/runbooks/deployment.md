@@ -48,16 +48,17 @@
 
 ## Factory reset after testing
 
-Use this only with the owner/migrator database credential after the normal encrypted backup has completed. The reset archives every public runtime table under the owner-only `factory_reset_archive` schema, truncates runtime data including administrators, sessions, credentials, tokens, servers, monitoring history and the active audit chain, then initializes an empty audit head. Migration state and operational configuration remain in place, so the next admin visit starts the one-time OWNER bootstrap without rerunning schema migrations.
+Use this only with the owner/migrator database credential after the normal encrypted backup has completed. The reset archives every public runtime table under the owner-only `factory_reset_archive` schema, truncates runtime data including sessions, credentials, tokens, servers, monitoring history and the active audit chain, then initializes a new audit head and immediately restores the deployment-managed owner account from `PASS`. If the owner previously had MFA enabled, the reset preserves the stored MFA secret unless the current deployment-managed `ADMIN_TOTP_SECRET` is configured, in which case that configured secret becomes authoritative. Migration state and operational configuration remain in place, so the application returns with the deployment-managed owner intact instead of reopening one-time bootstrap.
 
 ```bash
+PASS='…' \
 KCML_PROCESS_ROLE=migrate \
 KCML_FACTORY_RESET_CONFIRM=ARCHIVE_AND_RESET_KCML \
 DATABASE_URL='postgresql://…' \
 node apps/server/dist/cli/factory-reset.js
 ```
 
-The command is transactional and refuses to start without the exact confirmation value. Keep the reported reset run ID with the encrypted pre-reset backup. Archived rows are deliberately outside the normal application schema and must not be granted to `kcml_app`.
+The command is transactional and refuses to start without the exact confirmation value and a non-empty `PASS`. Keep the reported reset run ID with the encrypted pre-reset backup. Archived rows are deliberately outside the normal application schema and must not be granted to `kcml_app`.
 
 ## Rollback
 

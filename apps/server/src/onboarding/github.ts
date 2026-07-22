@@ -50,7 +50,7 @@ export class GitHubOnboardingClient {
         authorization: `Bearer ${githubAppJwt(this.config)}`,
         accept: "application/vnd.github+json",
         "x-github-api-version": "2022-11-28",
-        "user-agent": "KajovoMCPCML-onboarding-worker"
+        "user-agent": "KajovoCML-onboarding-worker"
       }
     });
     if (!response.ok) throw new Error(`github_installation_token_failed:${response.status}`);
@@ -69,7 +69,7 @@ export class GitHubOnboardingClient {
         accept: "application/vnd.github+json",
         "content-type": "application/json",
         "x-github-api-version": "2022-11-28",
-        "user-agent": "KajovoMCPCML-onboarding-worker"
+        "user-agent": "KajovoCML-onboarding-worker"
       },
       body: body === undefined ? undefined : JSON.stringify(body)
     });

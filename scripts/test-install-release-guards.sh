@@ -60,13 +60,13 @@ if grep -Eq 'client_secret_basic|integration_token_bearer' "$install_script"; th
   echo "secret API deployment checks must enforce access-token bearer only" >&2
   exit 1
 fi
-grep -Fq "where version='046_drop_stale_component_identity_triggers_20260723.sql'" "$install_script"
-grep -Fq "where version='088_canonical_managed_service_identity.sql'" "$install_script"
+grep -Fq "where version='001_pre_production_baseline.sql'" "$install_script"
+grep -Fq 'wait_for_sql_equals "baseline_migration_count" "1" "select count(*) from schema_migration"' "$install_script"
 grep -Fq -- "--exclude-table='public.admin_account_manual_fix_backup_*'" deploy/scripts/backup.sh
 if grep -qi 'kcml0002' "$install_script"; then
   echo "release install must not prefer a specific component" >&2
   exit 1
 fi
-grep -Fq '"https://${admin_host}/api/login"' "$install_script"
+grep -Fq 'dist/cli/admin-login-smoke.js' "$install_script"
 grep -Fq 'audit_archive_dir="$(dirname "${AUDIT_ARCHIVE_PATH:-/var/lib/kcml/audit/archive.jsonl}")"' "$preflight_script"
 grep -Fq 'runuser -u kcml -- test -w "$audit_archive_dir"' "$preflight_script"

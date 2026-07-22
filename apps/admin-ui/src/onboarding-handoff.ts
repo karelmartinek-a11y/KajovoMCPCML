@@ -24,7 +24,7 @@ export function onboardingHandoffText(handoff: OnboardingHandoff): string {
   const expiresAt = formatDate(handoff.initialExpiresAt);
   const intakeUrl = handoff.intakeUrls?.recommendedIntakeUrl ?? handoff.programmerApiUrl;
   return [
-    "Automatická integrace prvku do KajovoMCPCML",
+    "Automatická integrace prvku do KajovoCML",
     "",
     `Označení integračního toku: ${handoff.label}`,
     `Shrnutí serveru: ${handoff.descriptor.summary}`,

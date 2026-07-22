@@ -6,7 +6,7 @@ COPY scripts ./scripts
 COPY apps ./apps
 COPY packages ./packages
 COPY docs ./docs
-COPY Connect_in_Catalog_KajovoMCPCML_v1.7.docx ./Connect_in_Catalog_KajovoMCPCML_v1.7.docx
+COPY Connect_in_Catalog_KajovoCML_v1.7.docx ./Connect_in_Catalog_KajovoCML_v1.7.docx
 RUN pnpm install --frozen-lockfile
 RUN pnpm --filter @kcml/admin-ui build
 RUN pnpm --filter @kcml/server build
@@ -23,7 +23,7 @@ COPY --from=build --chown=kcml:kcml /app/apps/server/src/migrations ./apps/serve
 COPY --from=build --chown=kcml:kcml /app/apps/admin-ui/dist ./apps/admin-ui/dist
 COPY --from=build --chown=kcml:kcml /app/docs/onboarding-catalogs ./docs/onboarding-catalogs
 COPY --from=build --chown=kcml:kcml /app/docs/onboarding-manifest-v1.5.example.json ./docs/onboarding-manifest-v1.5.example.json
-COPY --from=build --chown=kcml:kcml /app/Connect_in_Catalog_KajovoMCPCML_v1.7.docx ./Connect_in_Catalog_KajovoMCPCML_v1.7.docx
+COPY --from=build --chown=kcml:kcml /app/Connect_in_Catalog_KajovoCML_v1.7.docx ./Connect_in_Catalog_KajovoCML_v1.7.docx
 USER kcml
 EXPOSE 3000
 CMD ["node", "apps/server/dist/index.js"]

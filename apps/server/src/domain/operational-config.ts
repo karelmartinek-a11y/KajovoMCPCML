@@ -89,7 +89,7 @@ export const operationalConfigDefinitions: OperationalConfigDefinition[] = [
   definition("mfaEncryptionKey", "MFA_ENCRYPTION_KEY_BASE64", "Šifrovací klíč MFA", "secret", "security", ["web"], { secretFormat: "base64-exact-32" }),
   definition("adminBootstrapSecret", "ADMIN_BOOTSTRAP_SECRET", "Jednorázový bootstrap secret", "secret", "security", ["web"], { secretFormat: "opaque" }),
   definition("adminTotpSecret", "ADMIN_TOTP_SECRET", "Deployment MFA secret", "secret", "security", ["web"], { secretFormat: "opaque" }),
-  definition("adminBootstrapUsername", "ADMIN_BOOTSTRAP_USERNAME", "Deployment admin účet", "string", "security", ["web"], { defaultValue: "owner" }),
+  definition("adminBootstrapUsername", "ADMIN_BOOTSTRAP_USERNAME", "Deployment admin účet", "string", "security", ["web"], { defaultValue: "karmar78" }),
   definition("mfaAllowPlaintextLegacy", "MFA_ALLOW_PLAINTEXT_LEGACY", "Povolit legacy plaintext MFA", "boolean", "security", ["web"], { defaultValue: false }),
 
   definition("quarantineRoot", "QUARANTINE_ROOT", "Kořen karantény", "string", "runtime", ["web", "worker"], { defaultValue: "/var/lib/kcml/onboarding" }),

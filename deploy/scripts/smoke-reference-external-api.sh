@@ -13,7 +13,7 @@ auth_host="$AUTH_HOST"
 register_host="$REGISTER_HOST"
 public_base_domain="$PUBLIC_BASE_DOMAIN"
 port="${PORT:-3010}"
-admin_username="${ADMIN_BOOTSTRAP_USERNAME:-owner}"
+admin_username="${ADMIN_BOOTSTRAP_USERNAME:-}"
 base_url="http://127.0.0.1:${port}"
 
 tmpdir="$(mktemp -d)"
@@ -80,15 +80,24 @@ admin_write() {
 }
 
 step login
-rm -f "$login_headers" "$login_body"
-jq -nc --arg username "$admin_username" --arg password "$PASS" '{username:$username,password:$password}' \
-  | curl_json -D "$login_headers" -o "$login_body" -H "Host: $admin_host" -H 'content-type: application/json' \
-      --data @- "$base_url/api/login"
-csrf_token="$(jq -r '.csrfToken' "$login_body")"
+login_json="$(
+  PASS="$PASS" \
+  KCML_PROCESS_ROLE=admin-sync \
+  DATABASE_URL_FILE=/etc/kcml/credentials/admin-sync/database_url \
+  CONFIG_VAULT_MASTER_KEY_BASE64_FILE=/etc/kcml/credentials/config_vault_master_key \
+  NODE_ENV=production \
+  KCML_LOGIN_SMOKE_BASE_URL="$base_url" \
+  KCML_LOGIN_SMOKE_HOST="$admin_host" \
+  ADMIN_BOOTSTRAP_USERNAME="$admin_username" \
+    node "$release_dir/apps/server/dist/cli/admin-login-smoke.js"
+)"
+printf '%s\n' "$login_json" > "$login_body"
+admin_username="$(jq -r '.username' <<<"$login_json")"
+csrf_token="$(jq -r '.csrfToken' <<<"$login_json")"
+session_cookie="$(jq -r '.sessionCookie' <<<"$login_json")"
+csrf_cookie="$(jq -r '.csrfCookie' <<<"$login_json")"
 test -n "$csrf_token"
 test "$csrf_token" != "null"
-session_cookie="$(sed -nE 's/^[Ss]et-[Cc]ookie: __Host-kcml_session=([^;]+).*/\1/p' "$login_headers" | tr -d '\r' | tail -n 1)"
-csrf_cookie="$(sed -nE 's/^[Ss]et-[Cc]ookie: __Host-kcml_csrf=([^;]+).*/\1/p' "$login_headers" | tr -d '\r' | tail -n 1)"
 test -n "$session_cookie"
 test "$session_cookie" != "null"
 test -n "$csrf_cookie"

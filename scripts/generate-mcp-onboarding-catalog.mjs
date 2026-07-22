@@ -79,7 +79,7 @@ const catalog = {
   identityAssignment: { authority: "KCML", codePattern: "KCML####", hostnamePattern: "kcml####.kajovocml.hcasc.cz", clientSuppliedIdentityForbidden: true },
   tokens: { integration: { ttlHours: 24, consumedOn: "SUCCESSFUL_REGISTRATION", reusableAfterFailedAttempt: true }, access: { expires: false, rotatedOrRevokedOnly: true }, permittedTokenClasses: ["INTEGRATION", "ACCESS"] },
   runtime: { canonicalMcpPath: "/mcp", transports: ["UDS", "HTTPS"], internalControlExcludedFromBusinessTools: true },
-  compatibility: { classification: "BREAKING", predecessor: "2026.07.24", migration: "Re-submit a generic manifest and evidence bundle; historical catalog remains immutable.", rollback: "Deploy the preceding immutable release and retain forward-only database columns." },
+  compatibility: { classification: "BREAKING", migration: "Re-submit a generic manifest and evidence bundle against the canonical pre-production baseline.", rollback: "Restore the last verified pre-production release and re-run baseline verification." },
   compatibilityMatrix: [{ kind: "ANY_API_CAPABLE_COMPONENT", UDS: "SUPPORTED", HTTPS: "SUPPORTED" }],
   pipelineGates: ["manifest_schema", "artifact_provenance", "runtime_probe", "authorization", "control_plane", "state_contract", "e2e_all_scenarios", "monitoring", "audit_continuity", "recertification"],
   programmerApi: { openapi: "3.1.0", paths: { "/v2/component-onboardings": { post: {} }, "/v2/component-onboardings/{id}": { get: {} }, "/v2/component-onboardings/{id}/revisions": { post: {} }, "/v2/component-onboardings/{id}/readiness": { post: {} }, "/v2/component-onboardings/{id}/e2e-results": { post: { deprecated: true, responses: { 410: { description: "Client supplied E2E evidence is forbidden" } } } } } }

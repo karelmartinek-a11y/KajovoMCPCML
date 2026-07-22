@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { z } from "zod";
 import type { Db } from "../db.js";
-import componentManifestSchema from "../contracts/component-manifest-2026.07.24.schema.json" with { type: "json" };
+import componentManifestSchema from "../contracts/component-manifest-2026.07.22-compliance.1.schema.json" with { type: "json" };
 import { kcmlCodeFromNumber, kcmlHostnameForCode } from "./hostnames.js";
 import { KCML_RELEASE } from "./release.js";
 
@@ -354,7 +354,7 @@ export type RuntimeRegistrationManifest = Omit<RegistrationManifest15, "schemaVe
   releaseVersion: typeof KCML_RELEASE.applicationVersion;
   componentType: "MCP_SERVER";
   registrationType: "MCP_SERVER";
-  blueprint: { componentId: string; version: "2026.07.24" };
+  blueprint: { componentId: string; version: typeof KCML_RELEASE.manifestSchemaVersion };
   pulseEnvelopeVersion: typeof KCML_RELEASE.pulseEnvelopeVersion;
   publicEndpoints: unknown[];
   pulseContract: unknown;
@@ -435,15 +435,21 @@ function assertNoPlatformGeneratedFields(input: Record<string, unknown>): void {
   }
 }
 
+function requiredStringField(input: Record<string, unknown>, key: string): string {
+  const value = input[key];
+  if (typeof value !== "string") throw new Error("invalid_manifest");
+  return value;
+}
+
 function normalizeComponentMcpManifest(input: unknown): RuntimeRegistrationManifest {
   if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("invalid_manifest");
   const raw = input as Record<string, unknown>;
-  if (raw.schemaVersion !== "2026.07.24") throw new Error("legacy_manifest_schema_retired");
+  if (raw.schemaVersion !== KCML_RELEASE.manifestSchemaVersion) throw new Error("legacy_manifest_schema_retired");
   assertNoPlatformGeneratedFields(raw);
   if (!componentManifestValidator(raw)) throw new Error("invalid_manifest");
   if (raw.componentType !== "MCP_SERVER" || raw.registrationType !== "MCP_SERVER") throw new Error("component_type_not_supported");
 
-  const blueprint = raw.blueprint as { componentId: string; version: "2026.07.24" };
+  const blueprint = raw.blueprint as { componentId: string; version: typeof KCML_RELEASE.manifestSchemaVersion };
   const facadeTools = raw.facadeTools as Array<{ name: string; inputSchema: Record<string, unknown>; outputSchema: Record<string, unknown> }>;
   if (facadeTools.length !== 1) throw new Error("facade_tool_count_mismatch");
   const endpoint = (raw.publicEndpoints as Array<Record<string, unknown>>)[0];
@@ -462,12 +468,12 @@ function normalizeComponentMcpManifest(input: unknown): RuntimeRegistrationManif
     blueprint,
     pulseEnvelopeVersion: KCML_RELEASE.pulseEnvelopeVersion,
     normalizedFromComponentManifest: true,
-    registrationRevision: String(raw.registrationRevision),
+    registrationRevision: requiredStringField(raw, "registrationRevision"),
     environment: raw.environment as "production" | "staging",
-    handlerKey: String(raw.handlerKey),
-    handlerVersion: String(raw.handlerVersion),
-    displayName: String(raw.displayName),
-    businessPurpose: String(raw.businessPurpose),
+    handlerKey: requiredStringField(raw, "handlerKey"),
+    handlerVersion: requiredStringField(raw, "handlerVersion"),
+    displayName: requiredStringField(raw, "displayName"),
+    businessPurpose: requiredStringField(raw, "businessPurpose"),
     owners: { service: "component-owner", technical: "component-owner", security: "component-owner", operations: "component-owner" },
     contacts: { serviceEmail: "service@example.invalid", technicalEmail: "technical@example.invalid", securityEmail: "security@example.invalid", operationsOnCall: "component:oncall" },
     criticality: raw.criticality as RegistrationManifest15["criticality"],
@@ -476,7 +482,7 @@ function normalizeComponentMcpManifest(input: unknown): RuntimeRegistrationManif
     runtime: { memoryMb: runtime.memoryMb, cpuCores: runtime.cpuCores, pidsLimit: runtime.pidsLimit, egressAllowlist: networkPolicy.outboundAllowlist },
     tool: {
       title: firstTool.name,
-      description: String(raw.businessPurpose),
+      description: requiredStringField(raw, "businessPurpose"),
       inputSchema: firstTool.inputSchema,
       outputSchema: firstTool.outputSchema,
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false, taskSupport: "forbidden" }

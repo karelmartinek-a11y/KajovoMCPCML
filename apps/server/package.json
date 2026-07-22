@@ -25,6 +25,8 @@
     "config:import-env:release": "node dist/cli/import-operational-config.js",
     "admin:sync-password": "tsx src/cli/sync-admin-password.ts",
     "admin:sync-password:release": "node dist/cli/sync-admin-password.js",
+    "admin:login-smoke": "tsx src/cli/admin-login-smoke.ts",
+    "admin:login-smoke:release": "node dist/cli/admin-login-smoke.js",
     "platform-worker-access:ensure": "tsx src/cli/ensure-platform-worker-access.ts",
     "platform-worker-access:ensure:release": "node dist/cli/ensure-platform-worker-access.js"
   },

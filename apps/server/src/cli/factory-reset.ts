@@ -3,6 +3,14 @@ import { pathToFileURL } from "node:url";
 import type pg from "pg";
 import { loadBootstrapConfig } from "../config.js";
 import { createDb, tx } from "../db.js";
+import {
+  requireDeploymentManagedAdminPassword,
+  syncDeploymentManagedAdmin,
+  type PreservedDeploymentManagedAdmin,
+  verifyDeploymentManagedAdminPassword
+} from "../domain/deployment-managed-admin.js";
+import { loadConfigFromDb } from "../domain/operational-config.js";
+import { initializePreProductionBaselineState } from "../domain/pre-production-baseline.js";
 
 const KEEP_TABLES = new Set(["schema_migration", "operational_config_setting", "operational_config_applied"]);
 const AUDIT_HEAD_TABLE = "audit_head";
@@ -117,9 +125,11 @@ export async function runFactoryReset(): Promise<void> {
   const config = loadBootstrapConfig();
   const db = createDb(config);
   const runId = randomUUID();
+  const runtimeConfig = await loadConfigFromDb(db, config);
+  const password = requireDeploymentManagedAdminPassword(process.env.PASS);
 
   try {
-    const summary = await tx(db, async (client) => {
+    const { summary, accountId, mfaEnabled } = await tx(db, async (client) => {
       await client.query("select pg_advisory_xact_lock(hashtextextended('kcml-factory-reset', 0))");
       await ensureArchiveMetadata(client);
 
@@ -127,6 +137,19 @@ export async function runFactoryReset(): Promise<void> {
       const preservedTables = allTables.filter((tableName) => tableName !== AUDIT_HEAD_TABLE);
       const tablesToTruncate = allTables;
       const archiveSummaries: ArchiveSummary[] = [];
+      const preservedOwnerResult = await client.query(
+        "select id,mfa_enabled,mfa_secret from admin_account where username=$1",
+        [runtimeConfig.ADMIN_BOOTSTRAP_USERNAME]
+      );
+      const preservedOwner: PreservedDeploymentManagedAdmin | null = preservedOwnerResult.rowCount
+        ? {
+            accountId: String(preservedOwnerResult.rows[0].id),
+            mfaEnabled: Boolean(preservedOwnerResult.rows[0].mfa_enabled),
+            mfaSecret: typeof preservedOwnerResult.rows[0].mfa_secret === "string"
+              ? preservedOwnerResult.rows[0].mfa_secret
+              : null
+          }
+        : null;
 
       await snapshotPreservedTables(client);
       for (const tableName of preservedTables) {
@@ -142,6 +165,7 @@ export async function runFactoryReset(): Promise<void> {
 
       await client.query("select public.kcml_factory_reset_truncate($1::text[])", [tablesToTruncate]);
       await restorePreservedTables(client);
+      await initializePreProductionBaselineState(client);
 
       await client.query(
         `insert into public.${quoteIdentifier(AUDIT_HEAD_TABLE)}(singleton, last_sequence, event_hash, updated_at)
@@ -152,12 +176,28 @@ export async function runFactoryReset(): Promise<void> {
                updated_at=now()`
       );
 
-      return archiveSummaries;
+      const restoredOwner = await syncDeploymentManagedAdmin(client, {
+        username: runtimeConfig.ADMIN_BOOTSTRAP_USERNAME,
+        password,
+        mfaEncryptionKey: runtimeConfig.MFA_ENCRYPTION_KEY_BASE64,
+        configuredTotpSecret: runtimeConfig.ADMIN_TOTP_SECRET,
+        preserved: preservedOwner,
+        actorType: "factory-reset",
+        eventType: "admin.factory_reset.restored",
+        correlationId: randomUUID()
+      });
+      await verifyDeploymentManagedAdminPassword(client, restoredOwner.accountId, password, "factory-reset", randomUUID());
+
+      return {
+        summary: archiveSummaries,
+        accountId: restoredOwner.accountId,
+        mfaEnabled: restoredOwner.mfaEnabled
+      };
     });
 
     const totalRows = summary.reduce((count, item) => count + item.rowCount, 0);
     process.stderr.write(
-      `Factory reset completed. Archived ${summary.length} tables and ${totalRows} rows under schema ${ARCHIVE_SCHEMA} with run id ${runId}.\n`
+      `Factory reset completed. Archived ${summary.length} tables and ${totalRows} rows under schema ${ARCHIVE_SCHEMA} with run id ${runId}. Restored deployment-managed owner ${runtimeConfig.ADMIN_BOOTSTRAP_USERNAME} (${accountId}); MFA ${mfaEnabled ? "enabled" : "disabled"}.\n`
     );
   } finally {
     await db.end();

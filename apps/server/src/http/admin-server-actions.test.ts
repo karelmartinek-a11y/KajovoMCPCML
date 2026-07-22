@@ -771,8 +771,6 @@ describe("admin server actions", () => {
       usernamePresent: true,
       proofPresent: true,
       proofLineEndingNormalized: false,
-      proofLength: 14,
-      canonicalProofLength: 14,
       usernameNormalized: true
     }));
   });

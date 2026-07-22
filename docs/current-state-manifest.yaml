@@ -1,0 +1,24 @@
+lifecycleState: PRE_PRODUCTION_TESTING
+effectiveDate: 2026-07-22
+product:
+  name: KajovoCML
+  technicalPrefix: KCML
+deploymentManagedOwner:
+  username: karmar78
+  passwordAuthority: PASS
+  mfa:
+    sourceOrder:
+      - ADMIN_TOTP_SECRET
+      - preserved_admin_account_secret
+securityInvariants:
+  - deployment_managed_owner_password_is_hashed_only
+  - deployment_managed_owner_session_epoch_rotates_on_sync
+  - factory_reset_restores_owner_before_completion
+  - login_smoke_must_pass_with_or_without_mfa
+authoritativeFiles:
+  - apps/server/src/domain/deployment-managed-admin.ts
+  - apps/server/src/cli/sync-admin-password.ts
+  - apps/server/src/cli/factory-reset.ts
+  - apps/server/src/http/admin-routes.ts
+  - deploy/scripts/install-release.sh
+  - deploy/scripts/smoke-reference-external-api.sh

@@ -917,9 +917,8 @@
   },
   "compatibility": {
     "classification": "BREAKING",
-    "predecessor": "2026.07.24",
-    "migration": "Re-submit a generic manifest and evidence bundle; historical catalog remains immutable.",
-    "rollback": "Deploy the preceding immutable release and retain forward-only database columns."
+    "migration": "Re-submit a generic manifest and evidence bundle against the canonical pre-production baseline.",
+    "rollback": "Restore the last verified pre-production release and re-run baseline verification."
   },
   "compatibilityMatrix": [
     {
@@ -967,5 +966,5 @@
       }
     }
   },
-  "canonicalDigest": "sha256:cf107f95387a3838a3dddedf0e81a8caffda191630b858e1a21789b8ce592d4e"
+  "canonicalDigest": "sha256:9d141e743ae09ab60a791787e3aad6f18bf3198097cad39e3401a025a6113bf8"
 }

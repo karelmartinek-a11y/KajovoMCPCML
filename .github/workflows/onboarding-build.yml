@@ -46,7 +46,7 @@ jobs:
           HANDLER: ${{ matrix.handler }}
         run: |
           code="${HANDLER#handlers/}"
-          image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/kajovomcpcml-handlers/${code,,}:${GITHUB_SHA}"
+          image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/kajovocml-handlers/${code,,}:${GITHUB_SHA}"
           echo "code=$code" >> "$GITHUB_OUTPUT"
           echo "image=$image" >> "$GITHUB_OUTPUT"
       - id: build

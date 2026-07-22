@@ -1,0 +1,10 @@
+{
+  "lifecycleState": "PRE_PRODUCTION_TESTING",
+  "effectiveDate": "2026-07-22",
+  "baselineLocked": false,
+  "deploymentManagedOwner": "karmar78",
+  "notes": [
+    "The repository remains pre-production and may perform explicitly approved test-only resets.",
+    "Immutable migration, catalog, release and audit-history preservation activates only after an explicit owner declaration of PRODUCTION_BASELINE_LOCKED."
+  ]
+}

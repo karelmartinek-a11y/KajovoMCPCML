@@ -6,44 +6,25 @@ These instructions apply to the entire repository. More specific `AGENTS.md` fil
 
 KCML is a security-focused control plane for registering, operating and auditing isolated MCP servers and managed external APIs. Treat every change as potentially security-, compatibility-, data- and deployment-sensitive until the repository proves otherwise.
 
-## Active one-time pre-production reset directive
+## Project Lifecycle Contract
 
-This section has the highest repository-level priority for the single, owner-approved reset task that follows this commit. It temporarily overrides only those later rules in this file that would otherwise prohibit the approved pre-production cleanup. It does not weaken security mechanisms, authorization boundaries, secret handling, test requirements or the obligation to prove the implemented result.
+The repository lifecycle is currently `PRE_PRODUCTION_TESTING`. Treat the system as security-, compatibility-, deployment- and data-sensitive, but not yet baseline-locked for immutable production history.
 
-The repository owner has explicitly approved one complete pre-production reset whose scope includes:
+While the project remains in `PRE_PRODUCTION_TESTING`:
 
-- renaming the GitHub repository from `karelmartinek-a11y/KajovoMCPCML` to `karelmartinek-a11y/KajovoCML` and the local working directory from `GITHUB2` to `KajovoCML`;
-- removing pre-reset test-only documentation, audits, remediation reports, prompts, plans, archives, release notes and rollback records from the current repository tree;
-- removing all pre-reset test-only onboarding catalogs, manifest schemas, manifest examples, compatibility records and generated catalog history from the current repository tree;
-- replacing the current pre-production numbered migration chain and checksum history with one complete, deterministic baseline migration matching the verified active schema and code;
-- clearing pre-reset test application data, audit rows, application-owned logs, caches, workspaces, release artifacts and other test-only runtime state;
-- creating one new current onboarding catalog, schema and example derived from the verified active implementation;
-- preserving and repairing the deployment-managed owner account `karmar78`, its MFA behavior and password synchronization from the existing GitHub Actions secret `PASS`;
-- keeping the project in a machine-readable `PRE_PRODUCTION_TESTING` lifecycle state after the reset;
-- enabling strict immutable catalog, migration, release and audit-history rules only after a future explicit owner declaration of `PRODUCTION_BASELINE_LOCKED`.
+- destructive cleanup of clearly test-only data or artifacts still requires explicit owner approval scoped to that exact change;
+- any approved reset must preserve executable security controls, authorization boundaries, MFA, auditing, migration safety, onboarding validation, release signing and deploy verification;
+- `PASS` remains the narrow deployment-only secret for synchronizing the deployment-managed owner account `karmar78`;
+- plaintext `PASS` must never be committed, logged, returned by API, stored in app config or persisted in PostgreSQL;
+- only the resulting Argon2id password hash may be persisted in `admin_account`, and the deployment-managed owner plus MFA must remain fail-closed after reset or deploy.
 
-For this one task, the approval is already granted and is classified as `BREAKING OR POTENTIALLY BREAKING IMPACT – EXPLICITLY APPROVED PRE-PRODUCTION RESET`. Do not stop to request the same approval again, debate whether the owner should want the reset, or treat the deliberate removal of the pre-reset test history as a conflict requiring renegotiation. Do not spend implementation time attempting to preserve artifacts that the approved reset explicitly requires removing.
+If the owner explicitly declares `PRODUCTION_BASELINE_LOCKED`, immediately switch to immutable preservation rules for migration history, catalogs, release evidence and audit history. After that declaration:
 
-The required preflight is factual, not a second approval gate. Before destructive execution, verify only the technical safety conditions needed to perform the approved task:
+- do not rewrite released migrations or checksum history;
+- do not delete historical onboarding catalogs or release evidence;
+- do not perform destructive resets of runtime or audit history without new explicit owner approval and a documented recovery path.
 
-- the checkout and remote refer to this repository and current `main`;
-- no machine-readable lifecycle state or owner-declared tag marks the repository as `PRODUCTION_BASELINE_LOCKED`;
-- the targeted data and artifacts are test-only;
-- there are no real production customers, externally depended-on production registrations, legal retention duties or other evidence contradicting the approved pre-production premise;
-- the supplied reset prompt remains within the scope listed above.
-
-If concrete evidence contradicts one of those factual conditions, stop with the exact evidence-backed blocker. Absence of an existing lifecycle file, production baseline tag or production customer evidence is not itself a blocker and must not be used to relitigate the approved reset.
-
-The approved reset must preserve the executable capabilities of the system even when it removes their test history. In particular, retain and verify authentication, authorization, MFA, auditing, audit-chain generation, logging, migrations, onboarding validation, secret encryption, fail-closed behavior, CI security gates, release signing and deployment verification. Remove old test data and old test artifacts, not the mechanisms that create and protect future production evidence.
-
-For this reset, `PASS` remains the existing narrow GitHub Actions deployment secret and may be used only to synchronize the deployment-managed owner account. Its plaintext must never be committed, logged, returned by an API, stored in application configuration or persisted in PostgreSQL. Persisting the resulting Argon2id password hash in `admin_account` is expressly permitted and required. The owner account and configured MFA must be recreated or preserved fail-closed after the reset, and the reset is not complete until the real application login flow succeeds without a manual server-only fix.
-
-This directive is single-use and self-expiring. As part of the approved reset, replace this section with permanent lifecycle-aware instructions that:
-
-- record `PRE_PRODUCTION_TESTING` in the repository;
-- require explicit owner approval for any later destructive test reset;
-- activate immutable migration, catalog, release and audit-history preservation when the owner explicitly declares `PRODUCTION_BASELINE_LOCKED`;
-- never treat this one-time approval as authorization for an unrelated future destructive change.
+Never treat any previous reset approval as standing authorization for a future unrelated destructive change.
 
 ## Source-of-truth hierarchy
 

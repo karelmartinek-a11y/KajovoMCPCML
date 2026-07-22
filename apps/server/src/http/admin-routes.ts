@@ -10,6 +10,7 @@ import { tx } from "../db.js";
 import { appendAudit, verifyAuditChain } from "../domain/audit.js";
 import { buildAuditWhere, encodeAuditCursor, parseAuditQuery, sanitizeAuditRow } from "../domain/audit-view.js";
 import { raiseAlert } from "../domain/alerts.js";
+import { canonicalAdminPassword } from "../domain/deployment-managed-admin.js";
 import {
   createKajaCredential,
   deleteKajaCredential,
@@ -185,14 +186,6 @@ function normalizedLoginUsername(username: string): string {
   return username.trim().toLowerCase();
 }
 
-function canonicalAdminPassword(value: string): string {
-  let end = value.length;
-  while (end > 0 && (value.charCodeAt(end - 1) === 10 || value.charCodeAt(end - 1) === 13)) {
-    end -= 1;
-  }
-  return end === value.length ? value : value.slice(0, end);
-}
-
 function loginFailureAuditAfter(reason: "account_not_found" | "account_inactive" | "password_hash_missing" | "password_mismatch", body: { username?: string; password?: string }, loginUsername: string): Record<string, unknown> {
   const password = typeof body.password === "string" ? body.password : "";
   const canonicalPassword = canonicalAdminPassword(password);
@@ -201,8 +194,6 @@ function loginFailureAuditAfter(reason: "account_not_found" | "account_inactive"
     usernamePresent: typeof body.username === "string" && body.username.length > 0,
     proofPresent: password.length > 0,
     proofLineEndingNormalized: password !== canonicalPassword,
-    proofLength: password.length,
-    canonicalProofLength: canonicalPassword.length,
     usernameNormalized: typeof body.username === "string" && body.username !== loginUsername
   };
 }

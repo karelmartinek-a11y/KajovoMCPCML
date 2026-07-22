@@ -95,12 +95,13 @@ wait_for_sql_equals() {
   return 1
 }
 effective_admin_username() {
-  local fallback="${ADMIN_BOOTSTRAP_USERNAME:-owner}"
+  local fallback="${ADMIN_BOOTSTRAP_USERNAME:-}"
   psql "$app_database_url" --no-psqlrc --tuples-only --no-align --quiet \
     --set fallback="$fallback" <<'SQL'
 select coalesce(
   (select value_json #>> '{}' from operational_config_setting where key='adminBootstrapUsername' and value_json is not null),
-  :'fallback'
+  (select username from admin_account where role='OWNER' and active=true order by activated_at desc nulls last, created_at desc limit 1),
+  nullif(:'fallback','')
 )
 SQL
 }
@@ -309,12 +310,24 @@ done < <(psql "$app_database_url" --no-psqlrc --tuples-only --no-align --quiet -
 admin_username="$(effective_admin_username)"
 export ADMIN_BOOTSTRAP_USERNAME="$admin_username"
 step verify-core-hosts
-login_payload="$(jq -nc --arg username "$admin_username" --arg password "$PASS" '{username:$username,password:$password}')"
-curl -fsS -H "Host: $admin_host" -H 'content-type: application/json' \
-  --data "$login_payload" "http://127.0.0.1:${PORT:-3010}/api/login" | jq -e '.ok == true' >/dev/null
-curl -fsS -H 'content-type: application/json' \
-  --data "$login_payload" "https://${admin_host}/api/login" | jq -e '.ok == true' >/dev/null
-unset login_payload
+PASS="$PASS" \
+KCML_PROCESS_ROLE=admin-sync \
+DATABASE_URL_FILE=/etc/kcml/credentials/admin-sync/database_url \
+CONFIG_VAULT_MASTER_KEY_BASE64_FILE=/etc/kcml/credentials/config_vault_master_key \
+NODE_ENV=production \
+BUILD_ID="$release_id" \
+KCML_LOGIN_SMOKE_BASE_URL="http://127.0.0.1:${PORT:-3010}" \
+KCML_LOGIN_SMOKE_HOST="$admin_host" \
+  node "$release_dir/apps/server/dist/cli/admin-login-smoke.js" | jq -e '.ok == true' >/dev/null
+PASS="$PASS" \
+KCML_PROCESS_ROLE=admin-sync \
+DATABASE_URL_FILE=/etc/kcml/credentials/admin-sync/database_url \
+CONFIG_VAULT_MASTER_KEY_BASE64_FILE=/etc/kcml/credentials/config_vault_master_key \
+NODE_ENV=production \
+BUILD_ID="$release_id" \
+KCML_LOGIN_SMOKE_BASE_URL="https://${admin_host}" \
+KCML_LOGIN_SMOKE_HOST="$admin_host" \
+  node "$release_dir/apps/server/dist/cli/admin-login-smoke.js" | jq -e '.ok == true' >/dev/null
 curl -fsS -H "Host: ${AUTH_HOST:?AUTH_HOST is required}" \
   "http://127.0.0.1:${PORT:-3010}/.well-known/oauth-authorization-server" \
   | jq -e --arg issuer "https://${AUTH_HOST}" '.issuer == $issuer' >/dev/null
@@ -368,13 +381,8 @@ if [ -n "$canonical_component_hostname" ]; then
 else
   echo "release-check:canonical_component_metadata=SKIPPED clean_start_no_registered_component"
 fi
-wait_for_sql_equals "migration_019" "1" "select count(*) from schema_migration where version='019_postgres_http_rate_limiting.sql'"
-wait_for_sql_equals "migration_022" "1" "select count(*) from schema_migration where version='022_runtime_egress_capability_backfill.sql'"
-wait_for_sql_equals "migration_034" "1" "select count(*) from schema_migration where version='034_audit_writer_owner_privileges.sql'"
-wait_for_sql_equals "migration_035" "1" "select count(*) from schema_migration where version='035_audit_writer_returning_privilege.sql'"
-wait_for_sql_equals "migration_036" "1" "select count(*) from schema_migration where version='036_audit_writer_security_contract.sql'"
-wait_for_sql_equals "migration_046" "1" "select count(*) from schema_migration where version='046_drop_stale_component_identity_triggers_20260723.sql'"
-wait_for_sql_equals "migration_088" "1" "select count(*) from schema_migration where version='088_canonical_managed_service_identity.sql'"
+wait_for_sql_equals "baseline_migration_row" "1" "select count(*) from schema_migration where version='001_pre_production_baseline.sql'"
+wait_for_sql_equals "baseline_migration_count" "1" "select count(*) from schema_migration"
 
 trap - ERR
 cleanup_registry_auth
