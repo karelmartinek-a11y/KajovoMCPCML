@@ -50,6 +50,8 @@ select format('grant connect on database %I to kcml_app', current_database()) \g
 grant usage on schema public to kcml_app;
 grant select,insert,update,delete on all tables in schema public to kcml_app;
 grant usage,select on all sequences in schema public to kcml_app;
+select format('grant usage on schema public to %I', :'migrator_role') \gexec
+select format('grant select on all tables in schema public to %I', :'migrator_role') \gexec
 revoke all on table audit_event,audit_head from kcml_app;
 revoke all on function public.kcml_factory_reset_truncate(text[]) from public;
 revoke all on function public.kcml_factory_reset_truncate(text[]) from kcml_app;

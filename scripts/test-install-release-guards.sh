@@ -71,6 +71,8 @@ fi
 grep -Fq "where version='001_pre_production_baseline.sql'" "$install_script"
 grep -Fq 'wait_for_sql_equals "baseline_migration_count" "1" "select count(*) from schema_migration"' "$install_script"
 grep -Fq -- "--exclude-table='public.admin_account_manual_fix_backup_*'" deploy/scripts/backup.sh
+grep -Fq "grant usage on schema public to %I" deploy/scripts/configure-db-roles.sh
+grep -Fq "grant select on all tables in schema public to %I" deploy/scripts/configure-db-roles.sh
 if grep -qi 'kcml0002' "$install_script"; then
   echo "release install must not prefer a specific component" >&2
   exit 1
