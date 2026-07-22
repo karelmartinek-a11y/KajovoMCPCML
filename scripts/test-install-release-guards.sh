@@ -24,6 +24,13 @@ grep -Fq 'release-check:canonical_component_metadata=SKIPPED clean_start_no_regi
 grep -Fq 'release-check:canonical_component_metadata=PASS' "$install_script"
 grep -Fq 'canonical_component_identity' "$install_script"
 grep -Fq 'integration_token_lifetime' "$install_script"
+test "$(grep -c '^step ensure-platform-worker-access$' "$install_script")" = "1"
+grep -Fq 'dist/cli/ensure-platform-worker-access.js' "$install_script"
+grep -Fq '.auth == ["access_token_bearer"]' "$install_script"
+if grep -Eq 'client_secret_basic|integration_token_bearer' "$install_script"; then
+  echo "secret API deployment checks must enforce access-token bearer only" >&2
+  exit 1
+fi
 grep -Fq "where version='046_drop_stale_component_identity_triggers_20260723.sql'" "$install_script"
 grep -Fq -- "--exclude-table='public.admin_account_manual_fix_backup_*'" deploy/scripts/backup.sh
 if grep -qi 'kcml0002' "$install_script"; then

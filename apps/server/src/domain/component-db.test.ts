@@ -18,7 +18,7 @@ import {
   validateComponentManifest
 } from "./component.js";
 import { KCML_RELEASE } from "./release.js";
-import { authorizePlatformWorkerCall, rotatePlatformWorkerAccessToken } from "./platform-worker-access.js";
+import { authorizePlatformWorkerCall, ensurePlatformWorkerAccessToken, rotatePlatformWorkerAccessToken } from "./platform-worker-access.js";
 
 const sourceId = "91000000-0000-4000-8000-000000000001";
 const targetId = "91000000-0000-4000-8000-000000000002";
@@ -356,6 +356,23 @@ describe.skipIf(!enabled)("component authorization and audit persistence", () =>
 
   it("stores the platform worker access token encrypted and checks its current permission", async () => {
     const actorId = String((await db.query("select id from admin_account order by created_at limit 1")).rows[0].id);
+    const platformPrincipalId = String((await db.query("select principal_id from platform_worker_access_identity where singleton=true")).rows[0].principal_id);
+    await db.query(`update platform_worker_access_identity set access_token_id=null,token_ciphertext=null,key_id=null,fingerprint=null,
+      rotated_by=null,rotated_at=null,updated_at=now() where singleton=true`);
+    await db.query("delete from principal_access_token where source_principal_id=$1", [platformPrincipalId]);
+    const provisioned = await ensurePlatformWorkerAccessToken(db, config, { actorId, correlationId: randomUUID() });
+    expect(provisioned).toMatchObject({ created: true, status: { configured: true } });
+    const firstIdentity = await db.query("select access_token_id,fingerprint,token_ciphertext from platform_worker_access_identity where singleton=true");
+    const unchanged = await ensurePlatformWorkerAccessToken(db, config, { actorId, correlationId: randomUUID() });
+    expect(unchanged).toMatchObject({ created: false, status: { configured: true, fingerprint: firstIdentity.rows[0].fingerprint } });
+    expect((await db.query("select access_token_id from platform_worker_access_identity where singleton=true")).rows[0].access_token_id)
+      .toBe(firstIdentity.rows[0].access_token_id);
+    expect(String(firstIdentity.rows[0].token_ciphertext)).toMatch(/^vault:v1:/);
+    await db.query("update principal_access_token set revoked_at=now() where id=$1", [firstIdentity.rows[0].access_token_id]);
+    await expect(ensurePlatformWorkerAccessToken(db, config, { actorId, correlationId: randomUUID() }))
+      .rejects.toThrow("platform_worker_access_token_invalid_requires_admin_rotation");
+    expect((await db.query("select access_token_id from platform_worker_access_identity where singleton=true")).rows[0].access_token_id)
+      .toBe(firstIdentity.rows[0].access_token_id);
     const rotated = await rotatePlatformWorkerAccessToken(db, config, { actorId, correlationId: randomUUID() });
     expect(rotated.status).toMatchObject({ configured: true, fingerprint: rotated.accessToken.fingerprint });
     const stored = await db.query("select token_ciphertext from platform_worker_access_identity where singleton=true");
