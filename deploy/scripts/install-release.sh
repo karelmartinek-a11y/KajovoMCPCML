@@ -342,7 +342,7 @@ wait_for_sql_equals "retired_component_credentials" "0" "select count(*) from co
 wait_for_sql_equals "integration_secret_grants" "0" "select count(*) from secret_grant where principal_kind='INTEGRATION_TOKEN' and revoked_at is null" 1 1
 wait_for_sql_equals "integration_token_lifetime" "0" "select count(*) from integration_token where revoked_at is null and (initial_expires_at <> issued_at + interval '24 hours' or expires_at <> issued_at + interval '24 hours' or max_expires_at <> issued_at + interval '24 hours')" 1 1
 canonical_component_hostname="$(psql "$app_database_url" --no-psqlrc --tuples-only --no-align --quiet --command \
-  "select hostname from component where deregistered_at is null order by kcml_number limit 1")"
+  "select component.hostname from component join component_revision revision on revision.id=component.active_revision_id and revision.component_id=component.id where component.deregistered_at is null order by component.kcml_number limit 1")"
 if [ -n "$canonical_component_hostname" ]; then
   curl -fsS -H "Host: $canonical_component_hostname" \
     "http://127.0.0.1:${PORT:-3010}/.well-known/oauth-protected-resource/mcp" \

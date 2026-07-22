@@ -24,6 +24,7 @@ grep -Fq 'release-check:canonical_component_metadata=SKIPPED clean_start_no_regi
 grep -Fq 'release-check:canonical_component_metadata=PASS' "$install_script"
 grep -Fq 'canonical_component_identity' "$install_script"
 grep -Fq 'canonical_managed_service_identity' "$install_script"
+grep -Fq 'join component_revision revision on revision.id=component.active_revision_id and revision.component_id=component.id' "$install_script"
 grep -Fq "component_hostname_pattern=\"\$(jq -er '.identityAssignment.hostnamePattern' \"\$component_catalog\")\"" "$install_script"
 grep -Fq "component_hostname_suffix" "$install_script"
 if grep -F 'canonical_component_identity' "$install_script" | grep -Fq 'PUBLIC_BASE_DOMAIN'; then
