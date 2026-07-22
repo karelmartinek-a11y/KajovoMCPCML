@@ -186,6 +186,18 @@ wait_for_runtime_health() {
   fi
 }
 
+require_stable_runtime_health() {
+  local admin_host="$1"
+  for _attempt in $(seq 1 13); do
+    curl -fsS -H "Host: $admin_host" "http://127.0.0.1:${PORT:-3010}/health" >/dev/null
+    systemctl is-active --quiet kcml
+    systemctl is-active --quiet kcml-component-control-worker
+    systemctl is-active --quiet kcml-component-e2e-worker
+    systemctl is-active --quiet kcml-monitor
+    sleep 5
+  done
+}
+
 render_nginx_config "$source_dir/deploy/nginx/kcml.conf" /etc/nginx/sites-available/kcml.conf
 ln -sfn /etc/nginx/sites-available/kcml.conf /etc/nginx/sites-enabled/kcml.conf
 install -m 0755 "$source_dir/deploy/scripts/kcml-deploy-wrapper.sh" /usr/local/sbin/kcml-deploy-wrapper
@@ -294,8 +306,10 @@ fi
 restart_core_services
 
 admin_host="${ADMIN_HOST:?ADMIN_HOST is required}"
-step wait-runtime-health
-wait_for_runtime_health "$admin_host"
+if [ -z "${KCML_FACTORY_RESET_CONFIRM:-}" ]; then
+  step wait-runtime-health
+  wait_for_runtime_health "$admin_host"
+fi
 
 if [ -n "${KCML_FACTORY_RESET_CONFIRM:-}" ]; then
   step factory-reset
@@ -427,6 +441,9 @@ else
 fi
 wait_for_sql_equals "baseline_migration_row" "1" "select count(*) from schema_migration where version='001_pre_production_baseline.sql'"
 wait_for_sql_equals "baseline_migration_count" "1" "select count(*) from schema_migration"
+
+step verify-stable-runtime-health
+require_stable_runtime_health "$admin_host"
 
 trap - ERR
 cleanup_registry_auth

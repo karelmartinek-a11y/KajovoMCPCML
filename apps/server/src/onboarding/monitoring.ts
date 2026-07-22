@@ -260,7 +260,9 @@ export class MonitoringScheduler {
           await closeAlert(client, { alertType: "component.heartbeat.stale", reason: "all_component_heartbeats_fresh", correlationId: componentCorrelationId });
         }
       });
-      const activeComponents = await this.db.query("select id from component where lifecycle_state='ACTIVE' and enabled=true order by kcml_number");
+      const activeComponents = await this.db.query(
+        "select id from component where lifecycle_state='ACTIVE' and enabled=true and registration_type='GENERIC_COMPONENT' order by kcml_number"
+      );
       for (const component of activeComponents.rows) {
         try {
           await queueComponentHeartbeatChallenge(this.db, { componentId: String(component.id), correlationId: randomUUID() });

@@ -497,6 +497,7 @@ export async function setManagedServiceApiState(db: Db, params: {
               activation_state=case when $2::text='ENABLED' then 'ACTIVE' else 'READY' end,
               lifecycle_state=case when $2::text='ENABLED' then 'ACTIVE' else 'APPROVED' end,
               operational_state=case when $2::text='ENABLED' then 'HEALTHY' else 'DISABLED' end,
+              monitoring_state=case when $2::text='ENABLED' then 'HEALTHY' else 'PENDING' end,
               lock_version=c.lock_version+1
          from managed_service service
         where service.id=$1 and c.id=service.component_id`,

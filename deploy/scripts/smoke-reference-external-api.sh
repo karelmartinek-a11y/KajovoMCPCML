@@ -6,11 +6,9 @@ release_dir="${1:?release directory required}"
 
 : "${ADMIN_HOST:?ADMIN_HOST is required}"
 : "${AUTH_HOST:?AUTH_HOST is required}"
-: "${REGISTER_HOST:?REGISTER_HOST is required}"
 : "${PUBLIC_BASE_DOMAIN:?PUBLIC_BASE_DOMAIN is required}"
 admin_host="$ADMIN_HOST"
 auth_host="$AUTH_HOST"
-register_host="$REGISTER_HOST"
 public_base_domain="$PUBLIC_BASE_DOMAIN"
 port="${PORT:-3010}"
 admin_username="${ADMIN_BOOTSTRAP_USERNAME:-}"
@@ -63,7 +61,6 @@ cleanup() {
 trap report_error ERR
 trap cleanup EXIT
 
-manifest_file="$tmpdir/reference-manifest.json"
 login_headers="$tmpdir/login-headers.txt"
 login_body="$tmpdir/login-body.json"
 
@@ -104,61 +101,17 @@ test -n "$csrf_cookie"
 test "$csrf_cookie" = "$csrf_token"
 admin_cookie_header="__Host-kcml_session=${session_cookie}; __Host-kcml_csrf=${csrf_cookie}"
 
-jq \
-  --arg domain "$public_base_domain" \
-  --arg revision "reference-api-${BUILD_ID:-release-smoke}" \
-  '
-    .registrationRevision = $revision
-    | .endpoints.baseUrl = ("https://reference-api." + $domain)
-    | .endpoints.healthcheckUrl = ("https://reference-api." + $domain + "/health")
-    | .endpoints.readinessUrl = ("https://reference-api." + $domain + "/ready")
-    | .egressPolicy.allowlist = [("reference-api." + $domain + ":443")]
-  ' \
-  "$release_dir/docs/service-manifest-external-api-v1.0.example.json" > "$manifest_file"
-
 step discover-service
 services_json="$(admin_read "$base_url/api/managed-services")"
 service_id="$(jq -r '.services[] | select(.slug == "reference-external-api") | .id' <<<"$services_json" | head -n 1)"
 
-intent_body() {
-  jq -nc \
-    --arg label "Reference EXTERNAL_API smoke" \
-    '{
-      label: $label,
-      serviceKind: "EXTERNAL_API",
-      descriptor: {
-        summary: "Reference EXTERNAL_API smoke",
-        businessPurpose: "Production smoke validation",
-        serviceOwner: "KCML Managed Services",
-        technicalOwner: "KCML Managed Services",
-        criticality: "HIGH"
-      }
-    }'
-}
+if [ -z "$service_id" ] || [ "$service_id" = "null" ]; then
+  echo "reference-smoke:SKIPPED clean_start_no_reference_service"
+  exit 0
+fi
 
 step onboard-reference-service
-if [ -n "$service_id" ] && [ "$service_id" != "null" ]; then
-  step reuse-existing-reference-service
-else
-  intent_json="$(intent_body)"
-  intent_response="$(
-    admin_write -H 'content-type: application/json' \
-      --data "$intent_json" "$base_url/api/integration-intents"
-  )"
-  integration_token="$(jq -r '.integrationToken' <<<"$intent_response")"
-  onboarding_status="$(
-    curl -sS -o "$tmpdir/onboarding-response.json" -w '%{http_code}' \
-    -H "Host: $register_host" \
-    -H "authorization: Bearer $integration_token" \
-    -H "idempotency-key: $(cat /proc/sys/kernel/random/uuid)" \
-    -H 'content-type: application/json' \
-    --data @"$manifest_file" \
-    "$base_url/v1/service-onboardings"
-  )"
-  printf '%s' "$onboarding_status" > "$tmpdir/onboarding-http-status.txt"
-  test "$onboarding_status" = "202"
-  service_id="$(jq -r '.job.serviceId' "$tmpdir/onboarding-response.json")"
-fi
+step reuse-existing-reference-service
 test -n "$service_id"
 test "$service_id" != "null"
 

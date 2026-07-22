@@ -1714,6 +1714,7 @@ export async function markStaleComponentHeartbeats(db: Db, staleAfterSeconds: nu
       `select id
          from component
         where lifecycle_state='ACTIVE' and enabled=true
+          and registration_type='GENERIC_COMPONENT'
         order by id
         for update`
     );

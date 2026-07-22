@@ -20,6 +20,8 @@ if grep -Fq 'resumeJobId' deploy/scripts/smoke-reference-external-api.sh; then
   echo "reference smoke must not use resumeJobId" >&2
   exit 1
 fi
+grep -Fq 'reference-smoke:SKIPPED clean_start_no_reference_service' deploy/scripts/smoke-reference-external-api.sh
+grep -Fq 'require_stable_runtime_health "$admin_host"' "$install_script"
 grep -Fq 'release-check:canonical_component_metadata=SKIPPED clean_start_no_registered_component' "$install_script"
 grep -Fq 'release-check:canonical_component_metadata=PASS' "$install_script"
 grep -Fq 'canonical_component_identity' "$install_script"

@@ -71,5 +71,9 @@ describe("readiness report", () => {
       missing: [],
       unexpected: []
     });
+    const catalogQuery = query.mock.calls.find(([sql]) => sql.includes("gates_valid"))?.[0];
+    const operationsQuery = query.mock.calls.find(([sql]) => sql.includes("stale_heartbeats"))?.[0];
+    expect(catalogQuery).toContain("c.registration_type='GENERIC_COMPONENT'");
+    expect(operationsQuery).toContain("c.registration_type='GENERIC_COMPONENT'");
   });
 });

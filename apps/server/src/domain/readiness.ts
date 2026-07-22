@@ -91,6 +91,7 @@ export async function buildReadinessReport(db: Db, config: ReadinessConfig): Pro
        left join component_revision r on r.id=c.active_revision_id
        left join component_runtime_target rt_current on rt_current.component_id=c.id and rt_current.revision_id=c.active_revision_id
       where c.lifecycle_state<>'DEREGISTERED'
+        and c.registration_type='GENERIC_COMPONENT'
       order by c.kcml_number`,
     [[...ACTIVATION_GATES]]
   );
@@ -126,7 +127,8 @@ export async function buildReadinessReport(db: Db, config: ReadinessConfig): Pro
   const operationResult = await db.query(
     `select
        (select count(*)::int from component_control_dispatch where state in ('QUEUED','CLAIMED','SENT','ACK_PENDING') and deadline_at<=now()) expired_dispatches,
-       (select count(*)::int from component c where c.enabled and c.lifecycle_state='ACTIVE' and
+       (select count(*)::int from component c where c.enabled and c.lifecycle_state='ACTIVE'
+          and c.registration_type='GENERIC_COMPONENT' and
           not exists(select 1 from component_heartbeat h where h.component_id=c.id and h.validation_state='ACCEPTED' and h.heartbeat_at>now()-interval '3 minutes')) stale_heartbeats,
        (select count(*)::int from principal_access_token token left join principal p on p.id=token.source_principal_id
           where token.revoked_at is null and (p.id is null or token.issued_revocation_epoch<>p.revocation_epoch)) invalid_token_bindings,
