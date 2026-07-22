@@ -239,9 +239,9 @@ SQL
 
 psql "$KCML_UPGRADE_DATABASE_URL" --no-psqlrc --set ON_ERROR_STOP=1 --tuples-only --no-align <<'SQL' | grep -Fx 'upgrade-ok'
 select case when
-  (select count(*) from schema_migration) = 88
+  (select count(*) from schema_migration) = 89
   and (select count(*) from legacy_schema_migration) = 9
-  and (select count(*) from audit_event) = 1166
+  and (select count(*) from audit_event) = 1167
   and (select valid from verify_audit_chain()) is true
   and (
     select pg_get_userbyid(proowner) <> 'kcml_app'
@@ -277,7 +277,7 @@ select case when
   and exists (
     select 1 from access_token
      where credential_id='30000000-0000-0000-0000-000000000002'
-       and revoked_at is null
+       and revoked_at is not null
        and component_id='00000000-0000-0000-0000-000000000002'
   )
   and exists (
@@ -313,6 +313,8 @@ select case when
      where service.legacy_mcp_server_id='00000000-0000-0000-0000-000000000002'
        and service.code='KCML0002'
        and service.service_kind='MCP'
+       and service.public_hostname='kcml0002.kajovocml.hcasc.cz'
+       and service.resource_uri='https://kcml0002.kajovocml.hcasc.cz/mcp'
        and service.lifecycle_state='ACTIVE'
        and service.operational_state='HEALTHY'
        and service.enabled=true
@@ -320,8 +322,12 @@ select case when
        and revision.schema_version='1.4'
        and revision.active=true
        and permission.revoked_at is null
-       and token.revoked_at is null
-       and token.service_revocation_epoch=service.revocation_epoch
+       and token.revoked_at is not null
+       and exists (
+         select 1 from audit_event event
+          where event.event_type='managed_service.identity.canonicalized'
+            and event.object_id=service.id::text
+       )
   )
   and exists (
     select 1

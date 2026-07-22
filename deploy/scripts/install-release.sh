@@ -337,6 +337,7 @@ SQL
 step verify-final-invariants
 wait_for_sql_equals "audit_chain" "t" "select valid from verify_audit_chain()"
 wait_for_sql_equals "canonical_component_identity" "0" "select count(*) from component where code <> ('KCML' || lpad(kcml_number::text,4,'0')) or hostname <> (lower(code) || '.${component_hostname_suffix}')" 1 1
+wait_for_sql_equals "canonical_managed_service_identity" "0" "select count(*) from managed_service service join component on component.id=service.component_id where service.public_hostname is distinct from component.hostname or service.resource_uri is distinct from case when service.service_kind='MCP' then 'https://' || component.hostname || '/mcp' else 'https://' || component.hostname end" 1 1
 wait_for_sql_equals "retired_component_credentials" "0" "select count(*) from component_credential where status='ACTIVE' and revoked_at is null" 1 1
 wait_for_sql_equals "integration_secret_grants" "0" "select count(*) from secret_grant where principal_kind='INTEGRATION_TOKEN' and revoked_at is null" 1 1
 wait_for_sql_equals "integration_token_lifetime" "0" "select count(*) from integration_token where revoked_at is null and (initial_expires_at <> issued_at + interval '24 hours' or expires_at <> issued_at + interval '24 hours' or max_expires_at <> issued_at + interval '24 hours')" 1 1
@@ -356,6 +357,7 @@ wait_for_sql_equals "migration_034" "1" "select count(*) from schema_migration w
 wait_for_sql_equals "migration_035" "1" "select count(*) from schema_migration where version='035_audit_writer_returning_privilege.sql'"
 wait_for_sql_equals "migration_036" "1" "select count(*) from schema_migration where version='036_audit_writer_security_contract.sql'"
 wait_for_sql_equals "migration_046" "1" "select count(*) from schema_migration where version='046_drop_stale_component_identity_triggers_20260723.sql'"
+wait_for_sql_equals "migration_088" "1" "select count(*) from schema_migration where version='088_canonical_managed_service_identity.sql'"
 
 trap - ERR
 cleanup_registry_auth

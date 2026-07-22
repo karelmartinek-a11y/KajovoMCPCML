@@ -6,7 +6,7 @@ This matrix is traceability, not proof by assertion. Executable code, forward mi
 
 | Area | Implemented invariant | Primary evidence |
 | --- | --- | --- |
-| Registry convergence | `component` is the canonical runtime/readiness/monitoring object; legacy records require a component binding and cannot be orphaned | migrations `068`–`087`, component DB compatibility and upgrade tests |
+| Registry convergence | `component` is the canonical runtime/readiness/monitoring object; legacy records require a component binding and cannot be orphaned | migrations `068`–`088`, component DB compatibility and upgrade tests |
 | Identity | server assigns sequential code and one canonical hostname; runtime rejects alternate Host/audience | generic manifest validator, component routes and MCP tests |
 | Token lifecycle | only 24-hour reusable-until-success integration tokens and long-lived access tokens are operational for components | migrations `069`, `080`, `083`, `084`; onboarding and auth DB tests |
 | Live authorization | scope carried by the token and current route permission are both required; state/epoch changes take effect immediately | `component-auth.ts`, active negative-auth readiness probes |
@@ -19,6 +19,7 @@ This matrix is traceability, not proof by assertion. Executable code, forward mi
 | Audit | hash-chain integrity plus per-operation authorization, lease, dispatch and final result evidence | audit functions, operation ledger and readiness integrity gates |
 | Readiness | 38 named active gates tied to revision, runtime/artifact digest, correlation, variant and expiry | `ACTIVATION_GATES`, readiness evaluator and gate-evidence table |
 | Upgrade fail-closed reconciliation | pre-existing active components without complete current evidence cannot block deployment while remaining exposed | migration `087` quarantines them, disables every communication direction/runtime target, advances epochs, revokes credentials and records an alert plus hash-chain audit event |
+| Managed-service identity reconciliation | legacy API/MCP compatibility records cannot retain a hostname or OAuth resource different from their canonical component | migration `088` copies the component identity, revokes tokens for the retired audience, advances policy epochs and appends a hash-chain audit event; deployment rechecks the invariant |
 | Delivery | generic production smoke, no preferred component, separate worker services and immutable release artifact | install/build scripts and systemd units |
 
 Final verification status is intentionally not stated here; it is populated from the concrete CI, database, release and production runs in the completion report.

@@ -23,6 +23,7 @@ fi
 grep -Fq 'release-check:canonical_component_metadata=SKIPPED clean_start_no_registered_component' "$install_script"
 grep -Fq 'release-check:canonical_component_metadata=PASS' "$install_script"
 grep -Fq 'canonical_component_identity' "$install_script"
+grep -Fq 'canonical_managed_service_identity' "$install_script"
 grep -Fq "component_hostname_pattern=\"\$(jq -er '.identityAssignment.hostnamePattern' \"\$component_catalog\")\"" "$install_script"
 grep -Fq "component_hostname_suffix" "$install_script"
 if grep -F 'canonical_component_identity' "$install_script" | grep -Fq 'PUBLIC_BASE_DOMAIN'; then
@@ -38,6 +39,7 @@ if grep -Eq 'client_secret_basic|integration_token_bearer' "$install_script"; th
   exit 1
 fi
 grep -Fq "where version='046_drop_stale_component_identity_triggers_20260723.sql'" "$install_script"
+grep -Fq "where version='088_canonical_managed_service_identity.sql'" "$install_script"
 grep -Fq -- "--exclude-table='public.admin_account_manual_fix_backup_*'" deploy/scripts/backup.sh
 if grep -qi 'kcml0002' "$install_script"; then
   echo "release install must not prefer a specific component" >&2
