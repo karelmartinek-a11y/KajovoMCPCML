@@ -1018,14 +1018,40 @@ export async function createExternalApiManagedService(
        ) values ($1,1,$2,$3,$4,$5,$6,$7,$8)`,
       [jobId, idempotencyKey, requestDigest, manifestDigest, "external-api://manifest", manifest, manifestDigest, JSON.stringify({ kind: "EXTERNAL_API" })]
     );
+    const componentId = randomUUID();
+    const componentPrincipalId = randomUUID();
+    await client.query(
+      `insert into principal(id,kind,public_id,status,policy_epoch,revocation_epoch,metadata)
+       values ($1,'COMPONENT',$2,'SUSPENDED',1,1,$3::jsonb)`,
+      [componentPrincipalId, allocation.code, JSON.stringify({ componentId, assignedBy: "external_api_onboarding" })]
+    );
+    await client.query(
+      `insert into component(
+        id,principal_id,kcml_number,code,hostname,display_name,description,category,registration_type,component_role,owners,contacts,
+        lifecycle_state,activation_state,operational_state,monitoring_state,enabled,release_version
+      ) values ($1,$2,$3,$4,$5,$6,$7,'EXTERNAL_SERVICE','EXTERNAL_API','SERVICE',$8::jsonb,$9::jsonb,'REVIEW','INACTIVE','UNKNOWN','PENDING',false,$10)`,
+      [
+        componentId,
+        componentPrincipalId,
+        allocation.number,
+        allocation.code,
+        allocation.hostname,
+        manifest.displayName,
+        manifest.description,
+        JSON.stringify(manifest.owners),
+        JSON.stringify(manifest.contacts),
+        String(token.rows[0].release_version)
+      ]
+    );
     const managed = await client.query(
       `insert into managed_service(
-          code, slug, display_name, description, service_kind, lifecycle_state, operational_state, enabled,
+          component_id, code, slug, display_name, description, service_kind, lifecycle_state, operational_state, enabled,
           public_hostname, base_url, resource_uri, auth_mode, api_state, criticality, owners, contacts, governance,
           monitoring_enabled, monitoring_profile_digest, review_approved_at, review_due_at, review_interval_days, environment
-       ) values ($1,$2,$3,$4,'EXTERNAL_API','REGISTERED_DISABLED','HEALTHY',false,$5,$6,$7,'NONE','DISABLED',$8,$9,$10,$11,true,$12,$13,$14,$15,$16)
+       ) values ($1,$2,$3,$4,$5,'EXTERNAL_API','REGISTERED_DISABLED','HEALTHY',false,$6,$7,$8,'NONE','DISABLED',$9,$10,$11,$12,true,$13,$14,$15,$16,$17)
        returning id`,
       [
+        componentId,
         allocation.code,
         manifest.serviceIdentity.slug,
         manifest.displayName,
