@@ -131,8 +131,8 @@ export async function listServers(db: Db): Promise<McpServer[]> {
   return result.rows.map(mapServer);
 }
 
-export function isKcmlHostname(hostname: string, baseDomain: string): boolean {
-  return isManagedKcmlHostname(hostname, baseDomain);
+export function isKcmlHostname(hostname: string): boolean {
+  return isManagedKcmlHostname(hostname);
 }
 
 export function resourceFor(hostname: string): string {

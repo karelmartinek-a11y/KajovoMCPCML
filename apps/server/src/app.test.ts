@@ -1,4 +1,4 @@
-import { afterEach, describe, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { loadConfig } from "./config.js";
 import type { Db } from "./db.js";
 import { buildApp } from "./app.js";
@@ -31,5 +31,10 @@ describe("application route composition", () => {
     apps.push(app);
 
     await app.ready();
+
+    const canonical = await app.inject({ method: "GET", url: "/health", headers: { host: "kcml0001.kajovocml.hcasc.cz" } });
+    const retiredShortHost = await app.inject({ method: "GET", url: "/health", headers: { host: "kcml0001.hcasc.cz" } });
+    expect(canonical.statusCode).not.toBe(404);
+    expect(retiredShortHost.statusCode).toBe(404);
   });
 });

@@ -12,6 +12,14 @@ test -f "$source_dir/release-manifest.json"
 test -f /etc/kcml/kcml.env
 : "${PASS:?PASS is required}"
 
+component_catalog_version="$(node --input-type=module -e "import('${source_dir}/apps/server/dist/domain/release.js').then(({KCML_RELEASE}) => process.stdout.write(KCML_RELEASE.catalogVersion))")"
+component_catalog="$source_dir/docs/onboarding-catalogs/component-${component_catalog_version}.json"
+test -f "$component_catalog"
+component_hostname_pattern="$(jq -er '.identityAssignment.hostnamePattern' "$component_catalog")"
+component_hostname_suffix="$(printf '%s\n' "$component_hostname_pattern" | sed -n 's/^kcml####\.//p')"
+test -n "$component_hostname_suffix"
+[[ "$component_hostname_suffix" =~ ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$ ]]
+
 set -a
 # shellcheck source=/dev/null
 . /etc/kcml/kcml.env
@@ -328,7 +336,7 @@ SQL
 
 step verify-final-invariants
 wait_for_sql_equals "audit_chain" "t" "select valid from verify_audit_chain()"
-wait_for_sql_equals "canonical_component_identity" "0" "select count(*) from component where code <> ('KCML' || lpad(kcml_number::text,4,'0')) or hostname <> (lower(code) || '.${PUBLIC_BASE_DOMAIN:?PUBLIC_BASE_DOMAIN is required}')" 1 1
+wait_for_sql_equals "canonical_component_identity" "0" "select count(*) from component where code <> ('KCML' || lpad(kcml_number::text,4,'0')) or hostname <> (lower(code) || '.${component_hostname_suffix}')" 1 1
 wait_for_sql_equals "retired_component_credentials" "0" "select count(*) from component_credential where status='ACTIVE' and revoked_at is null" 1 1
 wait_for_sql_equals "integration_secret_grants" "0" "select count(*) from secret_grant where principal_kind='INTEGRATION_TOKEN' and revoked_at is null" 1 1
 wait_for_sql_equals "integration_token_lifetime" "0" "select count(*) from integration_token where revoked_at is null and (initial_expires_at <> issued_at + interval '24 hours' or expires_at <> issued_at + interval '24 hours' or max_expires_at <> issued_at + interval '24 hours')" 1 1

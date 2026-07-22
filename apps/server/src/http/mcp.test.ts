@@ -7,7 +7,7 @@ import { registerMcpRoutes } from "./mcp.js";
 const component = {
   id: "90000000-0000-4000-8000-000000000001",
   code: "KCML0001",
-  hostname: "kcml0001.example.invalid",
+  hostname: "kcml0001.kajovocml.hcasc.cz",
   active_revision_id: "90000000-0000-4000-8000-000000000002",
   revision: "1.0.0"
 };
@@ -83,7 +83,7 @@ describe("canonical MCP HTTP surface", () => {
     const response = await app.inject({ method: "GET", url: "/.well-known/oauth-protected-resource/mcp", headers: { host: component.hostname } });
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual({
-      resource: `https://${component.hostname}`,
+      resource: `https://${component.hostname}/mcp`,
       authorization_servers: ["https://auth.example.invalid"],
       bearer_methods_supported: ["header"]
     });

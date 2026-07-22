@@ -30,6 +30,7 @@ test -f "$tmpdir/release/deploy/scripts/render-nginx-config.mjs"
 
 mcp_manifest_path="$(jq -r '.manifestExamplePath' "$tmpdir/release/docs/onboarding-catalogs/component-${release}.json")"
 external_manifest_path="$(jq -r '.manifestExamplePath' "$tmpdir/release/docs/onboarding-catalogs/external-api-1.0.json")"
+test "$(jq -r '.identityAssignment.hostnamePattern' "$tmpdir/release/docs/onboarding-catalogs/component-${release}.json")" = "kcml####.kajovocml.hcasc.cz"
 
 test -f "$tmpdir/release/$mcp_manifest_path"
 test -f "$tmpdir/release/$external_manifest_path"

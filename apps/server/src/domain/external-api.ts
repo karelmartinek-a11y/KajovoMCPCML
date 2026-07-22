@@ -837,11 +837,11 @@ export async function probeExternalApiManifest(
   };
 }
 
-async function nextKcmlAllocation(client: pg.PoolClient, baseDomain: string): Promise<{ number: number; code: string; hostname: string }> {
+async function nextKcmlAllocation(client: pg.PoolClient): Promise<{ number: number; code: string; hostname: string }> {
   const result = await client.query("select nextval('kcml_number_seq') as number");
   const number = Number(result.rows[0].number);
   const code = kcmlCodeFromNumber(number);
-  return { number, code, hostname: kcmlHostnameForCode(code, baseDomain) };
+  return { number, code, hostname: kcmlHostnameForCode(code) };
 }
 
 async function seedManagedServiceScopes(client: pg.PoolClient, managedServiceId: string, manifest: ExternalApiRegistrationManifest): Promise<void> {
@@ -990,7 +990,7 @@ export async function createExternalApiManagedService(
       }
       throw Object.assign(new Error("integration_token_already_bound"), { statusCode: 409 });
     }
-    const allocation = await nextKcmlAllocation(client, config.PUBLIC_BASE_DOMAIN);
+    const allocation = await nextKcmlAllocation(client);
     const job = await client.query(
       `insert into onboarding_job(
           token_id, state, correlation_id, manifest, manifest_digest, source_digest, source_archive_path,

@@ -437,7 +437,7 @@ export async function createOnboardingJob(
     const allocation = await client.query("select nextval('kcml_number_seq') as number");
     const number = Number(allocation.rows[0].number);
     const code = kcmlCodeFromNumber(number);
-    const hostname = kcmlHostnameForCode(code, config.PUBLIC_BASE_DOMAIN);
+    const hostname = kcmlHostnameForCode(code);
     const toolName = toolNameFor(code, manifest.handlerKey);
     const job = await client.query(
       `insert into onboarding_job

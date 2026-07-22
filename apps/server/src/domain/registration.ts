@@ -651,9 +651,9 @@ export function evidenceReferencesForManifest(manifest: OnboardingManifest): str
   return [...references].sort();
 }
 
-export async function allocateKcml(db: Db, baseDomain: string): Promise<{ code: string; hostname: string; number: number }> {
+export async function allocateKcml(db: Db): Promise<{ code: string; hostname: string; number: number }> {
   const result = await db.query("select nextval('kcml_number_seq') as number");
   const number = Number(result.rows[0].number);
   const code = kcmlCodeFromNumber(number);
-  return { number, code, hostname: kcmlHostnameForCode(code, baseDomain) };
+  return { number, code, hostname: kcmlHostnameForCode(code) };
 }

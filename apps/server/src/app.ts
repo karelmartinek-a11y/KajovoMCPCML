@@ -8,7 +8,7 @@ import rateLimit from "@fastify/rate-limit";
 import fastifyStatic from "@fastify/static";
 import type { AppServerConfig } from "./config.js";
 import type { Db } from "./db.js";
-import { isKcmlHostname } from "./domain/catalog.js";
+import { isKcmlHostname } from "./domain/hostnames.js";
 import { isReferenceExternalApiHostname } from "./domain/reference-external-api.js";
 import { registerAdminRoutes } from "./http/admin-routes.js";
 import { registerAuthRoutes } from "./http/auth-routes.js";
@@ -74,7 +74,7 @@ export async function buildApp(config: AppServerConfig, db: Db) {
       || host === config.REGISTER_HOST
       || isSecretApiHostname(host, config)
       || isReferenceExternalApiHostname(host, config.PUBLIC_BASE_DOMAIN)
-      || isKcmlHostname(host, config.PUBLIC_BASE_DOMAIN);
+      || isKcmlHostname(host);
     if (!isKnownHost) return sendError(reply, 404, "not_found");
   });
 
@@ -101,7 +101,7 @@ export async function buildApp(config: AppServerConfig, db: Db) {
     if (host === config.REGISTER_HOST && (request.url.startsWith("/v1/") || request.url.startsWith("/v2/"))) return;
     if (isSecretApiHostname(host, config) && (request.url === "/health" || request.url === "/.well-known/kcml-secret-api" || request.url === "/v1/secrets/resolve")) return;
     if (isReferenceExternalApiHostname(host, config.PUBLIC_BASE_DOMAIN)) return;
-    if (isKcmlHostname(host, config.PUBLIC_BASE_DOMAIN)) return;
+    if (isKcmlHostname(host)) return;
     return sendError(reply, 404, "not_found");
   });
   await app.register(fastifyStatic, { root: adminDist, wildcard: false });

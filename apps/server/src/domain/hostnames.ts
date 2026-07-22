@@ -3,6 +3,7 @@ function escapeRegex(value: string): string {
 }
 
 const HOSTNAME_PATTERN = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
+export const CANONICAL_COMPONENT_HOST_SUFFIX = "kajovocml.hcasc.cz";
 
 export function normalizeBaseDomain(value: string): string {
   const normalized = value.trim().toLowerCase().replace(/\.$/, "");
@@ -23,13 +24,13 @@ export function kcmlCodeFromNumber(number: number): string {
   return `KCML${String(number).padStart(4, "0")}`;
 }
 
-export function kcmlHostnameForCode(code: string, baseDomain: string): string {
+export function kcmlHostnameForCode(code: string): string {
   if (!/^KCML[0-9]{4,}$/i.test(code)) throw new Error("invalid_kcml_code");
-  return `${code.toLowerCase()}.${normalizeBaseDomain(baseDomain)}`;
+  return `${code.toLowerCase()}.${CANONICAL_COMPONENT_HOST_SUFFIX}`;
 }
 
-export function isKcmlHostname(hostname: string, baseDomain: string): boolean {
-  return new RegExp(`^kcml[0-9]{4,}\\.${escapeRegex(normalizeBaseDomain(baseDomain))}$`, "i").test(hostname);
+export function isKcmlHostname(hostname: string): boolean {
+  return new RegExp(`^kcml[0-9]{4,}\\.${escapeRegex(CANONICAL_COMPONENT_HOST_SUFFIX)}$`, "i").test(hostname);
 }
 
 export function resourceForHostname(hostname: string): string {

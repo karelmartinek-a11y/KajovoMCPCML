@@ -7,6 +7,7 @@ import { tx } from "../db.js";
 import { decryptVaultSecret, encryptVaultSecret, hmacToken, issueOpaqueSecret } from "../security/secrets.js";
 import { appendAudit } from "./audit.js";
 import { authorizeComponentCall, componentSourceIdentityMatches } from "./component-auth.js";
+import { CANONICAL_COMPONENT_HOST_SUFFIX } from "./hostnames.js";
 import { KCML_RELEASE } from "./release.js";
 import { resolveSecret, type SecretPrincipal } from "./secret-manager.js";
 
@@ -57,8 +58,6 @@ export const ACTIVATION_GATES = [
   "MONITORING_WATCHDOG",
   "RECERTIFICATION"
 ] as const;
-
-export const STRICT_COMPONENT_HOST_SUFFIX = "kajovocml.hcasc.cz";
 
 export type JsonRecord = Record<string, unknown>;
 
@@ -370,7 +369,7 @@ async function gateResults(db: Db, componentId: string, manifest: ComponentManif
     ["MANIFEST_SCHEMA", { pass: row.manifest_digest === manifestDigest, reason: "manifest_schema_and_digest_recomputed", evidence: { schemaVersion: manifest.schemaVersion, manifestDigest } }],
     ["ARTIFACT_PROVENANCE", { pass: artifactProvenanceValid, reason: "artifact_and_runtime_provenance_recomputed", evidence: { artifactDigest: artifact.digest ?? null, runtimeDigest: row.runtime_digest ?? null, issuer: provenance.issuer ?? null } }],
     ["DOCUMENT_CONTENT", { pass: documentationValid, reason: "documentation_bytes_and_digests_recomputed", evidence: { declaredKeys: [...declaredDocumentation.keys()].sort(), storedKeys: documentation.rows.map((item) => String(item.evidence_key)).sort() } }],
-    ["HOST_EXCLUSIVITY", { pass: Number(row.hostname_owners) === 1 && String(row.hostname).endsWith(`.${STRICT_COMPONENT_HOST_SUFFIX}`), reason: "canonical_hostname_exclusivity_recomputed", evidence: { hostname: row.hostname, owners: Number(row.hostname_owners) } }],
+    ["HOST_EXCLUSIVITY", { pass: Number(row.hostname_owners) === 1 && String(row.hostname).endsWith(`.${CANONICAL_COMPONENT_HOST_SUFFIX}`), reason: "canonical_hostname_exclusivity_recomputed", evidence: { hostname: row.hostname, owners: Number(row.hostname_owners) } }],
     ["TLS_IDENTITY", { pass: transportIdentityValid, reason: row.transport === "UDS" ? "uds_peer_boundary_recomputed" : "https_tls_identity_recomputed", evidence: { transport: row.transport ?? null, upstream: row.upstream ?? null, tlsIdentity: row.expected_tls_identity ?? null, socketPath: row.socket_path ?? null } }],
     ["EACH_TOOL_LISTED", { pass: toolContractsMatch, reason: "canonical_tool_catalog_recomputed", evidence: { declared: declaredTools.map((tool) => text(tool.name)), stored: tools.rows.map((tool) => String(tool.name)) } }],
     ["EACH_TOOL_INPUT_NEGATIVE", { pass: negativeInputResults.every((result) => result.rejected), reason: "tool_invalid_inputs_actively_rejected", evidence: { results: negativeInputResults } }],
@@ -1121,7 +1120,7 @@ export async function createComponentOnboarding(db: Db, params: {
     const identity = await client.query("select nextval('kcml_number_seq')::bigint as number");
     const number = Number(identity.rows[0].number);
     const code = `KCML${String(number).padStart(4, "0")}`;
-    const hostname = `${code.toLowerCase()}.${STRICT_COMPONENT_HOST_SUFFIX}`;
+    const hostname = `${code.toLowerCase()}.${CANONICAL_COMPONENT_HOST_SUFFIX}`;
     const componentId = randomUUID();
     const principalId = randomUUID();
     const category = "EXTERNAL_SERVICE";

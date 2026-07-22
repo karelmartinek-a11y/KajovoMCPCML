@@ -23,6 +23,12 @@ fi
 grep -Fq 'release-check:canonical_component_metadata=SKIPPED clean_start_no_registered_component' "$install_script"
 grep -Fq 'release-check:canonical_component_metadata=PASS' "$install_script"
 grep -Fq 'canonical_component_identity' "$install_script"
+grep -Fq "component_hostname_pattern=\"\$(jq -er '.identityAssignment.hostnamePattern' \"\$component_catalog\")\"" "$install_script"
+grep -Fq "component_hostname_suffix" "$install_script"
+if grep -F 'canonical_component_identity' "$install_script" | grep -Fq 'PUBLIC_BASE_DOMAIN'; then
+  echo "canonical component identity must come from the versioned onboarding catalog" >&2
+  exit 1
+fi
 grep -Fq 'integration_token_lifetime' "$install_script"
 test "$(grep -c '^step ensure-platform-worker-access$' "$install_script")" = "1"
 grep -Fq 'dist/cli/ensure-platform-worker-access.js' "$install_script"

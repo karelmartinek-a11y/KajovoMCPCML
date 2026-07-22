@@ -4,7 +4,7 @@ import { z } from "zod";
 import type { AppServerConfig } from "../config.js";
 import type { Db } from "../db.js";
 import { appendAudit } from "../domain/audit.js";
-import { isKcmlHostname } from "../domain/catalog.js";
+import { isKcmlHostname, resourceForHostname } from "../domain/hostnames.js";
 import { hostOf, sendError } from "./errors.js";
 import { canonicalMcpComponent, handleCanonicalMcp } from "./component-mcp-runtime.js";
 import { jsonRpcError, respondToJsonRpc, sendJsonRpc } from "./json-rpc.js";
@@ -45,11 +45,11 @@ export function registerMcpRoutes(app: FastifyInstance, db: Db, config: AppServe
 
   const resourceMetadata = async (request: FastifyRequest, reply: FastifyReply) => {
     const hostname = hostOf(request.headers.host);
-    if (!isKcmlHostname(hostname, config.PUBLIC_BASE_DOMAIN)) return sendError(reply, 404, "not_found");
+    if (!isKcmlHostname(hostname)) return sendError(reply, 404, "not_found");
     const component = await canonicalMcpComponent(db, hostname);
     if (!component) return sendError(reply, 404, "not_found");
     return {
-      resource: `https://${hostname}`,
+      resource: resourceForHostname(hostname),
       authorization_servers: [`https://${config.AUTH_HOST}`],
       bearer_methods_supported: ["header"]
     };
@@ -66,7 +66,7 @@ export function registerMcpRoutes(app: FastifyInstance, db: Db, config: AppServe
       reply.header("allow", "POST");
       return sendError(reply, 405, "method_not_allowed", "This deployment supports POST Streamable HTTP requests only", correlationId);
     }
-    if (!isKcmlHostname(hostname, config.PUBLIC_BASE_DOMAIN)) return sendError(reply, 404, "not_found", "Unknown resource", correlationId);
+    if (!isKcmlHostname(hostname)) return sendError(reply, 404, "not_found", "Unknown resource", correlationId);
     const component = await canonicalMcpComponent(db, hostname);
     if (!component) {
       await appendAudit(db, { eventType: "mcp.unknown_host", actorType: "anonymous", objectType: "hostname", objectId: hostname, correlationId });

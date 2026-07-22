@@ -54,14 +54,14 @@ describe("component public route protection", () => {
       CSRF_SECRET_BASE64: secret(5), MFA_ENCRYPTION_KEY_BASE64: secret(6)
     }));
     await discoveryApp.ready();
-    const response = await discoveryApp.inject({ method: "GET", url: "/.well-known/kcml-component", headers: { host: "kcml0002.hcasc.cz" } });
+    const response = await discoveryApp.inject({ method: "GET", url: "/.well-known/kcml-component", headers: { host: "kcml0002.kajovocml.hcasc.cz" } });
     await discoveryApp.close();
 
     expect(response.statusCode).toBe(200);
     expect(response.headers["cache-control"]).toBe("public, max-age=300");
     expect(response.json()).toEqual({
-      mcpEndpoint: "https://kcml0002.hcasc.cz/mcp",
-      protectedResourceMetadata: "https://kcml0002.hcasc.cz/.well-known/oauth-protected-resource",
+      mcpEndpoint: "https://kcml0002.kajovocml.hcasc.cz/mcp",
+      protectedResourceMetadata: "https://kcml0002.kajovocml.hcasc.cz/.well-known/oauth-protected-resource",
       catalogVersion: KCML_RELEASE.catalogVersion
     });
     expect(query).not.toHaveBeenCalled();
@@ -106,7 +106,7 @@ describe("component public route protection", () => {
   });
 
   it("retires the parallel component MCP endpoint", async () => {
-    const response = await app.inject({ method: "POST", url: "/v2/component-mcp", headers: { host: "kcml0002.hcasc.cz" }, payload: { method: "tools/list" } });
+    const response = await app.inject({ method: "POST", url: "/v2/component-mcp", headers: { host: "kcml0002.kajovocml.hcasc.cz" }, payload: { method: "tools/list" } });
     expect(response.statusCode).toBe(410);
     expect(response.json()).toMatchObject({ error: "component_mcp_moved" });
   });

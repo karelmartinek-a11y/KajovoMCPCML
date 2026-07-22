@@ -9,13 +9,13 @@ describe("runtime hostname policy", () => {
       authHost: "auth.example.test",
       registerHost: "register.example.test"
     });
-    expect(kcmlHostnameForCode("KCML0042", "example.test")).toBe("kcml0042.example.test");
-    expect(isKcmlHostname("kcml0042.example.test", "example.test")).toBe(true);
+    expect(kcmlHostnameForCode("KCML0042")).toBe("kcml0042.kajovocml.hcasc.cz");
+    expect(isKcmlHostname("kcml0042.kajovocml.hcasc.cz")).toBe(true);
   });
 
   it("escapes the configured domain and rejects malformed values", () => {
-    expect(isKcmlHostname("kcml0042.exampleXtest", "example.test")).toBe(false);
+    expect(isKcmlHostname("kcml0042.hcasc.cz")).toBe(false);
     expect(() => normalizeBaseDomain("https://example.test/path")).toThrow("config_invalid_hostname");
-    expect(() => kcmlHostnameForCode("not-kcml", "example.test")).toThrow("invalid_kcml_code");
+    expect(() => kcmlHostnameForCode("not-kcml")).toThrow("invalid_kcml_code");
   });
 });
