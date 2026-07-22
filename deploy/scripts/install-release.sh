@@ -175,6 +175,14 @@ NODE_ENV=production \
 BUILD_ID="$release_id" \
   node "$source_dir/apps/server/dist/cli/sync-admin-password.js"
 
+step ensure-platform-worker-access
+KCML_PROCESS_ROLE=admin-sync \
+DATABASE_URL_FILE=/etc/kcml/credentials/admin-sync/database_url \
+CONFIG_VAULT_MASTER_KEY_BASE64_FILE=/etc/kcml/credentials/config_vault_master_key \
+NODE_ENV=production \
+BUILD_ID="$release_id" \
+  node "$source_dir/apps/server/dist/cli/ensure-platform-worker-access.js"
+
 mv "$source_dir" "$release_dir"
 chown -R root:kcml "$release_dir"
 chmod -R g=rX,o= "$release_dir"
@@ -291,11 +299,11 @@ curl -fsS -H "Host: secrets.${PUBLIC_BASE_DOMAIN:?PUBLIC_BASE_DOMAIN is required
   "http://127.0.0.1:${PORT:-3010}/.well-known/kcml-secret-api" \
   | jq -e --arg issuer "https://secrets.${PUBLIC_BASE_DOMAIN}" \
       --arg resolve "https://secrets.${PUBLIC_BASE_DOMAIN}/v1/secrets/resolve" \
-      '.issuer == $issuer and .resolveEndpoint == $resolve and (.auth | index("client_secret_basic")) and (.auth | index("integration_token_bearer"))' >/dev/null
+      '.issuer == $issuer and .resolveEndpoint == $resolve and .auth == ["access_token_bearer"]' >/dev/null
 curl -fsS "https://secrets.${PUBLIC_BASE_DOMAIN}/.well-known/kcml-secret-api" \
   | jq -e --arg issuer "https://secrets.${PUBLIC_BASE_DOMAIN}" \
       --arg resolve "https://secrets.${PUBLIC_BASE_DOMAIN}/v1/secrets/resolve" \
-      '.issuer == $issuer and .resolveEndpoint == $resolve and (.auth | index("client_secret_basic")) and (.auth | index("integration_token_bearer"))' >/dev/null
+      '.issuer == $issuer and .resolveEndpoint == $resolve and .auth == ["access_token_bearer"]' >/dev/null
 curl -fsS "https://secrets.${PUBLIC_BASE_DOMAIN}/health" \
   | jq -e '.status == "ok"' >/dev/null
 test "$(curl -sS -o /dev/null -w '%{http_code}' -H 'Host: unknown.invalid' \

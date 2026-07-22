@@ -2490,11 +2490,30 @@ export function registerAdminRoutes(app: FastifyInstance, db: Db, config: AdminR
     }
   });
 
-  app.get("/health", { config: { rateLimit: false } }, async (_request, reply) => {
+  let lastReadinessWarningAt = 0;
+  app.get("/health", { config: { rateLimit: false } }, async (request, reply) => {
     try {
       const report = await buildReadinessReport(db, config);
+      if (!report.ready && Date.now() - lastReadinessWarningAt >= 30_000) {
+        lastReadinessWarningAt = Date.now();
+        request.log.warn({
+          readiness: {
+            buildId: report.buildId,
+            migrations: report.migrations,
+            catalog: report.catalog,
+            audit: report.audit,
+            monitor: report.monitor,
+            workers: report.workers,
+            operations: report.operations
+          }
+        }, "KCML readiness is blocked");
+      }
       return reply.code(report.ready ? 200 : 503).send({ status: report.ready ? "ok" : "unready" });
-    } catch {
+    } catch (error) {
+      if (Date.now() - lastReadinessWarningAt >= 30_000) {
+        lastReadinessWarningAt = Date.now();
+        request.log.error({ err: error }, "KCML readiness evaluation failed");
+      }
       return reply.code(503).send({ status: "unready" });
     }
   });

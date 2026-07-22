@@ -24,6 +24,7 @@ test -f "$tmpdir/release/apps/server/dist/cli/migrate-mfa-secrets.js"
 test -f "$tmpdir/release/apps/server/dist/cli/import-operational-config.js"
 test -f "$tmpdir/release/apps/server/dist/cli/component-control-worker.js"
 test -f "$tmpdir/release/apps/server/dist/cli/component-e2e-worker.js"
+test -f "$tmpdir/release/apps/server/dist/cli/ensure-platform-worker-access.js"
 test -f "$tmpdir/release/deploy/scripts/kcml-handler-preload-wrapper.sh"
 test -f "$tmpdir/release/deploy/scripts/render-nginx-config.mjs"
 
@@ -41,6 +42,8 @@ grep -q 'CONFIG_VAULT_MASTER_KEY_BASE64_FILE=/etc/kcml/credentials/config_vault_
 test "$(grep -c '^step sync-admin-password$' "$tmpdir/release/deploy/scripts/install-release.sh")" = "1"
 grep -Fq '"https://${admin_host}/api/login"' "$tmpdir/release/deploy/scripts/install-release.sh"
 grep -Fq "node \"\$source_dir/apps/server/dist/cli/sync-admin-password.js\"" "$tmpdir/release/deploy/scripts/install-release.sh"
+grep -Fq "node \"\$source_dir/apps/server/dist/cli/ensure-platform-worker-access.js\"" "$tmpdir/release/deploy/scripts/install-release.sh"
+grep -Fq '.auth == ["access_token_bearer"]' "$tmpdir/release/deploy/scripts/install-release.sh"
 if grep -q 'admin_sync_totp_file' "$tmpdir/release/deploy/scripts/install-release.sh"; then
   exit 1
 fi
