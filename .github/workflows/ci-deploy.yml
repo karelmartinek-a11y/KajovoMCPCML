@@ -5,6 +5,17 @@ on:
     branches: ["**"]
   pull_request:
   workflow_dispatch:
+    inputs:
+      perform_factory_reset:
+        description: "Run the approved pre-production factory reset after deploy"
+        required: false
+        default: false
+        type: boolean
+      factory_reset_confirmation:
+        description: "Exact confirmation phrase required for the approved factory reset"
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: read
@@ -238,13 +249,14 @@ jobs:
           PASS: ${{ secrets.PASS }}
           GHCR_TOKEN: ${{ github.token }}
           GHCR_ACTOR: ${{ github.actor }}
+          KCML_FACTORY_RESET_CONFIRM: ${{ github.event_name == 'workflow_dispatch' && inputs.perform_factory_reset && inputs.factory_reset_confirmation || '' }}
         run: |
           set -euo pipefail
           echo "::add-mask::$PASS"
           echo "::add-mask::$GHCR_TOKEN"
           test -n "$PASS"
           test -n "$GHCR_TOKEN"
-          sudo --preserve-env=PASS,GHCR_TOKEN,GHCR_ACTOR /usr/local/sbin/kcml-deploy-wrapper \
+          sudo --preserve-env=PASS,GHCR_TOKEN,GHCR_ACTOR,KCML_FACTORY_RESET_CONFIRM /usr/local/sbin/kcml-deploy-wrapper \
             "${{ runner.temp }}/kcml-release/kcml-release.tar.zst" \
             "${{ github.repository }}" \
             "${{ github.sha }}" \

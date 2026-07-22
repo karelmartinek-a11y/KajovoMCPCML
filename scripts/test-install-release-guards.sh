@@ -53,8 +53,14 @@ if grep -F 'canonical_component_identity' "$install_script" | grep -Fq 'PUBLIC_B
   exit 1
 fi
 grep -Fq 'integration_token_lifetime' "$install_script"
-test "$(grep -c '^step ensure-platform-worker-access$' "$install_script")" = "1"
+test "$(grep -Ec '^[[:space:]]*step ensure-platform-worker-access$' "$install_script")" = "1"
+test "$(grep -Ec '^[[:space:]]*step factory-reset$' "$install_script")" = "1"
+test "$(grep -Ec '^[[:space:]]*step ensure-platform-worker-access-post-reset$' "$install_script")" = "1"
+test "$(grep -Ec '^[[:space:]]*step restart-services-post-reset$' "$install_script")" = "1"
+test "$(grep -Ec '^[[:space:]]*step wait-runtime-health-post-reset$' "$install_script")" = "1"
 grep -Fq 'dist/cli/ensure-platform-worker-access.js' "$install_script"
+grep -Fq 'dist/cli/factory-reset.js' "$install_script"
+grep -Fq 'KCML_FACTORY_RESET_CONFIRM="${KCML_FACTORY_RESET_CONFIRM}"' "$install_script"
 grep -Fq '.auth == ["access_token_bearer"]' "$install_script"
 if grep -Eq 'client_secret_basic|integration_token_bearer' "$install_script"; then
   echo "secret API deployment checks must enforce access-token bearer only" >&2

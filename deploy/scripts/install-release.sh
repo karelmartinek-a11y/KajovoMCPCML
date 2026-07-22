@@ -122,6 +122,47 @@ rollback_on_error() {
 }
 trap rollback_on_error ERR
 
+restart_core_services() {
+  systemctl restart kcml
+  systemctl restart kcml-egress-proxy
+  systemctl restart kcml-onboarding-worker
+  systemctl restart kcml-component-control-worker
+  systemctl restart kcml-component-e2e-worker
+  systemctl restart kcml-monitor
+}
+
+wait_for_runtime_health() {
+  local admin_host="$1"
+  local healthy=false
+  for _attempt in $(seq 1 45); do
+    if curl -fsS -H "Host: $admin_host" "http://127.0.0.1:${PORT:-3010}/health" >/dev/null \
+      && systemctl is-active --quiet kcml \
+      && systemctl is-active --quiet kcml-egress-proxy \
+      && systemctl is-active --quiet kcml-onboarding-worker \
+      && systemctl is-active --quiet kcml-component-control-worker \
+      && systemctl is-active --quiet kcml-component-e2e-worker \
+      && systemctl is-active --quiet kcml-monitor \
+      && systemctl is-active --quiet kcml-alert-primary \
+      && systemctl is-active --quiet kcml-alert-backup \
+      && curl -fsS http://127.0.0.1:3011/health >/dev/null \
+      && curl -fsS http://127.0.0.1:3012/health >/dev/null \
+      && test -S "${EGRESS_PROXY_SOCKET_PATH:-/var/lib/kcml/egress/proxy.sock}"; then
+      healthy=true
+      break
+    fi
+    sleep 2
+  done
+
+  if [ "$healthy" != "true" ]; then
+    systemctl status kcml kcml-egress-proxy kcml-onboarding-worker kcml-component-control-worker kcml-component-e2e-worker kcml-monitor kcml-alert-primary kcml-alert-backup --no-pager -l || true
+    for service in kcml kcml-egress-proxy kcml-onboarding-worker kcml-component-control-worker kcml-component-e2e-worker kcml-monitor; do
+      echo "==== journal:$service ====" >&2
+      journalctl -u "$service" --no-pager -n 80 || true
+    done
+    return 1
+  fi
+}
+
 render_nginx_config "$source_dir/deploy/nginx/kcml.conf" /etc/nginx/sites-available/kcml.conf
 ln -sfn /etc/nginx/sites-available/kcml.conf /etc/nginx/sites-enabled/kcml.conf
 install -m 0755 "$source_dir/deploy/scripts/kcml-deploy-wrapper.sh" /usr/local/sbin/kcml-deploy-wrapper
@@ -244,42 +285,36 @@ SQL
 )"
 [[ "$test_alert_id" =~ ^[0-9a-f-]{36}$ ]]
 
-systemctl restart kcml
-systemctl restart kcml-egress-proxy
-systemctl restart kcml-onboarding-worker
-systemctl restart kcml-component-control-worker
-systemctl restart kcml-component-e2e-worker
-systemctl restart kcml-monitor
+restart_core_services
 
 admin_host="${ADMIN_HOST:?ADMIN_HOST is required}"
-healthy=false
 step wait-runtime-health
-for _attempt in $(seq 1 45); do
-  if curl -fsS -H "Host: $admin_host" "http://127.0.0.1:${PORT:-3010}/health" >/dev/null \
-    && systemctl is-active --quiet kcml \
-    && systemctl is-active --quiet kcml-egress-proxy \
-    && systemctl is-active --quiet kcml-onboarding-worker \
-    && systemctl is-active --quiet kcml-component-control-worker \
-    && systemctl is-active --quiet kcml-component-e2e-worker \
-    && systemctl is-active --quiet kcml-monitor \
-    && systemctl is-active --quiet kcml-alert-primary \
-    && systemctl is-active --quiet kcml-alert-backup \
-    && curl -fsS http://127.0.0.1:3011/health >/dev/null \
-    && curl -fsS http://127.0.0.1:3012/health >/dev/null \
-    && test -S "${EGRESS_PROXY_SOCKET_PATH:-/var/lib/kcml/egress/proxy.sock}"; then
-    healthy=true
-    break
-  fi
-  sleep 2
-done
+wait_for_runtime_health "$admin_host"
 
-if [ "$healthy" != "true" ]; then
-  systemctl status kcml kcml-egress-proxy kcml-onboarding-worker kcml-component-control-worker kcml-component-e2e-worker kcml-monitor kcml-alert-primary kcml-alert-backup --no-pager -l || true
-  for service in kcml kcml-egress-proxy kcml-onboarding-worker kcml-component-control-worker kcml-component-e2e-worker kcml-monitor; do
-    echo "==== journal:$service ====" >&2
-    journalctl -u "$service" --no-pager -n 80 || true
-  done
-  false
+if [ -n "${KCML_FACTORY_RESET_CONFIRM:-}" ]; then
+  step factory-reset
+  PASS="$PASS" \
+  KCML_PROCESS_ROLE=admin-sync \
+  DATABASE_URL_FILE=/etc/kcml/credentials/admin-sync/database_url \
+  CONFIG_VAULT_MASTER_KEY_BASE64_FILE=/etc/kcml/credentials/config_vault_master_key \
+  NODE_ENV=production \
+  BUILD_ID="$release_id" \
+  KCML_FACTORY_RESET_CONFIRM="${KCML_FACTORY_RESET_CONFIRM}" \
+    node "$release_dir/apps/server/dist/cli/factory-reset.js"
+
+  step ensure-platform-worker-access-post-reset
+  KCML_PROCESS_ROLE=admin-sync \
+  DATABASE_URL_FILE=/etc/kcml/credentials/admin-sync/database_url \
+  CONFIG_VAULT_MASTER_KEY_BASE64_FILE=/etc/kcml/credentials/config_vault_master_key \
+  NODE_ENV=production \
+  BUILD_ID="$release_id" \
+    node "$release_dir/apps/server/dist/cli/ensure-platform-worker-access.js"
+
+  step restart-services-post-reset
+  restart_core_services
+
+  step wait-runtime-health-post-reset
+  wait_for_runtime_health "$admin_host"
 fi
 
 app_database_url="$(cat /etc/kcml/database-app.url)"

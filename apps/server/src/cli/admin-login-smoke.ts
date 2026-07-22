@@ -1,3 +1,5 @@
+import { request as httpRequest } from "node:http";
+import { request as httpsRequest } from "node:https";
 import { authenticator } from "otplib";
 import { loadBootstrapConfig } from "../config.js";
 import { createDb } from "../db.js";
@@ -24,15 +26,44 @@ function findCookie(headers: Headers, name: string): string | null {
 }
 
 async function postJson(baseUrl: string, host: string, path: string, body: unknown, cookieHeader?: string): Promise<Response> {
-  const headers = new Headers({
-    host,
-    "content-type": "application/json"
-  });
-  if (cookieHeader) headers.set("cookie", cookieHeader);
-  return fetch(new URL(path, baseUrl), {
-    method: "POST",
-    headers,
-    body: JSON.stringify(body)
+  const url = new URL(path, baseUrl);
+  const transport = url.protocol === "https:" ? httpsRequest : httpRequest;
+  const payload = JSON.stringify(body);
+
+  return new Promise<Response>((resolve, reject) => {
+    const request = transport(url, {
+      method: "POST",
+      headers: {
+        host,
+        "content-type": "application/json",
+        "content-length": Buffer.byteLength(payload).toString()
+      }
+    }, (incoming) => {
+      const chunks: Buffer[] = [];
+      incoming.on("data", (chunk) => {
+        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      });
+      incoming.on("end", () => {
+        const headers = new Headers();
+        for (const [key, value] of Object.entries(incoming.headers)) {
+          if (Array.isArray(value)) {
+            for (const item of value) headers.append(key, item);
+          } else if (value) {
+            headers.set(key, value);
+          }
+        }
+        resolve(new Response(Buffer.concat(chunks), {
+          status: incoming.statusCode ?? 500,
+          statusText: incoming.statusMessage ?? "",
+          headers
+        }));
+      });
+    });
+
+    request.on("error", reject);
+    if (cookieHeader) request.setHeader("cookie", cookieHeader);
+    request.write(payload);
+    request.end();
   });
 }
 

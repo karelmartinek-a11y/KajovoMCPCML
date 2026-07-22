@@ -13,6 +13,8 @@ if grep -A5 '^  push:' "$workflow" | grep -Eq 'paths(-ignore)?:'; then
 fi
 grep -Fq '  pull_request:' "$workflow"
 grep -Fq '  workflow_dispatch:' "$workflow"
+grep -Fq 'perform_factory_reset:' "$workflow"
+grep -Fq 'factory_reset_confirmation:' "$workflow"
 
 # Production release and deployment must remain main-only and run both
 # automatically on pushes and explicitly on manual dispatches.
@@ -33,6 +35,8 @@ grep -Fq 'name: kcml-release-${{ github.sha }}' "$workflow"
 grep -Fq 'sha256sum --check kcml-release.tar.zst.sha256' "$workflow"
 grep -Fq '/usr/local/sbin/kcml-deploy-wrapper' "$workflow"
 grep -Fq '"${{ github.event_name }}"' "$workflow"
+grep -Fq 'KCML_FACTORY_RESET_CONFIRM:' "$workflow"
+grep -Fq 'sudo --preserve-env=PASS,GHCR_TOKEN,GHCR_ACTOR,KCML_FACTORY_RESET_CONFIRM /usr/local/sbin/kcml-deploy-wrapper' "$workflow"
 
 # Avoid indefinite production jobs on a wedged self-hosted runner.
 grep -A8 '^  deploy:' "$workflow" | grep -Fq 'timeout-minutes:'
