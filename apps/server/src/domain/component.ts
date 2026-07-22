@@ -1711,6 +1711,15 @@ export async function recordComponentHeartbeat(db: Db, componentId: string, hear
 
 export async function markStaleComponentHeartbeats(db: Db, staleAfterSeconds: number, disableAfterSeconds: number, correlationId: string): Promise<number> {
   return tx(db, async (client) => {
+    const lockedComponents = await client.query(
+      `select id
+         from component
+        where lifecycle_state='ACTIVE' and enabled=true
+        order by id
+        for update`
+    );
+    if (!lockedComponents.rowCount) return 0;
+    const componentIds = lockedComponents.rows.map((row) => String(row.id));
     const stale = await client.query(
       `select c.id,
               max(h.heartbeat_at) as last_heartbeat,
@@ -1720,10 +1729,9 @@ export async function markStaleComponentHeartbeats(db: Db, staleAfterSeconds: nu
          from component c
          join component_revision r on r.id=c.active_revision_id
          left join component_heartbeat h on h.component_id=c.id
-        where c.lifecycle_state='ACTIVE' and c.enabled=true
-        group by c.id,c.activated_at,r.manifest
-        for update of c`,
-      [staleAfterSeconds, disableAfterSeconds]
+        where c.id=any($3::uuid[])
+        group by c.id,c.activated_at,r.manifest`,
+      [staleAfterSeconds, disableAfterSeconds, componentIds]
     );
     let staleCount = 0;
     for (const row of stale.rows) {

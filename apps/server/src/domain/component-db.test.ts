@@ -9,6 +9,7 @@ import { authorizeComponentCall } from "./component-auth.js";
 import {
   createComponentOnboarding,
   evaluateComponentReadiness,
+  markStaleComponentHeartbeats,
   queueComponentE2ERun,
   revokeComponentAccessToken,
   rotateComponentAccessToken,
@@ -122,6 +123,37 @@ describe.skipIf(!enabled)("component authorization and audit persistence", () =>
     expect((await db.query("select revoked_at from principal_access_token where fingerprint='principal-token-test'")).rows[0].revoked_at).toBeNull();
     await db.query("update component set enabled=true,ingress_enabled=true,pulse_enabled=true,egress_enabled=true,activation_state='ACTIVE',operational_state='HEALTHY' where id=$1", [targetId]);
     expect((await authorizeComponentCall(db, { ...parameters, correlationId: randomUUID() })).reasonCode).toBe("allowed");
+  });
+
+  it("locks active components separately before aggregating stale heartbeat evidence", async () => {
+    await db.query(
+      `update component
+          set activated_at=now()-interval '30 seconds',operational_state='HEALTHY',monitoring_state='HEALTHY',
+              enabled=true,ingress_enabled=true,pulse_enabled=true,egress_enabled=true
+        where id=$1`,
+      [targetId]
+    );
+    await db.query("delete from component_heartbeat where component_id=$1", [targetId]);
+    expect(await markStaleComponentHeartbeats(db, 1, 10, randomUUID())).toBeGreaterThanOrEqual(1);
+    const disabled = await db.query(
+      "select operational_state,monitoring_state,enabled,ingress_enabled,pulse_enabled,egress_enabled from component where id=$1",
+      [targetId]
+    );
+    expect(disabled.rows[0]).toMatchObject({
+      operational_state: "DISABLED",
+      monitoring_state: "FAILED",
+      enabled: false,
+      ingress_enabled: false,
+      pulse_enabled: false,
+      egress_enabled: false
+    });
+    await db.query(
+      `update component
+          set activated_at=now(),operational_state='HEALTHY',monitoring_state='HEALTHY',
+              enabled=true,ingress_enabled=true,pulse_enabled=true,egress_enabled=true
+        where id=$1`,
+      [targetId]
+    );
   });
 
   it("detects an audit gap and accepts a contiguous replay", async () => {
