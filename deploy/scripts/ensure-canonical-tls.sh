@@ -6,7 +6,7 @@ base_domain="${1:?base domain required}"
 component_suffix="${2:?component hostname suffix required}"
 certificate_path="${3:?certificate path required}"
 private_key_path="${4:?private key path required}"
-status_root="/var/www/letsencrypt"
+status_root="/var/www/letsencrypt/.well-known/acme-challenge"
 status_file="$status_root/kcml-dns-challenge.json"
 
 for domain in "$base_domain" "$component_suffix"; do

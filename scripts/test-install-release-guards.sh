@@ -28,11 +28,16 @@ grep -Fq 'join component_revision revision on revision.id=component.active_revis
 grep -Fq 'export KCML_COMPONENT_HOST_SUFFIX="$component_hostname_suffix"' "$install_script"
 grep -Fq 'curl -fsS "https://${canonical_component_hostname}/.well-known/oauth-protected-resource/mcp"' "$install_script"
 grep -Fq 'deploy/scripts/ensure-canonical-tls.sh' "$install_script"
+grep -Fq 'status_root="/var/www/letsencrypt/.well-known/acme-challenge"' deploy/scripts/ensure-canonical-tls.sh
 grep -Fq 'canonical-tls:WAITING_DNS record=$record value=$CERTBOT_VALIDATION' deploy/scripts/ensure-canonical-tls.sh
 grep -Fq -- '-d "*.${component_suffix}"' deploy/scripts/ensure-canonical-tls.sh
 if bash deploy/scripts/ensure-canonical-tls.sh 'hcasc.cz|kajovocml.hcasc.cz' 'kajovocml.hcasc.cz' /missing/cert /missing/key 2>/dev/null; then
   exit 1
 fi
+challenge_step="$(grep -n 'step expose-canonical-tls-challenge' "$install_script" | cut -d: -f1)"
+tls_step="$(grep -n 'step ensure-canonical-tls' "$install_script" | cut -d: -f1)"
+test "$challenge_step" -lt "$tls_step"
+grep -Fq 'restore_script="$source_dir/deploy/scripts/release-config.sh"' "$install_script"
 grep -Fq "component_hostname_pattern=\"\$(jq -er '.identityAssignment.hostnamePattern' \"\$component_catalog\")\"" "$install_script"
 grep -Fq "component_hostname_suffix" "$install_script"
 if grep -F 'canonical_component_identity' "$install_script" | grep -Fq 'PUBLIC_BASE_DOMAIN'; then

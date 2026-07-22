@@ -109,8 +109,13 @@ rollback_on_error() {
   trap - ERR
   echo "release-failed:$current_step" >&2
   cleanup_registry_auth
-  if [ "$switched" = "true" ] && [ -n "$previous_release_id" ] && [ -d "$previous_release" ]; then
-    bash "$release_dir/deploy/scripts/release-config.sh" restore "$previous_release_id" "$previous_release" || true
+  if [ -n "$previous_release_id" ] && [ -d "$previous_release" ]; then
+    if [ "$switched" = "true" ]; then
+      restore_script="$release_dir/deploy/scripts/release-config.sh"
+    else
+      restore_script="$source_dir/deploy/scripts/release-config.sh"
+    fi
+    bash "$restore_script" restore "$previous_release_id" "$previous_release" || true
   fi
   exit "$exit_code"
 }
@@ -138,6 +143,9 @@ chmod 0644 /etc/systemd/system/kcml-monitor.service.d/runtime-user.conf
 
 step split-config-initial
 DATABASE_APP_URL="${DATABASE_APP_URL:-$DATABASE_URL}" bash "$source_dir/deploy/scripts/split-service-config.sh" "$release_id"
+step expose-canonical-tls-challenge
+nginx -t
+systemctl reload nginx
 step ensure-canonical-tls
 tls_cert_path="${WILDCARD_TLS_CERT_PATH:-/etc/kcml/tls/fullchain.pem}"
 tls_key_path="${WILDCARD_TLS_KEY_PATH:-${tls_cert_path%/*}/privkey.pem}"
