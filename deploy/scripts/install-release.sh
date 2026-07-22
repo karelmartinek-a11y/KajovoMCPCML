@@ -295,7 +295,7 @@ if [ -n "${KCML_FACTORY_RESET_CONFIRM:-}" ]; then
   step factory-reset
   PASS="$PASS" \
   KCML_PROCESS_ROLE=admin-sync \
-  DATABASE_URL_FILE=/etc/kcml/credentials/admin-sync/database_url \
+  DATABASE_URL_FILE=/etc/kcml/credentials/migrator/database_url \
   CONFIG_VAULT_MASTER_KEY_BASE64_FILE=/etc/kcml/credentials/config_vault_master_key \
   NODE_ENV=production \
   BUILD_ID="$release_id" \
