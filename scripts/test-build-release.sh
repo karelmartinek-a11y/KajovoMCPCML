@@ -11,21 +11,19 @@ test -x node_modules/.bin/vitest
 BUILD_ID="test-build-release" bash scripts/build-release.sh "$tmpdir/release"
 test -x node_modules/.bin/vitest
 
-release="2026.07.22"
+release="$(node --input-type=module -e "import('./apps/server/dist/domain/release.js').then(({KCML_RELEASE}) => process.stdout.write(KCML_RELEASE.catalogVersion))")"
 
 test -f "$tmpdir/release/docs/onboarding-manifest-${release}.example.json"
 test -f "$tmpdir/release/docs/component-manifest-${release}.schema.json"
 test -f "$tmpdir/release/docs/service-manifest-external-api-v1.0.example.json"
 test -f "$tmpdir/release/docs/onboarding-catalogs/component-${release}.json"
-test -f "$tmpdir/release/docs/releases/${release}/KajovoCML_Onboarding_Catalog_${release}.docx"
-test -f "$tmpdir/release/docs/releases/${release}/KajovoCML_Onboarding_Catalog_${release}.pdf"
 test -f "$tmpdir/release/docs/releases/${release}/README.md"
 test -f "$tmpdir/release/docs/releases/${release}/compatibility-matrix.md"
 test -f "$tmpdir/release/docs/onboarding-catalogs/external-api-1.0.json"
-test -f "$tmpdir/release/apps/server/dist/cli/release-kcml0002-smoke.js"
-test -f "$tmpdir/release/apps/server/dist/cli/release-kcml0002-runtime-refresh.js"
 test -f "$tmpdir/release/apps/server/dist/cli/migrate-mfa-secrets.js"
 test -f "$tmpdir/release/apps/server/dist/cli/import-operational-config.js"
+test -f "$tmpdir/release/apps/server/dist/cli/component-control-worker.js"
+test -f "$tmpdir/release/apps/server/dist/cli/component-e2e-worker.js"
 test -f "$tmpdir/release/deploy/scripts/kcml-handler-preload-wrapper.sh"
 test -f "$tmpdir/release/deploy/scripts/render-nginx-config.mjs"
 
@@ -34,8 +32,9 @@ external_manifest_path="$(jq -r '.manifestExamplePath' "$tmpdir/release/docs/onb
 
 test -f "$tmpdir/release/$mcp_manifest_path"
 test -f "$tmpdir/release/$external_manifest_path"
-grep -q 'release-kcml0002-smoke.js' "$tmpdir/release/deploy/scripts/install-release.sh"
-grep -q 'release-kcml0002-runtime-refresh.js' "$tmpdir/release/deploy/scripts/install-release.sh"
+if grep -qi 'kcml0002' "$tmpdir/release/deploy/scripts/install-release.sh"; then
+  exit 1
+fi
 grep -q 'migrate-mfa-secrets.js' "$tmpdir/release/deploy/scripts/install-release.sh"
 grep -q 'import-operational-config.js" --refresh-build-id' "$tmpdir/release/deploy/scripts/install-release.sh"
 grep -q 'CONFIG_VAULT_MASTER_KEY_BASE64_FILE=/etc/kcml/credentials/config_vault_master_key' "$tmpdir/release/deploy/scripts/install-release.sh"
@@ -48,9 +47,6 @@ fi
 grep -Fq "podman_runtime_dir=\"/run/user/\${kcml_uid}\"" "$tmpdir/release/deploy/scripts/install-release.sh"
 grep -Fq "DBUS_SESSION_BUS_ADDRESS=\"unix:path=\${podman_runtime_dir}/bus\"" "$tmpdir/release/deploy/scripts/install-release.sh"
 grep -q 'kcml-handler-preload-wrapper' "$tmpdir/release/deploy/scripts/install-release.sh"
-if grep -Fq "/api/mcp-servers/\$kcml0002_server_id/test" "$tmpdir/release/deploy/scripts/install-release.sh"; then
-  exit 1
-fi
 if grep -R -E 'hcasc\.cz|karmar78' "$tmpdir/release/deploy/nginx" "$tmpdir/release/deploy/systemd" "$tmpdir/release/deploy/scripts" >/dev/null; then
   exit 1
 fi

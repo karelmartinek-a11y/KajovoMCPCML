@@ -11,6 +11,8 @@ managed_paths=(
   etc/nginx/sites-enabled/kcml.conf
   etc/systemd/system/kcml.service
   etc/systemd/system/kcml-onboarding-worker.service
+  etc/systemd/system/kcml-component-control-worker.service
+  etc/systemd/system/kcml-component-e2e-worker.service
   etc/systemd/system/kcml-monitor.service
   etc/systemd/system/kcml-egress-proxy.service
   etc/systemd/system/kcml-alert-primary.service
@@ -35,14 +37,14 @@ case "$action" in
     target_release="${3:?target release directory required}"
     test -d "$target_release"
     test -s "$state_dir/config.tar"
-    systemctl stop kcml kcml-onboarding-worker kcml-monitor kcml-egress-proxy kcml-alert-primary kcml-alert-backup 2>/dev/null || true
+    systemctl stop kcml kcml-onboarding-worker kcml-component-control-worker kcml-component-e2e-worker kcml-monitor kcml-egress-proxy kcml-alert-primary kcml-alert-backup 2>/dev/null || true
     for path in "${managed_paths[@]}"; do rm -rf "/${path:?}"; done
     tar --extract --file "$state_dir/config.tar" --directory /
     ln -sfn "$target_release" /opt/kcml/current
     systemctl daemon-reload
     nginx -t
     systemctl reload nginx
-    for unit in kcml kcml-onboarding-worker kcml-monitor kcml-egress-proxy kcml-alert-primary kcml-alert-backup; do
+    for unit in kcml kcml-onboarding-worker kcml-component-control-worker kcml-component-e2e-worker kcml-monitor kcml-egress-proxy kcml-alert-primary kcml-alert-backup; do
       if systemctl cat "$unit.service" >/dev/null 2>&1; then
         systemctl enable "$unit.service" >/dev/null
         systemctl restart "$unit.service"

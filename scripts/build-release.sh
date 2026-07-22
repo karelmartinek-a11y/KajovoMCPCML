@@ -5,6 +5,7 @@ umask 022
 destination="${1:?release destination required}"
 build_id="${BUILD_ID:-$(git rev-parse HEAD)}"
 source_commit="${GITHUB_SHA:-$(git rev-parse HEAD)}"
+catalog_version="$(node --input-type=module -e "import('./apps/server/dist/domain/release.js').then(({KCML_RELEASE}) => process.stdout.write(KCML_RELEASE.catalogVersion))")"
 workspace_restore_required=false
 
 restore_workspace_dependencies() {
@@ -32,9 +33,9 @@ cp -R apps/admin-ui/dist "$destination/apps/admin-ui/dist"
 install -d -m 0755 "$destination/apps/server/dist/migrations"
 cp apps/server/src/migrations/*.sql "$destination/apps/server/dist/migrations/"
 cp -R deploy/alert-sink deploy/nginx deploy/scripts deploy/systemd "$destination/deploy/"
-cp docs/onboarding-catalogs/component-2026.07.22.json "$destination/docs/"
-cp docs/onboarding-manifest-2026.07.22.example.json "$destination/docs/"
-cp apps/server/src/contracts/component-manifest-2026.07.22.schema.json "$destination/docs/"
+cp "docs/onboarding-catalogs/component-${catalog_version}.json" "$destination/docs/"
+cp "docs/onboarding-manifest-${catalog_version}.example.json" "$destination/docs/"
+cp "apps/server/src/contracts/component-manifest-${catalog_version}.schema.json" "$destination/docs/"
 cp docs/service-manifest-external-api-v1.0.example.json "$destination/docs/"
 cp docs/onboarding-catalogs/*.json "$destination/docs/onboarding-catalogs/"
 cp -R docs/releases "$destination/docs/releases"
