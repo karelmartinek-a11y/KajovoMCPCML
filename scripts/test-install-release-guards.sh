@@ -35,6 +35,9 @@ grep -Fq '*certbot*certonly*"--cert-name kcml-wildcards"*' deploy/scripts/ensure
 grep -Fq 'kill -TERM -- "-$certbot_pid"' deploy/scripts/ensure-canonical-tls.sh
 grep -Fq 'setsid env' deploy/scripts/ensure-canonical-tls.sh
 grep -Fq 'canonical-tls:WAITING_DNS record=$record value=$CERTBOT_VALIDATION' deploy/scripts/ensure-canonical-tls.sh
+grep -Fq 'dig +short NS "$KCML_ACME_ZONE"' deploy/scripts/ensure-canonical-tls.sh
+grep -Fq 'dig +short TXT "$record" "@$nameserver"' deploy/scripts/ensure-canonical-tls.sh
+grep -Fq 'KCML_ACME_ZONE="$base_domain"' deploy/scripts/ensure-canonical-tls.sh
 grep -Fq -- '-d "*.${component_suffix}"' deploy/scripts/ensure-canonical-tls.sh
 if bash deploy/scripts/ensure-canonical-tls.sh 'hcasc.cz|kajovocml.hcasc.cz' 'kajovocml.hcasc.cz' /missing/cert /missing/key 2>/dev/null; then
   exit 1

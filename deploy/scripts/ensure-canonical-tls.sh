@@ -99,8 +99,20 @@ jq -nc --arg record "$record" --arg value "$CERTBOT_VALIDATION" \
 chmod 0644 "$tmp"
 mv -f "$tmp" "$KCML_ACME_STATUS_FILE"
 echo "canonical-tls:WAITING_DNS record=$record value=$CERTBOT_VALIDATION"
+mapfile -t authoritative_nameservers < <(dig +short NS "$KCML_ACME_ZONE" | sed '/^$/d')
+if [ "${#authoritative_nameservers[@]}" -eq 0 ]; then
+  echo "canonical-tls:NO_AUTHORITATIVE_NAMESERVERS zone=$KCML_ACME_ZONE" >&2
+  exit 1
+fi
 for _attempt in $(seq 1 180); do
-  if dig +short TXT "$record" | tr -d '"' | grep -Fx "$CERTBOT_VALIDATION" >/dev/null; then
+  confirmed=true
+  for nameserver in "${authoritative_nameservers[@]}"; do
+    if ! dig +short TXT "$record" "@$nameserver" | tr -d '"' | grep -Fx "$CERTBOT_VALIDATION" >/dev/null; then
+      confirmed=false
+      break
+    fi
+  done
+  if [ "$confirmed" = true ]; then
     echo "canonical-tls:DNS_CONFIRMED record=$record"
     exit 0
   fi
@@ -122,6 +134,7 @@ chmod 0700 "$auth_hook" "$deploy_hook"
 
 setsid env \
   KCML_ACME_STATUS_FILE="$status_file" \
+  KCML_ACME_ZONE="$base_domain" \
   KCML_TLS_CERT_PATH="$certificate_path" \
   KCML_TLS_KEY_PATH="$private_key_path" \
   certbot certonly \
