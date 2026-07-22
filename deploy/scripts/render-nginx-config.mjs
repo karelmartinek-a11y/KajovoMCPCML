@@ -5,12 +5,15 @@ const HOSTNAME_PATTERN = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\
 const SAFE_PATH_PATTERN = /^\/[A-Za-z0-9._/-]+$/;
 
 export function renderNginxConfig(template, values) {
-  const { domain, adminHost, authHost, registerHost, certPath, keyPath } = values;
-  if (![domain, adminHost, authHost, registerHost].every((value) => HOSTNAME_PATTERN.test(value))) {
+  const { domain, componentHostSuffix, adminHost, authHost, registerHost, certPath, keyPath } = values;
+  if (![domain, componentHostSuffix, adminHost, authHost, registerHost].every((value) => HOSTNAME_PATTERN.test(value))) {
     throw new Error("invalid_nginx_hostname");
   }
   if (![adminHost, authHost, registerHost].every((value) => value.endsWith(`.${domain}`))) {
     throw new Error("nginx_host_domain_mismatch");
+  }
+  if (componentHostSuffix !== domain && !componentHostSuffix.endsWith(`.${domain}`)) {
+    throw new Error("nginx_component_host_domain_mismatch");
   }
   const secretApiHost = `secrets.${domain}`;
   const routedHosts = [adminHost, authHost, registerHost, secretApiHost];
@@ -22,7 +25,7 @@ export function renderNginxConfig(template, values) {
   }
   const replacements = {
     PUBLIC_BASE_DOMAIN: domain,
-    PUBLIC_BASE_DOMAIN_REGEX: domain.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+    COMPONENT_HOST_SUFFIX_REGEX: componentHostSuffix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
     ADMIN_HOST: adminHost,
     AUTH_HOST: authHost,
     REGISTER_HOST: registerHost,
@@ -36,12 +39,13 @@ export function renderNginxConfig(template, values) {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const [templatePath, targetPath, domain, adminHost, authHost, registerHost, certPath, keyPath] = process.argv.slice(2);
-  if (!templatePath || !targetPath || !domain || !adminHost || !authHost || !registerHost || !certPath || !keyPath) {
+  const [templatePath, targetPath, domain, componentHostSuffix, adminHost, authHost, registerHost, certPath, keyPath] = process.argv.slice(2);
+  if (!templatePath || !targetPath || !domain || !componentHostSuffix || !adminHost || !authHost || !registerHost || !certPath || !keyPath) {
     throw new Error("nginx_renderer_arguments_required");
   }
   const output = renderNginxConfig(readFileSync(templatePath, "utf8"), {
     domain,
+    componentHostSuffix,
     adminHost,
     authHost,
     registerHost,

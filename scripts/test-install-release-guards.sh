@@ -25,6 +25,11 @@ grep -Fq 'release-check:canonical_component_metadata=PASS' "$install_script"
 grep -Fq 'canonical_component_identity' "$install_script"
 grep -Fq 'canonical_managed_service_identity' "$install_script"
 grep -Fq 'join component_revision revision on revision.id=component.active_revision_id and revision.component_id=component.id' "$install_script"
+grep -Fq 'export KCML_COMPONENT_HOST_SUFFIX="$component_hostname_suffix"' "$install_script"
+grep -Fq 'curl -fsS "https://${canonical_component_hostname}/.well-known/oauth-protected-resource/mcp"' "$install_script"
+grep -Fq 'deploy/scripts/ensure-canonical-tls.sh' "$install_script"
+grep -Fq 'canonical-tls:WAITING_DNS record=$record value=$CERTBOT_VALIDATION' deploy/scripts/ensure-canonical-tls.sh
+grep -Fq -- '-d "*.${component_suffix}"' deploy/scripts/ensure-canonical-tls.sh
 grep -Fq "component_hostname_pattern=\"\$(jq -er '.identityAssignment.hostnamePattern' \"\$component_catalog\")\"" "$install_script"
 grep -Fq "component_hostname_suffix" "$install_script"
 if grep -F 'canonical_component_identity' "$install_script" | grep -Fq 'PUBLIC_BASE_DOMAIN'; then

@@ -14,7 +14,7 @@ The production stack is:
 - PostgreSQL 16+ as the only authoritative state store.
 - SQL migrations committed in `apps/server/src/migrations`.
 - Nginx reverse proxy with exact host routing, restricted KCML regex routing
-  and a DNS-01 wildcard certificate for `*.hcasc.cz`.
+  and DNS-01 wildcard coverage for both `*.hcasc.cz` and the canonical component namespace `*.kajovocml.hcasc.cz`.
 - GitHub API PR automation (existing repository authorization or preferred least-privilege GitHub App), least-privilege PR CI, trusted main image build,
   GHCR, SBOM/provenance and cosign verification.
 - Rootless Podman workers with private Unix sockets, network deny-all and a

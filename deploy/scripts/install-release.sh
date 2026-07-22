@@ -78,7 +78,7 @@ render_nginx_config() {
   local tls_cert_path="${WILDCARD_TLS_CERT_PATH:-/etc/kcml/tls/fullchain.pem}"
   local tls_key_path="${WILDCARD_TLS_KEY_PATH:-${tls_cert_path%/*}/privkey.pem}"
   node "$source_dir/deploy/scripts/render-nginx-config.mjs" \
-    "$template" "$target" "$PUBLIC_BASE_DOMAIN" "$ADMIN_HOST" "$AUTH_HOST" "$REGISTER_HOST" "$tls_cert_path" "$tls_key_path"
+    "$template" "$target" "$PUBLIC_BASE_DOMAIN" "$component_hostname_suffix" "$ADMIN_HOST" "$AUTH_HOST" "$REGISTER_HOST" "$tls_cert_path" "$tls_key_path"
 }
 wait_for_sql_equals() {
   local label="$1" expected="$2" query="$3" attempts="${4:-1}" delay="${5:-2}"
@@ -138,7 +138,14 @@ chmod 0644 /etc/systemd/system/kcml-monitor.service.d/runtime-user.conf
 
 step split-config-initial
 DATABASE_APP_URL="${DATABASE_APP_URL:-$DATABASE_URL}" bash "$source_dir/deploy/scripts/split-service-config.sh" "$release_id"
+step ensure-canonical-tls
+tls_cert_path="${WILDCARD_TLS_CERT_PATH:-/etc/kcml/tls/fullchain.pem}"
+tls_key_path="${WILDCARD_TLS_KEY_PATH:-${tls_cert_path%/*}/privkey.pem}"
+bash "$source_dir/deploy/scripts/ensure-canonical-tls.sh" \
+  "$PUBLIC_BASE_DOMAIN" "$component_hostname_suffix" "$tls_cert_path" "$tls_key_path"
+
 step preflight
+export KCML_COMPONENT_HOST_SUFFIX="$component_hostname_suffix"
 KCML_RELEASE_SOURCE="$source_dir" bash "$source_dir/deploy/scripts/preflight.sh"
 step backup
 bash "$source_dir/deploy/scripts/backup.sh"
@@ -346,6 +353,8 @@ canonical_component_hostname="$(psql "$app_database_url" --no-psqlrc --tuples-on
 if [ -n "$canonical_component_hostname" ]; then
   curl -fsS -H "Host: $canonical_component_hostname" \
     "http://127.0.0.1:${PORT:-3010}/.well-known/oauth-protected-resource/mcp" \
+    | jq -e --arg resource "https://${canonical_component_hostname}/mcp" '.resource == $resource' >/dev/null
+  curl -fsS "https://${canonical_component_hostname}/.well-known/oauth-protected-resource/mcp" \
     | jq -e --arg resource "https://${canonical_component_hostname}/mcp" '.resource == $resource' >/dev/null
   echo "release-check:canonical_component_metadata=PASS"
 else

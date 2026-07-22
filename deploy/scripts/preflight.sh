@@ -8,6 +8,7 @@ test -n "${PUBLIC_BASE_DOMAIN:-}"
 test -n "${ADMIN_HOST:-}"
 test -n "${AUTH_HOST:-}"
 test -n "${REGISTER_HOST:-}"
+test -n "${KCML_COMPONENT_HOST_SUFFIX:-}"
 test -n "${ACCESS_TOKEN_HMAC_KEY_BASE64:-}"
 test -n "${INTEGRATION_TOKEN_HMAC_KEY_BASE64:-}"
 test -n "${EGRESS_CAPABILITY_HMAC_KEY_BASE64:-}"
@@ -41,6 +42,7 @@ test -f "$tls_cert_path"
 test -f "$tls_key_path"
 openssl x509 -in "$tls_cert_path" -checkend 86400 -noout
 openssl x509 -in "$tls_cert_path" -noout -text | grep -F "DNS:*.${PUBLIC_BASE_DOMAIN}" >/dev/null
+openssl x509 -in "$tls_cert_path" -noout -text | grep -F "DNS:*.${KCML_COMPONENT_HOST_SUFFIX}" >/dev/null
 command -v "${PODMAN_BINARY:-podman}" >/dev/null
 command -v systemd-run >/dev/null
 command -v "${COSIGN_BINARY:-cosign}" >/dev/null
