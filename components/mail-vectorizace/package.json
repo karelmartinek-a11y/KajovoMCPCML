@@ -13,7 +13,7 @@
   },
   "dependencies": {
     "html-to-text": "10.0.0",
-    "imapflow": "1.5.0",
+    "imapflow": "1.4.8",
     "mailparser": "3.9.14",
     "zod": "4.0.0"
   },
