@@ -7,6 +7,7 @@
 - Database, HMAC, MFA, GitHub App and alert-webhook credentials remain on the server. `split-service-config.sh` exposes only the credentials required by each service through systemd `LoadCredential`.
 - Handler images use keyless Cosign verification bound to the exact GitHub OIDC issuer, repository, workflow and `main` identity.
 - The `kcml-deploy` runner is unprivileged. Its only sudo grants are the root-owned release, repository-component deploy and bounded GHCR preload wrappers, installed from `/etc/sudoers.d/kcml-deploy-wrappers`.
+- That sudo policy allows `SETENV` only for the bounded wrapper commands and keeps only `PASS`, `GHCR_TOKEN`, `GHCR_ACTOR` and `KCML_FACTORY_RESET_CONFIRM`, so deployment can pass the minimum required secrets without opening broader environment injection.
 - The GHCR preload wrapper reads only the worker database credential from `/etc/kcml/credentials/worker/database_url`; it does not reload the legacy aggregate environment file.
 
 ## Release gate

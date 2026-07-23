@@ -205,9 +205,10 @@ install -m 0755 "$source_dir/deploy/scripts/kcml-repository-component-deploy-wra
 install -m 0755 "$source_dir/deploy/scripts/kcml-handler-preload-wrapper.sh" /usr/local/sbin/kcml-handler-preload-wrapper
 cat >/etc/sudoers.d/kcml-deploy-wrappers <<'EOF'
 Defaults:kcml-deploy !requiretty
-kcml-deploy ALL=(root) NOPASSWD: /usr/local/sbin/kcml-deploy-wrapper
-kcml-deploy ALL=(root) NOPASSWD: /usr/local/sbin/kcml-repository-component-deploy-wrapper
-kcml-deploy ALL=(root) NOPASSWD: /usr/local/sbin/kcml-handler-preload-wrapper
+Defaults:kcml-deploy env_keep += "PASS GHCR_TOKEN GHCR_ACTOR KCML_FACTORY_RESET_CONFIRM"
+kcml-deploy ALL=(root) NOPASSWD:SETENV: /usr/local/sbin/kcml-deploy-wrapper
+kcml-deploy ALL=(root) NOPASSWD:SETENV: /usr/local/sbin/kcml-repository-component-deploy-wrapper
+kcml-deploy ALL=(root) NOPASSWD:SETENV: /usr/local/sbin/kcml-handler-preload-wrapper
 EOF
 chmod 0440 /etc/sudoers.d/kcml-deploy-wrappers
 visudo -cf /etc/sudoers.d/kcml-deploy-wrappers

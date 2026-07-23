@@ -51,6 +51,9 @@ test "$challenge_step" -lt "$tls_step"
 grep -Fq 'restore_script="$source_dir/deploy/scripts/release-config.sh"' "$install_script"
 grep -Fq "component_hostname_pattern=\"\$(jq -er '.identityAssignment.hostnamePattern' \"\$component_catalog\")\"" "$install_script"
 grep -Fq "component_hostname_suffix" "$install_script"
+grep -Fq 'Defaults:kcml-deploy env_keep += "PASS GHCR_TOKEN GHCR_ACTOR KCML_FACTORY_RESET_CONFIRM"' "$install_script"
+grep -Fq 'kcml-deploy ALL=(root) NOPASSWD:SETENV: /usr/local/sbin/kcml-deploy-wrapper' "$install_script"
+grep -Fq 'kcml-deploy ALL=(root) NOPASSWD:SETENV: /usr/local/sbin/kcml-handler-preload-wrapper' "$install_script"
 if grep -F 'canonical_component_identity' "$install_script" | grep -Fq 'PUBLIC_BASE_DOMAIN'; then
   echo "canonical component identity must come from the versioned onboarding catalog" >&2
   exit 1
