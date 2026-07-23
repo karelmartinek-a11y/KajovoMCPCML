@@ -53,9 +53,8 @@ trap 'rm -f "$sbom" "$provenance"' EXIT
   --type slsaprovenance "$immutable_image" > "$provenance"
 
 test -s "$sbom"
-jq -e --arg digest "${image_digest#sha256:}" --arg commit "$source_commit" --arg key "$repository_key" '
-  any(.[]; (.predicateType | contains("slsa")) and (.predicate.builder.id == "https://github.com/'"${repository}"'/.github/workflows/repository-component-deploy.yml@refs/heads/main") and (.predicate.invocation.parameters.repository_key == $key) and (.predicate.materials[]?.digest.sha1 == $commit) and (.subject[]?.digest.sha256 == $digest))
-' "$provenance" >/dev/null
+node /opt/kcml/current/scripts/verify-repository-component-attestations.mjs \
+  "$sbom" "$provenance" "$image_digest" "$source_commit" "$build_run_id"
 
 install -d -m 0750 -o root -g kcml "$(dirname "$receipt_path")"
 exec /usr/local/libexec/kcml-install-repository-component \
