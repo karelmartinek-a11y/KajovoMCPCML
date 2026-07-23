@@ -1,0 +1,93 @@
+import crypto from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
+import process from "node:process";
+import { fileURLToPath } from "node:url";
+
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const output = path.join(root, "docs/onboarding-catalogs/repository-component-1.0.json");
+const canonical = (value) => value === null || typeof value !== "object"
+  ? JSON.stringify(value)
+  : Array.isArray(value)
+    ? `[${value.map(canonical).join(",")}]`
+    : `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonical(value[key])}`).join(",")}}`;
+
+const catalog = {
+  version: "1.0",
+  serviceKind: "REPOSITORY_COMPONENT_SOURCE",
+  status: "ACTIVE",
+  companionComponentCatalog: "component-2026.07.22-compliance.1.json",
+  purpose: "Normative source-layout and delivery contract for AI agents, MCP-facing components and deterministic microsteps maintained inside the KajovoCML repository.",
+  repository: {
+    sourceRoot: "components",
+    directoryPattern: "^components/[a-z0-9][a-z0-9-]{2,62}/$",
+    identityRule: "The repository key is not a KCML identity. KCML assigns code and hostname during registration.",
+    oneLogicalComponentPerDirectory: true,
+    crossComponentSourceImportsForbidden: true,
+    rootWorkspaceMembership: false
+  },
+  supportedKinds: ["AI_AGENT", "MCP_COMPONENT", "MICROSTEP", "API_COMPONENT", "EVENT_PROCESSOR"],
+  requiredFiles: [
+    "component.kcml.json", "manifest.kcml.json", "README.md", "package.json", "pnpm-lock.yaml", "tsconfig.json",
+    "src/index.ts", "src/**/*.test.ts|src/**/*.spec.ts", "evidence/architecture.md", "evidence/threat-model.md", "evidence/runbook.md"
+  ],
+  componentDescriptor: {
+    file: "component.kcml.json",
+    schema: {
+      type: "object", additionalProperties: false,
+      required: ["catalogVersion", "repositoryKey", "kind", "displayName", "businessPurpose", "owners", "runtime", "entrypoint", "registration"],
+      properties: {
+        catalogVersion: { const: "1.0" },
+        repositoryKey: { type: "string", pattern: "^[a-z0-9][a-z0-9-]{2,62}$" },
+        kind: { enum: ["AI_AGENT", "MCP_COMPONENT", "MICROSTEP", "API_COMPONENT", "EVENT_PROCESSOR"] },
+        displayName: { type: "string", minLength: 2, maxLength: 200 },
+        businessPurpose: { type: "string", minLength: 20, maxLength: 4000 },
+        owners: { type: "object", required: ["service", "technical"], additionalProperties: false, properties: { service: { type: "string", minLength: 2 }, technical: { type: "string", minLength: 2 } } },
+        runtime: { const: "nodejs24-typescript" },
+        entrypoint: { const: "src/index.ts" },
+        registration: { type: "object", additionalProperties: false, required: ["manifest", "intake", "identityAssignedBy"], properties: { manifest: { const: "manifest.kcml.json" }, intake: { const: "/v2/component-onboardings" }, identityAssignedBy: { const: "KCML" } } }
+      }
+    }
+  },
+  packagePolicy: {
+    packageManager: "pnpm@11.7.0",
+    nodeMajor: 24,
+    moduleType: "module",
+    exactDependencyVersions: true,
+    requiredScripts: ["lint", "typecheck", "test", "build"],
+    forbiddenLifecycleScripts: ["preinstall", "install", "postinstall", "prepare"],
+    allowedRuntimeDependencies: ["@kcml/handler-sdk", "zod"],
+    allowedDevelopmentDependencies: ["@types/node", "eslint", "typescript", "vitest"]
+  },
+  sourceContract: {
+    export: "async function invoke(input, context)",
+    network: "All outbound traffic must use the KCML egress capability.",
+    secrets: "All secrets require an explicit KCML grant and must never be committed.",
+    database: "Direct database access is forbidden unless represented by a separately authorized KCML capability.",
+    deterministicAudit: "Every operation must expose input, process, output, success and correlation identifiers through the registered KCML contracts."
+  },
+  deliveryPipeline: {
+    sourcePullRequest: { scope: "exactly one components/<repository-key>/ directory", requiredChecks: ["descriptor-schema", "manifest-schema", "lint", "typecheck", "unit-tests", "invoke-contract", "secret-scan", "dependency-audit", "reproducible-build"] },
+    build: { output: "immutable OCI image", registryPath: "ghcr.io/<owner>/kajovocml-components/<repository-key>:<commit-sha>", requirements: ["SBOM", "keyless signature", "SLSA-style provenance"] },
+    registration: { authorization: "short-lived integration token", intake: "/v2/component-onboardings", idempotencyHeader: "Idempotency-Key", readiness: "/v2/component-onboardings/{id}/readiness", revision: "/v2/component-onboardings/{id}/revisions", concurrencyControl: "ETag/If-Match", tokenConsumption: "after successful access-token handoff" }
+  },
+  separationOfAuthorities: {
+    integrationTokenDoesNotAuthorize: ["GitHub write", "pull request merge", "deployment", "administrator activation", "secret access without grant"],
+    sourceMergeIsNotRegistration: true,
+    signedImageIsNotRegistration: true,
+    registrationIsNotActivation: true
+  },
+  forbidden: ["components containing secrets", "client-supplied KCML identity", "cross-component source coupling", "placeholder evidence", "fake digests", "custom Dockerfile", "symlinks", "binary executables", "direct production configuration outside KCML GUI"]
+};
+const digestInput = structuredClone(catalog);
+catalog.canonicalDigest = `sha256:${crypto.createHash("sha256").update(canonical(digestInput)).digest("hex")}`;
+const rendered = `${JSON.stringify(catalog, null, 2)}\n`;
+if (process.argv.includes("--check")) {
+  if (!fs.existsSync(output) || fs.readFileSync(output, "utf8") !== rendered) {
+    console.error(`stale generated artifact: ${path.relative(root, output)}`);
+    process.exitCode = 1;
+  }
+} else {
+  fs.mkdirSync(path.dirname(output), { recursive: true });
+  fs.writeFileSync(output, rendered);
+}
