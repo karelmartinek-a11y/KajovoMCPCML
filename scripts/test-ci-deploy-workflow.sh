@@ -36,7 +36,7 @@ grep -Fq 'sha256sum --check kcml-release.tar.zst.sha256' "$workflow"
 grep -Fq '/usr/local/sbin/kcml-deploy-wrapper' "$workflow"
 grep -Fq '"${{ github.event_name }}"' "$workflow"
 grep -Fq 'KCML_FACTORY_RESET_CONFIRM:' "$workflow"
-grep -Fq 'sudo --preserve-env=PASS,GHCR_TOKEN,GHCR_ACTOR,KCML_FACTORY_RESET_CONFIRM,KCML_ADMIN_PASSWORD_ROTATION_CONFIRM /usr/local/sbin/kcml-deploy-wrapper' "$workflow"
+grep -Fq 'sudo --preserve-env=PASS,GHCR_TOKEN,GHCR_ACTOR,KCML_FACTORY_RESET_CONFIRM /usr/local/sbin/kcml-deploy-wrapper' "$workflow"
 
 # Avoid indefinite production jobs on a wedged self-hosted runner.
 grep -A8 '^  deploy:' "$workflow" | grep -Fq 'timeout-minutes:'

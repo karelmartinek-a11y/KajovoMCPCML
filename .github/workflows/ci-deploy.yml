@@ -16,11 +16,6 @@ on:
         required: false
         default: ""
         type: string
-      admin_password_rotation_confirmation:
-        description: "Exact confirmation phrase for an explicit owner password rotation from production PASS"
-        required: false
-        default: ""
-        type: string
 
 permissions:
   contents: read
@@ -255,14 +250,13 @@ jobs:
           GHCR_TOKEN: ${{ github.token }}
           GHCR_ACTOR: ${{ github.actor }}
           KCML_FACTORY_RESET_CONFIRM: ${{ github.event_name == 'workflow_dispatch' && inputs.perform_factory_reset && inputs.factory_reset_confirmation || '' }}
-          KCML_ADMIN_PASSWORD_ROTATION_CONFIRM: ${{ github.event_name == 'workflow_dispatch' && inputs.admin_password_rotation_confirmation || '' }}
         run: |
           set -euo pipefail
           echo "::add-mask::$PASS"
           echo "::add-mask::$GHCR_TOKEN"
           test -n "$PASS"
           test -n "$GHCR_TOKEN"
-          sudo --preserve-env=PASS,GHCR_TOKEN,GHCR_ACTOR,KCML_FACTORY_RESET_CONFIRM,KCML_ADMIN_PASSWORD_ROTATION_CONFIRM /usr/local/sbin/kcml-deploy-wrapper \
+          sudo --preserve-env=PASS,GHCR_TOKEN,GHCR_ACTOR,KCML_FACTORY_RESET_CONFIRM /usr/local/sbin/kcml-deploy-wrapper \
             "${{ runner.temp }}/kcml-release/kcml-release.tar.zst" \
             "${{ github.repository }}" \
             "${{ github.sha }}" \

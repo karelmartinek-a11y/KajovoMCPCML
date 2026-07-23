@@ -14,7 +14,6 @@ case "$run_id:$run_attempt" in *[!0-9:]*) exit 2 ;; esac
 case "$workflow_trigger" in push|workflow_dispatch) ;; *) exit 2 ;; esac
 test "$(id -u)" = "0"
 test -n "${PASS:-}"
-export KCML_ADMIN_PASSWORD_ROTATION_CONFIRM="${KCML_ADMIN_PASSWORD_ROTATION_CONFIRM:-}"
 
 artifact="$(realpath -e "$artifact")"
 bundle="$(realpath -e "${artifact}.sigstore.json")"
