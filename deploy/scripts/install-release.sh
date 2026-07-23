@@ -476,7 +476,8 @@ else
   echo "release-check:canonical_component_metadata=SKIPPED clean_start_no_registered_component"
 fi
 wait_for_sql_equals "baseline_migration_row" "1" "select count(*) from schema_migration where version='001_pre_production_baseline.sql'"
-wait_for_sql_equals "baseline_migration_count" "1" "select count(*) from schema_migration"
+wait_for_sql_equals "secret_broker_process_role_migration_row" "1" "select count(*) from schema_migration where version='002_secret_broker_process_role.sql'"
+wait_for_sql_equals "baseline_migration_count" "2" "select count(*) from schema_migration"
 
 step verify-stable-runtime-health
 require_stable_runtime_health "$admin_host"
