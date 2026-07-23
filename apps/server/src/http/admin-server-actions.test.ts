@@ -1038,7 +1038,7 @@ describe("admin server actions", () => {
       version: 4,
       category: "observability"
     }));
-    expect(listed.json().settings).toHaveLength(45);
+    expect(listed.json().settings).toHaveLength(46);
 
     const updated = await app.inject({
       method: "PUT",

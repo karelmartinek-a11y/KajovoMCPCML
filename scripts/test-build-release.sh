@@ -30,6 +30,7 @@ test -f "$tmpdir/release/apps/server/dist/cli/ensure-platform-worker-access.js"
 test -f "$tmpdir/release/deploy/scripts/kcml-handler-preload-wrapper.sh"
 test -f "$tmpdir/release/deploy/scripts/render-nginx-config.mjs"
 test -f "$tmpdir/release/deploy/scripts/ensure-canonical-tls.sh"
+test -f "$tmpdir/release/scripts/verify-repository-component-attestations.mjs"
 
 mcp_manifest_path="$(jq -r '.manifestExamplePath' "$tmpdir/release/docs/onboarding-catalogs/component-${release}.json")"
 external_manifest_path="$(jq -r '.manifestExamplePath' "$tmpdir/release/docs/onboarding-catalogs/external-api-1.0.json")"

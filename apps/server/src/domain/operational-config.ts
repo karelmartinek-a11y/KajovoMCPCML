@@ -9,7 +9,7 @@ import { controlPlaneHostnames, normalizeBaseDomain } from "./hostnames.js";
 
 type ConfigKind = "string" | "number" | "boolean" | "stringList" | "secret";
 type OperationalConfigCategory = "network" | "security" | "runtime" | "integrations" | "observability" | "presentation";
-type ProcessRole = "web" | "worker" | "monitor" | "egress";
+type ProcessRole = "web" | "worker" | "monitor" | "egress" | "secret-broker";
 type EditableEnvKey = Exclude<keyof AppConfig,
   "NODE_ENV" | "KCML_PROCESS_ROLE" | "PORT" | "DATABASE_URL" | "CONFIG_VAULT_MASTER_KEY_BASE64" | "CONFIG_VAULT_MASTER_KEY_ID">;
 type SecretFormat = "base64-min-32" | "base64-exact-32" | "opaque";
@@ -69,7 +69,7 @@ const definition = (
   secretFormat: options.secretFormat
 });
 
-const allRoles: ProcessRole[] = ["web", "worker", "monitor", "egress"];
+const allRoles: ProcessRole[] = ["web", "worker", "monitor", "egress", "secret-broker"];
 
 export const operationalConfigDefinitions: OperationalConfigDefinition[] = [
   definition("publicBaseDomain", "PUBLIC_BASE_DOMAIN", "Veřejná základní doména", "string", "network", ["web", "worker"], { defaultValue: "example.invalid", requiredInProduction: true }),
@@ -99,6 +99,7 @@ export const operationalConfigDefinitions: OperationalConfigDefinition[] = [
   definition("cosignBinary", "COSIGN_BINARY", "Cosign binary", "string", "runtime", ["worker", "monitor"], { defaultValue: "cosign" }),
   definition("runtimeSocketRoot", "RUNTIME_SOCKET_ROOT", "Kořen runtime socketů", "string", "runtime", ["worker", "monitor"], { defaultValue: "/var/lib/kcml/runtime" }),
   definition("egressProxySocketPath", "EGRESS_PROXY_SOCKET_PATH", "Socket egress proxy", "string", "runtime", allRoles, { defaultValue: "/var/lib/kcml/egress/proxy.sock" }),
+  definition("secretBrokerSocketPath", "SECRET_BROKER_SOCKET_PATH", "Socket secret brokeru", "string", "runtime", ["worker", "secret-broker"], { defaultValue: "/var/lib/kcml/secret-broker/proxy.sock" }),
 
   definition("githubOwner", "GITHUB_OWNER", "GitHub owner", "string", "integrations", ["worker"]),
   definition("githubRepo", "GITHUB_REPO", "GitHub repozitář", "string", "integrations", ["worker"]),

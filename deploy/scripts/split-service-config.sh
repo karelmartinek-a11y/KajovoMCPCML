@@ -18,7 +18,7 @@ fi
 root="${KCML_CONFIG_ROOT:-/etc/kcml}"
 credentials="$root/credentials"
 install -d -m 0700 "$root" "$credentials"
-for service in web worker monitor egress migrator admin-sync alert-primary-sink alert-backup-sink; do
+for service in web worker monitor egress secret-broker migrator admin-sync alert-primary-sink alert-backup-sink; do
   install -d -m 0700 "$credentials/$service"
 done
 
@@ -84,6 +84,9 @@ export MONITOR_ENABLED="false"
 write_env "$root/egress.env" \
   NODE_ENV BUILD_ID PUBLIC_BASE_DOMAIN EGRESS_PROXY_SOCKET_PATH RUNTIME_SOCKET_ROOT LOG_LEVEL UI_TIME_ZONE CONFIG_VAULT_MASTER_KEY_ID
 
+write_env "$root/secret-broker.env" \
+  NODE_ENV BUILD_ID PUBLIC_BASE_DOMAIN SECRET_BROKER_SOCKET_PATH LOG_LEVEL UI_TIME_ZONE CONFIG_VAULT_MASTER_KEY_ID
+
 export PORT="3011"
 export ALERT_SINK_CHANNEL="PRIMARY"
 export ALERT_SINK_STATE_DIR="/var/lib/kcml/alert-primary-sink"
@@ -115,6 +118,8 @@ write_credential monitor alert_backup_hmac "${ALERT_BACKUP_HMAC_KEY_BASE64:-}"
 
 write_credential egress database_url "$database_app_url"
 write_credential egress egress_capability_hmac "${EGRESS_CAPABILITY_HMAC_KEY_BASE64:-}"
+
+write_credential secret-broker database_url "$database_app_url"
 
 write_credential migrator database_url "${DATABASE_MIGRATOR_URL:-$DATABASE_URL}"
 write_credential admin-sync database_url "$database_admin_sync_url"

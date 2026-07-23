@@ -211,11 +211,12 @@ jobs:
         run: |
           jq -n \
             --arg commit "${{ needs.discover.outputs.source_sha }}" \
+            --arg build_run_id "${{ github.run_id }}" \
             --arg builder "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/repository-component-deploy.yml@refs/heads/main" \
             --arg source "git+https://github.com/${GITHUB_REPOSITORY}@${{ needs.discover.outputs.source_sha }}" \
             --arg component "${{ needs.discover.outputs.repository_key }}" \
             --arg digest "$IMAGE_DIGEST" \
-            '{builder:{id:$builder},buildType:"https://kajovocml.hcasc.cz/contracts/repository-component-deploy/v1",invocation:{configSource:{uri:$source,digest:{sha1:$commit},entryPoint:".github/workflows/repository-component-deploy.yml"},parameters:{repository_key:$component},environment:{}},metadata:{buildInvocationID:env.GITHUB_RUN_ID,reproducible:true},materials:[{uri:$source,digest:{sha1:$commit}}],subject:[{name:$component,digest:{sha256:($digest|sub("^sha256:";""))}}]}' \
+            '{builder:{id:$builder},buildType:"https://kajovocml.hcasc.cz/contracts/repository-component-deploy/v1",invocation:{configSource:{uri:$source,digest:{sha1:$commit},entryPoint:".github/workflows/repository-component-deploy.yml"},parameters:{repository_key:$component},environment:{}},metadata:{buildInvocationID:$build_run_id,reproducible:true},materials:[{uri:$source,digest:{sha1:$commit}}],subject:[{name:$component,digest:{sha256:($digest|sub("^sha256:";""))}}]}' \
             > /tmp/provenance.json
       - name: Keyless-sign image, SBOM and provenance
         env:

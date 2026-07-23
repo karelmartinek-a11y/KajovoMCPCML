@@ -195,7 +195,7 @@ const adminBootstrapUsername = z.string().default("karmar78").transform((value, 
 
 const envSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
-  KCML_PROCESS_ROLE: z.enum(["all", "web", "worker", "monitor", "egress", "migrate", "admin-sync"]).default("all"),
+  KCML_PROCESS_ROLE: z.enum(["all", "web", "worker", "monitor", "egress", "secret-broker", "migrate", "admin-sync"]).default("all"),
   PORT: z.coerce.number().int().min(1).max(65535).default(3000),
   PUBLIC_BASE_DOMAIN: hostnameSchema("PUBLIC_BASE_DOMAIN", "example.invalid"),
   DATABASE_URL: z.string().min(1),
@@ -246,6 +246,7 @@ const envSchema = z.object({
   COSIGN_BINARY: z.string().default("cosign"),
   RUNTIME_SOCKET_ROOT: z.string().default("/var/lib/kcml/runtime"),
   EGRESS_PROXY_SOCKET_PATH: z.string().default("/var/lib/kcml/egress/proxy.sock"),
+  SECRET_BROKER_SOCKET_PATH: z.string().default("/var/lib/kcml/secret-broker/proxy.sock"),
   WILDCARD_TLS_CERT_PATH: z.string().default("/etc/kcml/tls/fullchain.pem"),
   TRUSTED_PROXY_CIDRS: z.string().default("127.0.0.1,::1").transform((value) => value.split(",").map((item) => item.trim()).filter(Boolean)),
   BUILD_ID: z.string().min(1).default("local"),
@@ -267,6 +268,7 @@ const envSchema = z.object({
     monitor: ["EGRESS_CAPABILITY_HMAC_KEY_BASE64"],
     worker: ["EGRESS_CAPABILITY_HMAC_KEY_BASE64"],
     egress: ["EGRESS_CAPABILITY_HMAC_KEY_BASE64"],
+    "secret-broker": ["ACCESS_TOKEN_HMAC_KEY_BASE64"],
     "admin-sync": ["MFA_ENCRYPTION_KEY_BASE64"]
   };
   for (const key of requiredSecrets[config.KCML_PROCESS_ROLE] ?? []) {
@@ -349,7 +351,7 @@ const mutableRuntimeConfigKeys = ["ONBOARDING_WORKER_INTERVAL_MS", "MONITOR_INTE
 
 const bootstrapEnvSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
-  KCML_PROCESS_ROLE: z.enum(["all", "web", "worker", "monitor", "egress", "migrate", "admin-sync"]).default("all"),
+  KCML_PROCESS_ROLE: z.enum(["all", "web", "worker", "monitor", "egress", "secret-broker", "migrate", "admin-sync"]).default("all"),
   PORT: z.coerce.number().int().min(1).max(65535).default(3000),
   DATABASE_URL: z.string().min(1),
   CONFIG_VAULT_MASTER_KEY_BASE64: vaultMasterKey,
@@ -372,6 +374,7 @@ export type ReferenceExternalApiConfig = Pick<AppConfig, "PUBLIC_BASE_DOMAIN">;
 export type McpHttpConfig = Pick<AppConfig, "PUBLIC_BASE_DOMAIN" | "AUTH_HOST" | "ACCESS_TOKEN_HMAC_KEY_BASE64">;
 export type IntegrationTokenConfig = Pick<AppConfig, "INTEGRATION_TOKEN_HMAC_KEY_BASE64" | "INTEGRATION_TOKEN_HMAC_KEY_ID">;
 export type EgressClientConfig = Pick<AppConfig, "EGRESS_PROXY_SOCKET_PATH" | "EGRESS_CAPABILITY_HMAC_KEY_BASE64">;
+export type SecretBrokerConfig = Pick<AppConfig, "SECRET_BROKER_SOCKET_PATH" | "ACCESS_TOKEN_HMAC_KEY_BASE64" | "CONFIG_VAULT_MASTER_KEY_BASE64" | "CONFIG_VAULT_MASTER_KEY_ID" | "INTEGRATION_TOKEN_HMAC_KEY_BASE64" | "INTEGRATION_TOKEN_HMAC_KEY_ID">;
 export type OnboardingRouteConfig = HostRoutingConfig & IntegrationTokenConfig & Pick<AppConfig, "QUARANTINE_ROOT" | "ONBOARDING_WORKER_ENABLED" | "MFA_ENCRYPTION_KEY_BASE64" | "MFA_ALLOW_PLAINTEXT_LEGACY" | "SESSION_SECRET_BASE64" | "EGRESS_PROXY_SOCKET_PATH" | "EGRESS_CAPABILITY_HMAC_KEY_BASE64">;
 export type ExternalApiRegistrationConfig = Pick<AppConfig, "PUBLIC_BASE_DOMAIN"> & EgressClientConfig;
 export type ReadinessConfig = Pick<AppConfig, "MONITOR_ENABLED" | "MONITOR_INTERVAL_MS" | "BUILD_ID">;
@@ -387,7 +390,7 @@ export type AlertDeliveryConfig = Pick<AppConfig, "ALERT_PRIMARY_WEBHOOK_URL" | 
 export type GitHubOnboardingConfig = Pick<AppConfig, "GITHUB_TOKEN" | "GITHUB_APP_ID" | "GITHUB_APP_INSTALLATION_ID" | "GITHUB_APP_PRIVATE_KEY_BASE64" | "GITHUB_OWNER" | "GITHUB_REPO">;
 export type ActivationConfig = Pick<AppConfig, "AUTH_HOST" | "PUBLIC_BASE_DOMAIN">;
 export type EgressProxyConfig = EgressClientConfig & Pick<AppConfig, "NODE_ENV">;
-export type OciRuntimeConfig = Pick<AppConfig, "OCI_IMAGE_NAMESPACE" | "OCI_REGISTRY" | "OCI_CERTIFICATE_IDENTITY" | "OCI_CERTIFICATE_OIDC_ISSUER" | "PODMAN_BINARY" | "COSIGN_BINARY" | "RUNTIME_SOCKET_ROOT" | "EGRESS_PROXY_SOCKET_PATH">;
+export type OciRuntimeConfig = Pick<AppConfig, "OCI_IMAGE_NAMESPACE" | "OCI_REGISTRY" | "OCI_CERTIFICATE_IDENTITY" | "OCI_CERTIFICATE_OIDC_ISSUER" | "PODMAN_BINARY" | "COSIGN_BINARY" | "RUNTIME_SOCKET_ROOT" | "EGRESS_PROXY_SOCKET_PATH" | "SECRET_BROKER_SOCKET_PATH">;
 export type WorkerConfig = GitHubOnboardingConfig & ActivationConfig & EgressClientConfig & OciRuntimeConfig
   & Pick<AppConfig, "ONBOARDING_WORKER_INTERVAL_MS" | "ACCESS_TOKEN_HMAC_KEY_BASE64" | "CONFIG_VAULT_MASTER_KEY_BASE64" | "CONFIG_VAULT_MASTER_KEY_ID">;
 export type MonitoringConfig = AlertDeliveryConfig & EgressClientConfig & OciRuntimeConfig & Pick<AppConfig, "AUTH_HOST" | "MONITOR_INTERVAL_MS" | "AUDIT_ARCHIVE_PATH">;

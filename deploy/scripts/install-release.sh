@@ -125,6 +125,7 @@ trap rollback_on_error ERR
 restart_core_services() {
   systemctl restart kcml
   systemctl restart kcml-egress-proxy
+  systemctl restart kcml-secret-broker
   systemctl restart kcml-onboarding-worker
   systemctl restart kcml-component-control-worker
   systemctl restart kcml-component-e2e-worker
@@ -161,6 +162,7 @@ wait_for_runtime_health() {
     if curl -fsS -H "Host: $admin_host" "http://127.0.0.1:${PORT:-3010}/health" >/dev/null \
       && systemctl is-active --quiet kcml \
       && systemctl is-active --quiet kcml-egress-proxy \
+      && systemctl is-active --quiet kcml-secret-broker \
       && systemctl is-active --quiet kcml-onboarding-worker \
       && systemctl is-active --quiet kcml-component-control-worker \
       && systemctl is-active --quiet kcml-component-e2e-worker \
@@ -169,7 +171,8 @@ wait_for_runtime_health() {
       && systemctl is-active --quiet kcml-alert-backup \
       && curl -fsS http://127.0.0.1:3011/health >/dev/null \
       && curl -fsS http://127.0.0.1:3012/health >/dev/null \
-      && test -S "${EGRESS_PROXY_SOCKET_PATH:-/var/lib/kcml/egress/proxy.sock}"; then
+      && test -S "${EGRESS_PROXY_SOCKET_PATH:-/var/lib/kcml/egress/proxy.sock}" \
+      && test -S "${SECRET_BROKER_SOCKET_PATH:-/var/lib/kcml/secret-broker/proxy.sock}"; then
       healthy=true
       break
     fi
@@ -177,8 +180,8 @@ wait_for_runtime_health() {
   done
 
   if [ "$healthy" != "true" ]; then
-    systemctl status kcml kcml-egress-proxy kcml-onboarding-worker kcml-component-control-worker kcml-component-e2e-worker kcml-monitor kcml-alert-primary kcml-alert-backup --no-pager -l || true
-    for service in kcml kcml-egress-proxy kcml-onboarding-worker kcml-component-control-worker kcml-component-e2e-worker kcml-monitor; do
+    systemctl status kcml kcml-egress-proxy kcml-secret-broker kcml-onboarding-worker kcml-component-control-worker kcml-component-e2e-worker kcml-monitor kcml-alert-primary kcml-alert-backup --no-pager -l || true
+    for service in kcml kcml-egress-proxy kcml-secret-broker kcml-onboarding-worker kcml-component-control-worker kcml-component-e2e-worker kcml-monitor; do
       echo "==== journal:$service ====" >&2
       journalctl -u "$service" --no-pager -n 80 || true
     done
@@ -214,13 +217,13 @@ chmod 0440 /etc/sudoers.d/kcml-deploy-wrappers
 visudo -cf /etc/sudoers.d/kcml-deploy-wrappers
 install -d -m 0755 /usr/local/libexec
 install -m 0755 "$source_dir/deploy/scripts/install-repository-component.sh" /usr/local/libexec/kcml-install-repository-component
-for unit in kcml.service kcml-onboarding-worker.service kcml-component-control-worker.service kcml-component-e2e-worker.service kcml-monitor.service kcml-egress-proxy.service kcml-alert-primary.service kcml-alert-backup.service; do
+for unit in kcml.service kcml-onboarding-worker.service kcml-component-control-worker.service kcml-component-e2e-worker.service kcml-monitor.service kcml-egress-proxy.service kcml-alert-primary.service kcml-alert-backup.service kcml-secret-broker.service; do
   install -m 0644 "$source_dir/deploy/systemd/$unit" "/etc/systemd/system/$unit"
 done
 install -d -m 0755 /opt/kcml/alert-sink
 install -m 0755 "$source_dir/deploy/alert-sink/receiver.mjs" /opt/kcml/alert-sink/receiver.mjs
 install -d -m 0700 -o kcml -g kcml /var/lib/kcml/alert-primary-sink /var/lib/kcml/alert-backup-sink
-install -d -m 0750 -o kcml -g kcml /var/lib/kcml/repository-components
+install -d -m 0750 -o kcml -g kcml /var/lib/kcml/repository-components /var/lib/kcml/secret-broker
 kcml_uid="$(id -u kcml)"
 install -d -m 0755 /etc/systemd/system/kcml-onboarding-worker.service.d
 sed "s/@KCML_UID@/${kcml_uid}/g" "$source_dir/deploy/systemd/kcml-onboarding-worker-runtime.conf.in" \
@@ -316,7 +319,7 @@ switched=true
 
 step activate-services
 systemctl daemon-reload
-systemctl enable kcml kcml-onboarding-worker kcml-component-control-worker kcml-component-e2e-worker kcml-monitor kcml-egress-proxy kcml-alert-primary kcml-alert-backup
+systemctl enable kcml kcml-onboarding-worker kcml-component-control-worker kcml-component-e2e-worker kcml-monitor kcml-egress-proxy kcml-secret-broker kcml-alert-primary kcml-alert-backup
 systemctl restart kcml-alert-primary
 systemctl restart kcml-alert-backup
 nginx -t

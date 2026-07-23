@@ -17,7 +17,7 @@ restore_workspace_dependencies() {
 trap restore_workspace_dependencies EXIT
 
 rm -rf "$destination"
-install -d -m 0755 "$destination/apps" "$destination/deploy" "$destination/docs" "$destination/docs/onboarding-catalogs"
+install -d -m 0755 "$destination/apps" "$destination/deploy" "$destination/docs" "$destination/docs/onboarding-catalogs" "$destination/scripts"
 pnpm_major="$(pnpm --version | cut -d. -f1)"
 workspace_restore_required=true
 if [ "$pnpm_major" -ge 10 ]; then
@@ -33,6 +33,7 @@ cp -R apps/admin-ui/dist "$destination/apps/admin-ui/dist"
 install -d -m 0755 "$destination/apps/server/dist/migrations"
 cp apps/server/src/migrations/*.sql "$destination/apps/server/dist/migrations/"
 cp -R deploy/alert-sink deploy/nginx deploy/scripts deploy/systemd "$destination/deploy/"
+cp scripts/verify-repository-component-attestations.mjs "$destination/scripts/"
 cp "docs/onboarding-catalogs/component-${catalog_version}.json" "$destination/docs/"
 cp "docs/onboarding-manifest-${catalog_version}.example.json" "$destination/docs/"
 cp "apps/server/src/contracts/component-manifest-${catalog_version}.schema.json" "$destination/docs/"

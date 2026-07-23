@@ -109,39 +109,61 @@ start_container() {
   local data_source="$3"
   local lifecycle_mode="$4"
   local immutable_image="$5"
+  local -a podman_args
+  local -a extra_mount_args=()
+  local -a extra_env_args=()
   write_mode "$mount_source" "$lifecycle_mode"
+  if [ -n "${KCML_EGRESS_SOCKET_PATH:-}" ]; then
+    local egress_mount_source
+    egress_mount_source="$(dirname "$KCML_EGRESS_SOCKET_PATH")"
+    extra_mount_args+=(--volume "${egress_mount_source}:/run/kcml-egress:ro,z")
+    extra_env_args+=(--env KCML_EGRESS_SOCKET_PATH=/run/kcml-egress/proxy.sock)
+  fi
+  if [ -n "${KCML_SECRET_BROKER_SOCKET_PATH:-}" ]; then
+    local secret_mount_source
+    secret_mount_source="$(dirname "$KCML_SECRET_BROKER_SOCKET_PATH")"
+    extra_mount_args+=(--volume "${secret_mount_source}:/run/kcml-secret-broker:ro,z")
+    extra_env_args+=(--env KCML_SECRET_BROKER_SOCKET_PATH=/run/kcml-secret-broker/proxy.sock)
+  fi
   run_as_kcml "$podman_binary" rm --force --ignore "$name" >/dev/null 2>&1 || true
-  run_as_kcml "$podman_binary" run --detach --replace \
-    --name "$name" \
-    --label "cz.hcasc.kcml.repository-component=true" \
-    --label "cz.hcasc.kcml.repository-key=${repository_key}" \
-    --label "cz.hcasc.kcml.image-digest=${image_digest}" \
-    --read-only \
-    --cap-drop=ALL \
-    --security-opt=no-new-privileges \
-    --network none \
-    --log-driver none \
-    --pids-limit 256 \
-    --memory 256m \
-    --cpus 1.0 \
-    --tmpfs /tmp:rw,noexec,nosuid,nodev,size=16m \
-    --volume "${mount_source}:/run/kcml:rw,z" \
-    --volume "${data_source}:/var/lib/kcml-data:rw,z" \
-    --env KCML_SOCKET_PATH=/run/kcml/worker.sock \
-    --env KCML_SERVER_CODE="repository-${repository_key}" \
-    --env KCML_IMAGE_DIGEST="${image_digest}" \
-    --env KCML_RUNTIME_MODE="${lifecycle_mode}" \
-    --env KCML_RUNTIME_MODE_PATH=/run/kcml/runtime-mode.json \
-    --env KCML_RUNTIME_EXECUTION_MODE="${execution_mode}" \
-    --env KCML_RUNTIME_SINGLE_ACTIVE_WORKER="${single_active_worker}" \
-    --env KCML_RUNTIME_GRACEFUL_SHUTDOWN_SECONDS="${graceful_shutdown_seconds}" \
-    --env KCML_RUNTIME_LEASE_PATH=/var/lib/kcml-data/worker.lease.json \
-    --env KCML_DATA_PATH=/var/lib/kcml-data \
-    --env KCML_EGRESS_SOCKET_PATH="${KCML_EGRESS_SOCKET_PATH:-}" \
-    --env KCML_EGRESS_CAPABILITY="${KCML_EGRESS_CAPABILITY:-}" \
-    --env KCML_SECRET_BROKER_SOCKET_PATH="${KCML_SECRET_BROKER_SOCKET_PATH:-}" \
-    --env KCML_SECRET_BROKER_CAPABILITY="${KCML_SECRET_BROKER_CAPABILITY:-}" \
-    "$immutable_image" >/dev/null
+  podman_args=(
+    run --detach --replace
+    --name "$name"
+    --label "cz.hcasc.kcml.repository-component=true"
+    --label "cz.hcasc.kcml.repository-key=${repository_key}"
+    --label "cz.hcasc.kcml.image-digest=${image_digest}"
+    --read-only
+    --cap-drop=ALL
+    --security-opt=no-new-privileges
+    --network none
+    --log-driver none
+    --pids-limit 256
+    --memory 256m
+    --cpus 1.0
+    --tmpfs /tmp:rw,noexec,nosuid,nodev,size=16m
+    --volume "${mount_source}:/run/kcml:rw,z"
+    --volume "${data_source}:/var/lib/kcml-data:rw,z"
+    --env KCML_SOCKET_PATH=/run/kcml/worker.sock
+    --env KCML_SERVER_CODE="repository-${repository_key}"
+    --env KCML_IMAGE_DIGEST="${image_digest}"
+    --env KCML_RUNTIME_MODE="${lifecycle_mode}"
+    --env KCML_RUNTIME_MODE_PATH=/run/kcml/runtime-mode.json
+    --env KCML_RUNTIME_EXECUTION_MODE="${execution_mode}"
+    --env KCML_RUNTIME_SINGLE_ACTIVE_WORKER="${single_active_worker}"
+    --env KCML_RUNTIME_GRACEFUL_SHUTDOWN_SECONDS="${graceful_shutdown_seconds}"
+    --env KCML_RUNTIME_LEASE_PATH=/var/lib/kcml-data/worker.lease.json
+    --env KCML_DATA_PATH=/var/lib/kcml-data
+    --env KCML_EGRESS_CAPABILITY="${KCML_EGRESS_CAPABILITY:-}"
+    --env KCML_SECRET_BROKER_CAPABILITY="${KCML_SECRET_BROKER_CAPABILITY:-}"
+  )
+  if [ "${#extra_mount_args[@]}" -gt 0 ]; then
+    podman_args+=("${extra_mount_args[@]}")
+  fi
+  if [ "${#extra_env_args[@]}" -gt 0 ]; then
+    podman_args+=("${extra_env_args[@]}")
+  fi
+  podman_args+=("$immutable_image")
+  run_as_kcml "$podman_binary" "${podman_args[@]}" >/dev/null
 }
 
 restore_previous_runtime() {

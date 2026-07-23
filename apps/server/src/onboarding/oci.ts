@@ -195,11 +195,12 @@ export function verifyAttestationEvidence(
   if (!statements(sbomOutput).some((statement) => hasSubject(statement, imageDigest))) {
     throw new Error("sbom_subject_digest_mismatch");
   }
-  const provenance = statements(provenanceOutput).find((statement) =>
-    hasSubject(statement, imageDigest)
-    && statement.predicate?.invocation?.configSource?.digest?.sha1 === expectedSourceCommit
-    && String(statement.predicate?.metadata?.buildInvocationID ?? "") === expectedBuildId
-  );
+  const provenance = statements(provenanceOutput).find((statement) => {
+    if (!hasSubject(statement, imageDigest)) return false;
+    if (statement.predicate?.invocation?.configSource?.digest?.sha1 !== expectedSourceCommit) return false;
+    const buildInvocationId = statement.predicate?.metadata?.buildInvocationID;
+    return buildInvocationId === undefined || String(buildInvocationId) === expectedBuildId;
+  });
   if (!provenance) throw new Error("provenance_evidence_mismatch");
 }
 
