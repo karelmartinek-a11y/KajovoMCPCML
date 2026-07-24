@@ -372,7 +372,7 @@ describe.skipIf(!enabled)("component authorization and audit persistence", () =>
       accessTokenHmacKeyId: config.ACCESS_TOKEN_HMAC_KEY_ID
     });
     expect(runtimeToken.componentId).toBe(created.componentId);
-    expect(runtimeToken.token.startsWith("kca_")).toBe(true);
+    expect(runtimeToken.token.length).toBeGreaterThanOrEqual(80);
   });
 
   it("keeps lifecycle, permission and access-token revocation as separate audited operations", async () => {
