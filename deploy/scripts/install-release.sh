@@ -12,10 +12,9 @@ test -f "$source_dir/release-manifest.json"
 test -f /etc/kcml/kcml.env
 : "${PASS:?PASS is required}"
 
-component_catalog_version="$(node --input-type=module -e "import('${source_dir}/apps/server/dist/domain/release.js').then(({KCML_RELEASE}) => process.stdout.write(KCML_RELEASE.catalogVersion))")"
-component_catalog="$source_dir/docs/onboarding-catalogs/component-${component_catalog_version}.json"
-test -f "$component_catalog"
-component_hostname_pattern="$(jq -er '.identityAssignment.hostnamePattern' "$component_catalog")"
+onboarding_catalog="$source_dir/docs/onboarding-catalogs/onboarding-1.1.json"
+test -f "$onboarding_catalog"
+component_hostname_pattern="$(jq -er '.identityAssignment.hostnamePattern' "$onboarding_catalog")"
 component_hostname_suffix="$(printf '%s\n' "$component_hostname_pattern" | sed -n 's/^kcml####\.//p')"
 test -n "$component_hostname_suffix"
 [[ "$component_hostname_suffix" =~ ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$ ]]
@@ -477,7 +476,8 @@ else
 fi
 wait_for_sql_equals "baseline_migration_row" "1" "select count(*) from schema_migration where version='001_pre_production_baseline.sql'"
 wait_for_sql_equals "secret_broker_process_role_migration_row" "1" "select count(*) from schema_migration where version='002_secret_broker_process_role.sql'"
-wait_for_sql_equals "baseline_migration_count" "2" "select count(*) from schema_migration"
+wait_for_sql_equals "component_onboarding_v1_1_migration_row" "1" "select count(*) from schema_migration where version='003_component_onboarding_v1_1.sql'"
+wait_for_sql_equals "baseline_migration_count" "3" "select count(*) from schema_migration"
 
 step verify-stable-runtime-health
 require_stable_runtime_health "$admin_host"

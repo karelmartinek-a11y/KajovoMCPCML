@@ -97,14 +97,16 @@ async function assertCompactionReady(client: pg.PoolClient): Promise<void> {
   }
 }
 
-async function compactLegacyLedger(client: pg.PoolClient, baseline: MigrationFile): Promise<void> {
+async function compactLegacyLedger(client: pg.PoolClient, migrations: MigrationFile[]): Promise<void> {
   await assertCompactionReady(client);
   await client.query("delete from public.schema_migration");
-  await client.query(
-    `insert into public.schema_migration(version,sequence_number,checksum_sha256)
-     values ($1,$2,$3)`,
-    [baseline.name, baseline.sequence, baseline.checksum]
-  );
+  for (const migration of migrations) {
+    await client.query(
+      `insert into public.schema_migration(version,sequence_number,checksum_sha256)
+       values ($1,$2,$3)`,
+      [migration.name, migration.sequence, migration.checksum]
+    );
+  }
 }
 
 async function ensureCanonicalReleaseEpoch(client: pg.PoolClient): Promise<void> {
@@ -166,7 +168,7 @@ export async function runMigrations(): Promise<void> {
       try {
         await client.query("set local lock_timeout='10s'");
         await client.query("set local statement_timeout='5min'");
-        await compactLegacyLedger(client, baseline);
+        await compactLegacyLedger(client, migrations);
         await client.query("commit");
       } catch (error) {
         await client.query("rollback").catch(() => undefined);

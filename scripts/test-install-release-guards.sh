@@ -49,7 +49,7 @@ challenge_step="$(grep -n 'step expose-canonical-tls-challenge' "$install_script
 tls_step="$(grep -n 'step ensure-canonical-tls' "$install_script" | cut -d: -f1)"
 test "$challenge_step" -lt "$tls_step"
 grep -Fq 'restore_script="$source_dir/deploy/scripts/release-config.sh"' "$install_script"
-grep -Fq "component_hostname_pattern=\"\$(jq -er '.identityAssignment.hostnamePattern' \"\$component_catalog\")\"" "$install_script"
+grep -Fq "component_hostname_pattern=\"\$(jq -er '.identityAssignment.hostnamePattern' \"\$onboarding_catalog\")\"" "$install_script"
 grep -Fq "component_hostname_suffix" "$install_script"
 grep -Fq 'Defaults:kcml-deploy env_keep += "PASS GHCR_TOKEN GHCR_ACTOR KCML_FACTORY_RESET_CONFIRM"' "$install_script"
 grep -Fq 'kcml-deploy ALL=(root) NOPASSWD:SETENV: /usr/local/sbin/kcml-deploy-wrapper' "$install_script"
@@ -81,7 +81,8 @@ if grep -Eq 'client_secret_basic|integration_token_bearer' "$install_script"; th
 fi
 grep -Fq "where version='001_pre_production_baseline.sql'" "$install_script"
 grep -Fq "where version='002_secret_broker_process_role.sql'" "$install_script"
-grep -Fq 'wait_for_sql_equals "baseline_migration_count" "2" "select count(*) from schema_migration"' "$install_script"
+grep -Fq "where version='003_component_onboarding_v1_1.sql'" "$install_script"
+grep -Fq 'wait_for_sql_equals "baseline_migration_count" "3" "select count(*) from schema_migration"' "$install_script"
 grep -Fq -- "--exclude-table='public.admin_account_manual_fix_backup_*'" deploy/scripts/backup.sh
 grep -Fq "grant usage on schema public to %I" deploy/scripts/configure-db-roles.sh
 grep -Fq "grant select on all tables in schema public to %I" deploy/scripts/configure-db-roles.sh
