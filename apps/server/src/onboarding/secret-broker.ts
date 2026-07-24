@@ -50,11 +50,15 @@ export async function buildSecretBroker(db: Db, config: SecretBrokerConfig): Pro
 }
 
 export async function listenSecretBroker(server: http.Server, socketPath: string): Promise<void> {
-  await fs.mkdir(path.dirname(socketPath), { recursive: true, mode: 0o700 });
+  const socketDirectory = path.dirname(socketPath);
+  await fs.mkdir(socketDirectory, { recursive: true, mode: 0o711 });
+  await fs.chmod(socketDirectory, 0o711);
   await fs.rm(socketPath, { force: true });
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
     server.listen(socketPath, () => resolve());
   });
-  await fs.chmod(socketPath, 0o600);
+  // Access remains fail-closed at the bearer-token layer; the socket itself
+  // must stay connectable for rootless repository component runtimes.
+  await fs.chmod(socketPath, 0o666);
 }

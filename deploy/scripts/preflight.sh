@@ -72,10 +72,12 @@ runuser -u kcml -- env \
     --setenv "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/${kcml_uid}/bus" \
     "${podman_binary}" info --format '{{.Host.Security.Rootless}}' | grep -Fx true >/dev/null
 audit_archive_dir="$(dirname "${AUDIT_ARCHIVE_PATH:-/var/lib/kcml/audit/archive.jsonl}")"
-install -d -m 0700 -o kcml -g kcml "${QUARANTINE_ROOT:-/var/lib/kcml/onboarding}" "${RUNTIME_SOCKET_ROOT:-/var/lib/kcml/runtime}" /var/lib/kcml/egress "$audit_archive_dir"
+install -d -m 0700 -o kcml -g kcml "${QUARANTINE_ROOT:-/var/lib/kcml/onboarding}" "${RUNTIME_SOCKET_ROOT:-/var/lib/kcml/runtime}" "$audit_archive_dir"
+install -d -m 0711 -o kcml -g kcml /var/lib/kcml/egress /var/lib/kcml/secret-broker
 runuser -u kcml -- test -w "${QUARANTINE_ROOT:-/var/lib/kcml/onboarding}"
 runuser -u kcml -- test -w "${RUNTIME_SOCKET_ROOT:-/var/lib/kcml/runtime}"
 runuser -u kcml -- test -w /var/lib/kcml/egress
+runuser -u kcml -- test -w /var/lib/kcml/secret-broker
 runuser -u kcml -- test -w "$audit_archive_dir"
 for service in web worker monitor egress migrator admin-sync alert-primary-sink alert-backup-sink; do
   test "$(stat -c '%a' "/etc/kcml/credentials/$service")" = "700"

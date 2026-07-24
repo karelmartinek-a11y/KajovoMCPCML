@@ -226,7 +226,8 @@ done
 install -d -m 0755 /opt/kcml/alert-sink
 install -m 0755 "$source_dir/deploy/alert-sink/receiver.mjs" /opt/kcml/alert-sink/receiver.mjs
 install -d -m 0700 -o kcml -g kcml /var/lib/kcml/alert-primary-sink /var/lib/kcml/alert-backup-sink
-install -d -m 0750 -o kcml -g kcml /var/lib/kcml/repository-components /var/lib/kcml/secret-broker
+install -d -m 0750 -o kcml -g kcml /var/lib/kcml/repository-components
+install -d -m 0711 -o kcml -g kcml /var/lib/kcml/secret-broker /var/lib/kcml/egress
 kcml_uid="$(id -u kcml)"
 install -d -m 0755 /etc/systemd/system/kcml-onboarding-worker.service.d
 sed "s/@KCML_UID@/${kcml_uid}/g" "$source_dir/deploy/systemd/kcml-onboarding-worker-runtime.conf.in" \
